@@ -1,0 +1,48 @@
+[project]
+name = "groundhog-mcp"
+version = "0.1.0"
+description = "Stealth-browser grounding tools for AI agents, over MCP"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "dmytrome" }]
+keywords = ["mcp", "stealth", "browser", "cdp", "scraping", "ssrf", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+]
+dependencies = [
+    "mcp>=1.28,<2",
+    "playwright>=1.49",
+    "trafilatura>=2.0",
+    "tldextract>=5.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/dmytrome/groundhog"
+Repository = "https://github.com/dmytrome/groundhog"
+Issues = "https://github.com/dmytrome/groundhog/issues"
+
+[project.scripts]
+groundhog-mcp = "groundhog_mcp.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.14"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

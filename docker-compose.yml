@@ -1,0 +1,18 @@
+services:
+  chrome:
+    build: .
+    image: chrome-cdp
+    shm_size: 512m
+    # Remove `platform` if you are on an amd64 host.
+    platform: linux/amd64
+    environment:
+      - WINDOW_SIZE=1920,1080
+    # Bound to localhost: the CDP endpoint is unauthenticated. To expose it to a
+    # trusted private network, change to "0.0.0.0:9222:9222" deliberately.
+    ports:
+      - "127.0.0.1:9222:9222"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9222/json/version"]
+      interval: 20s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,13 @@
+{
+  "name": "stealth-chrome-cdp-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live integration tests against real anti-bot detectors",
+  "scripts": {
+    "test": "node antibot.test.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}
