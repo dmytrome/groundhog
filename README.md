@@ -25,15 +25,7 @@ docker compose up --build -d
 curl -s http://localhost:9222/json/version    # CDP is live
 ```
 
-### 2. Run the MCP server
-
-```bash
-cd mcp
-uv sync
-uv run groundhog-mcp          # stdio transport
-```
-
-### 3. Add it to your MCP client
+### 2. Add it to your MCP client
 
 Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 
@@ -41,13 +33,16 @@ Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 {
   "mcpServers": {
     "groundhog": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/groundhog/mcp", "run", "groundhog-mcp"],
+      "command": "uvx",
+      "args": ["groundhog-mcp"],
       "env": { "CDP_URL": "http://127.0.0.1:9222" }
     }
   }
 }
 ```
+
+`uvx` fetches `groundhog-mcp` from PyPI on first run. To run from source instead:
+`cd mcp && uv sync && uv run groundhog-mcp`.
 
 ## Tools
 
