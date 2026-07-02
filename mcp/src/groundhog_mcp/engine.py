@@ -13,6 +13,7 @@ from playwright.async_api import (
 
 from . import safety
 from .config import Config, load_config
+from .detect_js import DETECT_AND_COLLECT
 from .ratelimit import RateLimiter
 
 _GOTO_TIMEOUT_MS = 60_000
@@ -80,6 +81,8 @@ class RenderedPage:
     text: str
     final_url: str
     title: str
+    hidden_spans: list[dict]
+    meta: dict
 
 
 def registrable_domain(url: str) -> str:
@@ -115,7 +118,7 @@ class EngineProvider:
         except PlaywrightError as exc:
             raise BrowserUnavailableError(remediation(self._cfg)) from exc
 
-    async def fetch(self, url: str) -> RenderedPage:
+    async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         await safety.check_url(url, self._cfg)
         await self._rl.acquire(registrable_domain(url))
         page = await self._context.new_page()
@@ -124,11 +127,18 @@ class EngineProvider:
             # A page can redirect to an internal address the initial check never
             # saw; re-check the final URL so its content is never returned.
             await safety.check_url(page.url, self._cfg)
+            collected = await page.evaluate(DETECT_AND_COLLECT, strip_hidden)
             return RenderedPage(
                 html=await page.content(),
                 text=await page.inner_text("body"),
                 final_url=page.url,
                 title=await page.title(),
+                hidden_spans=collected["hidden"],
+                meta={
+                    "meta": collected["meta"],
+                    "lang": collected["lang"],
+                    "canonical": collected["canonical"],
+                },
             )
         finally:
             await page.close()
