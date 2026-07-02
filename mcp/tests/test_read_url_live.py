@@ -16,9 +16,7 @@ async def _close_provider():
     # read_url uses a lazy singleton provider; close it after each test so the
     # Playwright connection does not keep the process alive.
     yield
-    if engine._provider is not None:
-        await engine._provider.aclose()
-        engine._provider = None
+    await engine.shutdown_provider()
 
 
 async def test_read_url_returns_markdown_and_provenance():

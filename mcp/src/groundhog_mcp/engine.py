@@ -164,3 +164,11 @@ async def get_provider() -> EngineProvider:
             await provider.start()
             _provider = provider
     return _provider
+
+
+async def shutdown_provider() -> None:
+    global _provider
+    async with _provider_lock:
+        if _provider is not None:
+            await _provider.aclose()
+            _provider = None
