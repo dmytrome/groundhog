@@ -46,7 +46,7 @@ Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 
 ## Tools
 
-### `read_url(url, format="markdown", max_tokens=None)`
+### `read_url(url, format="markdown", max_tokens=None, query=None, include_hidden=False)`
 
 Fetches a page and returns clean content plus provenance.
 
@@ -58,6 +58,20 @@ Fetches a page and returns clean content plus provenance.
 | `final_url` | The URL after redirects (re-checked against the SSRF guard) |
 | `fetched_at` | UTC ISO-8601 timestamp |
 | `truncated` | Whether the content was cut to fit the token budget |
+| `threats` | Hidden-text signals detected (signal type + excerpt per node); empty list when none found |
+| `matches` | When `query` is set: ranked passages with `heading`, `offset`, and `score` for citation |
+| `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present |
+
+Because Groundhog renders a real DOM, it can evaluate computed styles. Text invisible to
+humans — `display:none`, `visibility:hidden`, `opacity ≤ 0.05`, `font-size < 4 px`, and
+zero-size elements — is **stripped by default** and each occurrence reported in `threats`
+with its signal type and a short excerpt. Pass `include_hidden=True` to keep the stripped
+text in the output; `threats` is still populated so you know it was there. Pass `query` to
+replace blunt head-truncation with relevance-ranked passage selection: content is chunked
+on markdown structure, ranked by lexical (BM25) relevance, and the top passages within the
+token budget are returned; `matches` gives each passage's heading, character offset, and
+score for downstream citation. Ranking runs on sanitized content, so hidden-text injection
+payloads cannot influence which passages surface.
 
 ### `status()`
 
@@ -78,6 +92,10 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 | `PROXY` | _(none)_ | Optional upstream proxy for the browser |
 | `GROUNDHOG_AUTO_START_BROWSER` | `false` | If `true`, run `docker compose up -d` when the browser isn't reachable (requires Docker) |
 | `GROUNDHOG_COMPOSE_FILE` | _(none)_ | Compose file for auto-start (defaults to `docker compose` in the current directory) |
+
+**Dependencies:** `py3langid` (which pulls in numpy) is used for language detection in the
+`provenance` result. It is installed in the MCP server package only — not in the browser
+container.
 
 **Browser container:**
 
