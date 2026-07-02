@@ -44,8 +44,3 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
     return markdown, meta
 
 
-def to_markdown(html: str, text_fallback: str, url: str, max_tokens: int) -> tuple[str, bool]:
-    markdown, _ = to_document(html, url)
-    if not markdown:
-        markdown = text_fallback or ""
-    return truncate(markdown, max_tokens)

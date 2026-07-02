@@ -35,3 +35,11 @@ async def test_read_url_text_format():
     # The "text" format returns the page's visible text, which includes the h1.
     result = await read_url("https://example.com/", format="text")
     assert "Example Domain" in result["markdown"]
+
+
+async def test_read_url_populates_provenance_and_threats():
+    result = await read_url("https://example.com/")
+    assert isinstance(result["threats"], list)
+    assert result["matches"] == []
+    assert len(result["provenance"]["content_hash"]) == 64
+    assert result["provenance"]["language"] == "en"
