@@ -65,7 +65,12 @@ async def read_url(
 
     if query and query.strip():
         body, matches, truncated = retrieval.select(markdown, query, limit)
-        if not matches:
+        if matches:
+            # select() admits the top chunk unconditionally, so a single oversized
+            # passage can exceed the budget — clamp it and keep the flag honest.
+            body, over_budget = extract.truncate(body, limit)
+            truncated = truncated or over_budget
+        else:
             body, truncated = extract.truncate(markdown, limit)
     else:
         body, truncated = extract.truncate(markdown, limit)

@@ -74,6 +74,15 @@ async def test_query_returns_only_relevant_passages(fake_provider):
     assert result["matches"] and result["matches"][0]["heading"] == "Dogs"
 
 
+async def test_query_body_respects_token_budget(fake_provider):
+    # A single matching chunk larger than the budget must still be truncated, and
+    # `truncated` must report it — the query path honors max_tokens like the plain path.
+    fake_provider(_page())
+    result = await read_url("https://ex.com/p", query="loyal domesticated dogs", max_tokens=5)
+    assert result["truncated"] is True
+    assert "[... truncated]" in result["markdown"]
+
+
 async def test_empty_query_uses_full_document(fake_provider):
     fake_provider(_page())
     result = await read_url("https://ex.com/p", query="   ")
