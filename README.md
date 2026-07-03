@@ -88,7 +88,7 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 | `GROUNDHOG_BLOCK_PRIVATE_IPS` | `true` | Enforce the SSRF guard (resolve + block private ranges) |
 | `GROUNDHOG_MIN_DELAY_MS` | `5000` | Minimum delay between requests to the same domain |
 | `GROUNDHOG_MAX_TOKENS` | `20000` | Token budget before truncation |
-| `GROUNDHOG_USER_AGENT` | Chrome UA | User-Agent for the browser context |
+| `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4` | Cap on concurrent open tabs |
 | `PROXY` | _(none)_ | Optional upstream proxy for the browser |
 | `GROUNDHOG_AUTO_START_BROWSER` | `false` | If `true`, run `docker compose up -d` when the browser isn't reachable (requires Docker) |
 | `GROUNDHOG_COMPOSE_FILE` | _(none)_ | Compose file for auto-start (defaults to `docker compose` in the current directory) |
@@ -101,6 +101,8 @@ container.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
+| `USER_AGENT` | derived from installed Chrome | UA set at launch, so it is clean in every scope including workers |
+| `TZ` | `UTC` | Browser timezone — match it to the proxy/exit-IP geo |
 | `WINDOW_SIZE` | `1920,1080` | Initial Chrome window size |
 | `XVFB_WHD` | `1920x1080x24` | Virtual display geometry |
 
@@ -110,44 +112,48 @@ container.
   private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,
   CGNAT `100.64.0.0/10`, and IPv4-mapped IPv6 — and re-checks the URL after redirects.
   Only `http`/`https`, no credentials in URLs. Read-only, per-domain rate limiting.
-- **Stealth that survives CDP.** Stealth plugins for Puppeteer/Playwright inject their
-  evasions at browser launch, so they don't apply when you connect to a pre-launched
-  browser over CDP. Groundhog bakes stealth into the container, so one persistent browser
-  serves many sessions over CDP with stealth intact.
-- **A real fingerprint.** It's real Chrome — authentic TLS/HTTP2 fingerprint, real
-  WebGL/canvas — not a Python HTTP client, so fingerprint-driven blocks go away and cheap
-  proxies work where they otherwise wouldn't.
+- **No automation tell.** Puppeteer/Playwright/Selenium enable the CDP `Runtime` domain,
+  which anti-bots detect (`isAutomatedWithCDP`). Groundhog drives the browser over raw CDP
+  and never enables `Runtime`/`Console`, so that signal is absent — a clean session that
+  full automation libraries can't produce over `connect_over_cdp`.
+- **A real fingerprint.** It's real Chrome, run headful under Xvfb (no `HeadlessChrome`
+  token) — authentic TLS/HTTP2 fingerprint, real WebGL/canvas — not a Python HTTP client,
+  so fingerprint-driven blocks go away and cheap proxies work where they otherwise wouldn't.
 
 ## Under the hood: the stealth Chrome container
 
-A minimal Docker container running headless Chrome with a remote CDP endpoint. Any
-CDP-speaking client (Puppeteer, Playwright, Selenium, chromedp, raw DevTools) can drive
-it — Groundhog is one such client.
+A minimal Docker container running **headful Chrome under Xvfb** with a remote CDP
+endpoint. Any CDP-speaking client (Puppeteer, Playwright, Selenium, chromedp, raw
+DevTools) can drive it — Groundhog is one such client.
 
-- **`--headless=new`** — modern headless mode (required to load extensions).
+- **Headful under Xvfb**, not `--headless=new` — the browser reports `Chrome`, not
+  `HeadlessChrome`, avoids headless-specific tells, and engages the real GPU path.
 - **`--disable-blink-features=AutomationControlled`** — `navigator.webdriver` reads
   `false`.
-- **MAIN-world stealth content script**
-  ([`stealth_ext/stealth.js`](stealth_ext/stealth.js)) — injected at `document_start`,
-  restores `navigator.deviceMemory` and aligns Notification permission with the
-  Permissions API. Deliberately small: modern Chrome already clears most signals.
-- WebGL enabled via ANGLE so the GPU fingerprint is populated.
-
-**You must set a User-Agent.** The container does not rewrite the UA — out of the box
-Chrome reports `HeadlessChrome/<version>`. Groundhog sets a realistic UA and viewport for
-you; other clients must do the same (see [`examples/`](examples/)).
+- **UA set at launch** from the installed Chrome version (`USER_AGENT`), so it is clean
+  in every scope — main frame, network, and Web/Service Worker globals.
+- **`TZ`** sets the browser timezone; match it to the proxy/exit-IP geo (a timezone/IP
+  mismatch is itself a signal).
+- **GPU-aware WebGL.** The entrypoint auto-detects a GPU (NVIDIA via the Container
+  Toolkit, or Intel/AMD via `/dev/dri`) and uses hardware acceleration; without one it
+  runs Mesa `llvmpipe`, a coherent software renderer that VMs and servers legitimately
+  emit. See the `gpus`/`devices` hints in [`docker-compose.yml`](docker-compose.yml).
 
 ### Verified results
 
-Measured against a freshly built container (Chrome 149) driven by a client that sets a
-realistic UA + viewport:
+Measured against a freshly built container (Chrome 149, headful under Xvfb, no proxy),
+driven over raw CDP:
 
 | Detector | Result |
 | --- | --- |
-| [bot.sannysoft.com](https://bot.sannysoft.com/) | 31 / 31 checks pass, 0 fail |
-| [areyouheadless](https://arh.antoinevastel.com/bots/areyouheadless) | "You are not Chrome headless" |
+| [deviceandbrowserinfo](https://deviceandbrowserinfo.com/are_you_a_bot) | not a bot (`isBot: false`, zero flags) |
+| [iphey](https://iphey.com/) | Trustworthy (with `TZ` matching the IP) |
+| [browserscan](https://www.browserscan.net/bot-detection) | Normal |
+| [bot.sannysoft.com](https://bot.sannysoft.com/) | 31 / 31 checks pass |
 
-The live suite in [`tests/`](tests/) asserts these automatically.
+These reflect the raw-CDP client. Full automation libraries (Puppeteer/Playwright/Selenium)
+enable the CDP `Runtime` domain and are flagged as automated even against this container —
+see [`examples/`](examples/) for which need patched (rebrowser) variants.
 
 ### Examples
 

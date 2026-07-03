@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-03
+
+### Changed
+
+- The engine drives the browser over raw CDP and never enables the Runtime/Console domains,
+  so the session is not flagged as automated (`isAutomatedWithCDP`). This replaces the
+  Playwright client, which enables Runtime and is detectable over `connect_over_cdp`.
+- The container runs headful under Xvfb instead of `--headless=new`: it reports `Chrome`
+  (not `HeadlessChrome`), avoids headless-specific tells, and engages the GPU path.
+- The User-Agent is set at container launch from the installed Chrome version, so it is
+  clean in every scope including Web/Service Worker globals. Removes `GROUNDHOG_USER_AGENT`.
+
+### Added
+
+- GPU-aware WebGL: the entrypoint auto-detects NVIDIA / Intel-AMD GPUs and uses hardware
+  acceleration, falling back to Mesa llvmpipe (a coherent software renderer). Opt-in GPU
+  passthrough in `docker-compose.yml`.
+- `TZ` (browser timezone, to match the proxy/exit-IP geo) and `GROUNDHOG_MAX_CONCURRENT_PAGES`
+  (concurrent-tab cap) settings.
+
+### Removed
+
+- The `--load-extension` stealth extension, which recent Chrome ignores; its patches were
+  redundant with native Chrome behavior.
+
 ## [0.2.0] - 2026-07-03
 
 ### Added
@@ -57,6 +82,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.3.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.2.0
 [0.1.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.1.0
