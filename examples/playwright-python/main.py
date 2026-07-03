@@ -1,34 +1,39 @@
-"""Playwright (Python) over CDP.
+"""Playwright (Python) over CDP, hardened to pass bot detectors.
 
-The container does not set a User-Agent, so we set it (and the viewport) on the
-context.
+Two library tells to clear when driving with Playwright:
+  1. the CDP Runtime.enable leak (isAutomatedWithCDP) — use the rebrowser-patched
+     client and set REBROWSER_PATCHES_RUNTIME_FIX_MODE=addBinding;
+  2. Playwright's window globals (isPlaywright) — delete them in an init script.
+The container already provides the fingerprint stealth (UA, WebGL, timezone).
 
     pip install -r requirements.txt
-    python main.py
+    REBROWSER_PATCHES_RUNTIME_FIX_MODE=addBinding python main.py
 
 CDP_URL defaults to http://127.0.0.1:9222.
 """
 
 import os
 
-from playwright.sync_api import sync_playwright
+from rebrowser_playwright.sync_api import sync_playwright
 
 CDP_URL = os.environ.get("CDP_URL", "http://127.0.0.1:9222")
-REAL_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/149.0.0.0 Safari/537.36"
-)
 
 with sync_playwright() as p:
     browser = p.chromium.connect_over_cdp(CDP_URL)
     try:
-        context = browser.new_context(
-            user_agent=REAL_UA,
-            viewport={"width": 1920, "height": 1080},
+        context = browser.new_context()
+        # The globals deviceandbrowserinfo checks for `isPlaywright`.
+        context.add_init_script(
+            "try{delete window.__pwInitScripts}catch(e){}"
+            "try{delete window.__playwright__binding__}catch(e){}"
         )
         page = context.new_page()
-        page.goto("https://bot.sannysoft.com/", wait_until="networkidle")
-        page.screenshot(path="sannysoft.png", full_page=True)
-        print("saved sannysoft.png — UA:", page.evaluate("() => navigator.userAgent"))
+        page.goto(
+            "https://deviceandbrowserinfo.com/are_you_a_bot",
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_timeout(6000)
+        page.screenshot(path="result.png", full_page=True)
+        print("saved result.png")
     finally:
         browser.close()

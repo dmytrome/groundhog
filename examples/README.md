@@ -7,27 +7,36 @@ longer need to override it (and for stealth, shouldn't).
 Start the container first:
 
 ```bash
-docker compose up --build -d   # from the repo root
+docker compose up --build -d          # from the repo root
 ```
 
 > Use `127.0.0.1`, not `localhost`. Some clients (Playwright) resolve
 > `localhost` to IPv6 `::1`, which the container does not listen on.
 
-> **On the CDP-automation tell:** Puppeteer/Playwright/Selenium enable the CDP
-> `Runtime` domain, which anti-bots detect (`isAutomatedWithCDP`) even against this
-> container. `python-raw-cdp` avoids it by never enabling `Runtime` (as Groundhog's
-> MCP server does); for the library clients, use a patched variant
-> ([rebrowser-patches](https://github.com/rebrowser/rebrowser-patches)) to clear that
-> signal. The container's *fingerprint* stealth (UA, WebGL, timezone) applies to every
-> client regardless.
+## Passing bot detectors
 
-| Example | Language | Connect API |
+The container provides the *fingerprint* stealth (UA, WebGL, timezone) for every
+client. But automation **libraries** add their own tells that you clear client-side:
+
+- **CDP `Runtime.enable` leak** (`isAutomatedWithCDP`) — Puppeteer/Playwright/Selenium
+  enable the Runtime domain. Clear it with the rebrowser-patched client
+  (`REBROWSER_PATCHES_RUNTIME_FIX_MODE=addBinding`). chromedriver and chromedp enable
+  Runtime with no supported way to stop it — those cannot clear this tell.
+- **Library globals** (`isPlaywright` = `__pwInitScripts` / `__playwright__binding__`;
+  `isSeleniumChromeDefault` = chromedriver's `cdc_*`) — delete them in an init script.
+
+deviceandbrowserinfo has **no** `isPuppeteer` check, so Puppeteer only needs the CDP fix.
+
+| Example | Fully passes `deviceandbrowserinfo`? | Recipe |
 | --- | --- | --- |
-| [puppeteer](puppeteer) | Node | `puppeteer.connect({ browserURL })` |
-| [playwright-node](playwright-node) | Node | `chromium.connectOverCDP(url)` |
-| [playwright-python](playwright-python) | Python | `chromium.connect_over_cdp(url)` |
-| [selenium-python](selenium-python) | Python | `debuggerAddress` |
-| [python-raw-cdp](python-raw-cdp) | Python | raw DevTools over WebSocket |
-| [go-chromedp](go-chromedp) | Go | `chromedp.NewRemoteAllocator` |
+| [python-raw-cdp](python-raw-cdp) | ✅ yes | raw CDP, never enables Runtime — the reference |
+| [playwright-node](playwright-node) | ✅ yes | rebrowser-playwright-core + delete `__pw*` globals |
+| [playwright-python](playwright-python) | ✅ yes | rebrowser-playwright + delete `__pw*` globals |
+| [puppeteer](puppeteer) | ✅ yes | rebrowser-puppeteer-core (no isPuppeteer check) |
+| [selenium-python](selenium-python) | ◐ partial | strips `cdc_`, but chromedriver's `isAutomatedWithCDP` remains — use raw CDP / SeleniumBase CDP Mode for a full pass |
+| [go-chromedp](go-chromedp) | ◐ partial | chromedp enables Runtime → `isAutomatedWithCDP`; use raw CDP in Go for a full pass |
+
+The rebrowser examples need `REBROWSER_PATCHES_RUNTIME_FIX_MODE=addBinding` in the
+environment (see each example's header).
 
 Other CDP-capable crawlers and frameworks: see [OTHER_TOOLS.md](OTHER_TOOLS.md).
