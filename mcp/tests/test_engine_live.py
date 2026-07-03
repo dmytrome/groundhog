@@ -1,10 +1,12 @@
+import dataclasses
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from groundhog_mcp import engine
 from groundhog_mcp.config import load_config
-from groundhog_mcp.detect_js import DETECT_AND_COLLECT
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
 
@@ -45,20 +47,42 @@ HIDDEN_HTML = (
 )
 
 
+def _serve(body: str) -> ThreadingHTTPServer:
+    payload = body.encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    # Bind all interfaces so the containerized Chrome can reach the host via
+    # host.docker.internal (Docker Desktop; on Linux needs host-gateway mapping).
+    srv = ThreadingHTTPServer(("", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 async def test_detect_and_collect_finds_and_removes_hidden_text():
-    provider = engine.EngineProvider(load_config())
+    srv = _serve(HIDDEN_HTML)
+    port = srv.server_address[1]
+    cfg = dataclasses.replace(load_config(), block_private_ips=False)
+    provider = EngineProvider(cfg)
     await provider.start()
     try:
-        page = await provider._context.new_page()
-        await page.set_content(HIDDEN_HTML)
-        result = await page.evaluate(DETECT_AND_COLLECT, True)
-        assert any("SECRET INJECTION" in h["text"] for h in result["hidden"])
-        assert result["lang"] == "en"
-        assert result["meta"].get("author") == "T"
-        assert "SECRET INJECTION" not in await page.content()
-        await page.close()
+        page = await provider.fetch(f"http://host.docker.internal:{port}/")
+        assert any("SECRET INJECTION" in h["text"] for h in page.hidden_spans)
+        assert page.meta["lang"] == "en"
+        assert page.meta["meta"].get("author") == "T"
+        assert "SECRET INJECTION" not in page.html
     finally:
         await provider.aclose()
+        srv.shutdown()
 
 
 async def test_fetch_exposes_hidden_spans_and_meta():
