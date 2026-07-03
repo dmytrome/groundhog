@@ -6,7 +6,6 @@ from typing import TypedDict
 _CHARS_PER_TOKEN = 4
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
-_BLOCK_RE = re.compile(r"[^\n]+(?:\n[^\n]+)*")
 _K1 = 1.5
 _B = 0.75
 
@@ -29,14 +28,35 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _chunk(markdown: str) -> list[_Chunk]:
+    # Scan line by line so a heading with no blank line before its body still
+    # splits into a heading + a searchable body chunk (a blank-line-delimited
+    # block would swallow the body into the heading and drop it).
     chunks: list[_Chunk] = []
     heading: str | None = None
-    for m in _BLOCK_RE.finditer(markdown):
-        block = m.group()
-        if _HEADING_RE.match(block):
-            heading = _HEADING_RE.sub("", block).strip()
-            continue
-        chunks.append(_Chunk(heading=heading, offset=m.start(), text=block))
+    lines: list[str] = []
+    offset = 0
+    pos = 0
+
+    def flush() -> None:
+        nonlocal lines
+        if lines:
+            chunks.append(_Chunk(heading=heading, offset=offset, text="\n".join(lines)))
+            lines = []
+
+    for raw in markdown.splitlines(keepends=True):
+        line = raw.rstrip("\n")
+        start = pos
+        pos += len(raw)
+        if not line.strip():
+            flush()
+        elif _HEADING_RE.match(line):
+            flush()
+            heading = _HEADING_RE.sub("", line).strip()
+        else:
+            if not lines:
+                offset = start
+            lines.append(line)
+    flush()
     return chunks
 
 

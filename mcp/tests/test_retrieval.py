@@ -45,3 +45,12 @@ def test_ranking_is_deterministic():
     a = select(DOC, "cat hunter vision", max_tokens=10000)
     b = select(DOC, "cat hunter vision", max_tokens=10000)
     assert a == b
+
+
+def test_body_without_blank_line_after_heading_is_searchable():
+    # A heading directly followed by its body (no blank line) must still yield a
+    # searchable body chunk, not be swallowed whole into the heading.
+    doc = "# Dogs\nLoyal domesticated animals trained for companionship and work."
+    body, matches, _ = select(doc, "loyal domesticated companionship", max_tokens=10000)
+    assert "Loyal domesticated" in body
+    assert matches and matches[0]["heading"] == "Dogs"
