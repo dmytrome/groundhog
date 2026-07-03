@@ -1,22 +1,30 @@
-# Live integration tests
+# Anti-bot conformance harness
 
-Connects to the running container over CDP and asserts it passes real anti-bot
-detectors (bot.sannysoft.com, areyouheadless), saving a full-page screenshot of
-each as proof. Requires Docker, network access, and the container running.
+`antibot.py` drives the running container over **raw CDP** — never enabling the
+Runtime/Console domains, exactly like the Groundhog engine — visits each detector,
+records a verdict plus a full-page screenshot, probes the fingerprint surface, and
+writes a self-contained **`report.html`** (screenshots embedded) you can open in a
+browser.
 
 ```bash
 # from the repo root
-docker compose up --build -d
+docker compose up --build -d          # start the stealth browser
 
-cd tests
-npm install
-CDP_URL=http://127.0.0.1:9222 npm test
+pip install -r tests/requirements.txt # just `websockets`
+python tests/antibot.py               # writes tests/report.html
+open tests/report.html                # see verdicts + screenshots
 ```
 
-- `CDP_URL` defaults to `http://127.0.0.1:9222`. Use `127.0.0.1`, **not**
-  `localhost` — Playwright resolves `localhost` to IPv6 `::1`, which the
-  container does not listen on.
-- Screenshots are written to `tests/screenshots/` (gitignored).
-- The tests set a realistic User-Agent and viewport before browsing — the same
-  thing every client must do (the container does not override the UA itself).
-  They are network-dependent and may be affected if the detection sites change.
+- `CDP_URL` defaults to `http://127.0.0.1:9222`. Use `127.0.0.1`, not `localhost`.
+- Match the container's `TZ` to the exit-IP geo (e.g. `TZ=Europe/London docker compose
+  up -d`), or the location-coherence detectors will flag a UTC clock behind a non-UTC IP.
+- Exit code is non-zero if any pass/fail detector fails, so it works in CI.
+- Two outputs: `report.html` (screenshots embedded, gitignored — open locally) and
+  `../RESULTS.md` (a small committed table anyone can read on GitHub as the public proof).
+  Regenerate both by re-running the harness.
+
+Pass/fail detectors: deviceandbrowserinfo (`isBot`), iphey (Trustworthy), browserscan
+(Normal), sannysoft (0 fails). The **Fingerprint surface** section records diagnostic
+values (WebGL renderer, canvas, timezone, `navigator.webdriver`, platform) rather than a
+pass/fail — use it to confirm coherence. Detectors are network-dependent and their markup
+changes; the screenshot is the source of truth.

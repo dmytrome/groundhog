@@ -1,8 +1,13 @@
-// chromedp (Go) over CDP. The container does not set a User-Agent, so we set it
-// with emulation.SetUserAgentOverride.
+// chromedp (Go) over CDP.
 //
 //	go mod tidy
 //	go run .
+//
+// Caveat: chromedp enables the CDP Runtime domain (for Evaluate), so a detector
+// flags it as automated (isAutomatedWithCDP) — there is no supported way to stop
+// chromedp from doing so. For a FULL pass in Go, drive raw CDP over a WebSocket
+// without enabling Runtime (the same approach as ../python-raw-cdp). The
+// container's fingerprint stealth (UA, WebGL, timezone) applies either way.
 //
 // CDP_URL defaults to http://127.0.0.1:9222.
 package main
@@ -16,14 +21,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 )
 
-const realUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
-	"(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-
-// browserWS resolves the browser-level WebSocket URL from the HTTP endpoint.
 func browserWS(base string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(base + "/json/version")
@@ -58,18 +58,15 @@ func main() {
 	defer cancelTimeout()
 
 	var buf []byte
-	var ua string
 	if err := chromedp.Run(ctx,
-		emulation.SetUserAgentOverride(realUA),
-		chromedp.Navigate("https://bot.sannysoft.com/"),
-		chromedp.Sleep(5*time.Second),
-		chromedp.Evaluate(`navigator.userAgent`, &ua),
+		chromedp.Navigate("https://deviceandbrowserinfo.com/are_you_a_bot"),
+		chromedp.Sleep(6*time.Second),
 		chromedp.CaptureScreenshot(&buf),
 	); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.WriteFile("sannysoft.png", buf, 0o644); err != nil {
+	if err := os.WriteFile("result.png", buf, 0o644); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("saved sannysoft.png — UA:", ua)
+	fmt.Println("saved result.png")
 }

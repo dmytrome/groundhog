@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 async def _close_provider():
     # read_url uses a lazy singleton provider; close it after each test so the
-    # Playwright connection does not keep the process alive.
+    # CDP connection does not keep the process alive.
     yield
     await engine.shutdown_provider()
 

@@ -9,7 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-COPY stealth_ext /opt/stealth
+# Separate layer so it doesn't invalidate the cached Chrome install above.
+# tzdata lets Chrome's Intl report a timezone that matches the exit IP's geo
+# (set TZ); a timezone/IP mismatch is itself a block signal.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -1,16 +1,20 @@
 """Selenium (Python) attaching to the container over CDP.
 
-Selenium attaches to the already-running Chrome via `debuggerAddress` instead of
-launching its own. The container does not set a User-Agent, so we set it with a
-raw CDP command.
+Selenium attaches to the already-running Chrome via `debuggerAddress`. Two Selenium
+tells: the chromedriver `cdc_` globals (isSeleniumChromeDefault) and the CDP
+Runtime.enable leak (isAutomatedWithCDP).
+
+The `cdc_` globals ARE clearable (stripped below via an init script). But
+chromedriver enables the CDP Runtime domain and there is no supported way to stop
+it, so `isAutomatedWithCDP` stays true as long as chromedriver is in the loop. For
+a FULL pass, drop chromedriver: use a raw-CDP driver (see ../python-raw-cdp) or
+SeleniumBase CDP Mode. This example shows the best you can do with classic Selenium.
 
     pip install -r requirements.txt
     python main.py
 
-CDP_ADDRESS defaults to 127.0.0.1:9222.
-
-Note: Selenium still needs a chromedriver matching the container's Chrome
-version. Selenium Manager (bundled with Selenium 4) downloads it automatically.
+CDP_ADDRESS defaults to 127.0.0.1:9222. Selenium Manager (bundled with Selenium 4)
+downloads a matching chromedriver automatically.
 """
 
 import os
@@ -19,19 +23,22 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
 CDP_ADDRESS = os.environ.get("CDP_ADDRESS", "127.0.0.1:9222")
-REAL_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/149.0.0.0 Safari/537.36"
-)
 
 options = Options()
 options.add_experimental_option("debuggerAddress", CDP_ADDRESS)
 
 driver = webdriver.Chrome(options=options)
 try:
-    driver.execute_cdp_cmd("Network.setUserAgentOverride", {"userAgent": REAL_UA})
-    driver.get("https://bot.sannysoft.com/")
-    driver.save_screenshot("sannysoft.png")
-    print("saved sannysoft.png — UA:", driver.execute_script("return navigator.userAgent"))
+    # Strip chromedriver's cdc_ globals before the page can read them.
+    driver.execute_cdp_cmd(
+        "Page.addScriptToEvaluateOnNewDocument",
+        {
+            "source": "for(const k of Object.keys(window)){"
+            "if(/cdc_/.test(k)){try{delete window[k]}catch(e){}}}"
+        },
+    )
+    driver.get("https://deviceandbrowserinfo.com/are_you_a_bot")
+    driver.save_screenshot("result.png")
+    print("saved result.png (note: isAutomatedWithCDP remains — see the module docstring)")
 finally:
     driver.quit()

@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "puppeteer-core": "^24.0.0"
+    "rebrowser-puppeteer-core": "^24.0.0"
   }
 }
