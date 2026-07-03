@@ -7,8 +7,11 @@ services:
     platform: linux/amd64
     environment:
       - WINDOW_SIZE=1920,1080
-      # Match this to the exit IP's geo (proxy region). A UTC clock behind a
-      # non-UTC IP is a block signal. In v0.3 this is derived from the proxy.
+      # Upstream proxy, e.g. http://user:pass@host:port. When set, the entrypoint
+      # geolocates the exit IP and aligns TZ + locale to it (geo-coherence).
+      - PROXY=${PROXY:-}
+      # Fallback timezone when no proxy is set; with a proxy it is derived from
+      # the exit IP's geo, so this is overridden.
       - TZ=${TZ:-UTC}
     # Optional GPU passthrough for an authentic hardware WebGL renderer (the
     # entrypoint auto-detects and switches flags). Without a GPU it runs Mesa
