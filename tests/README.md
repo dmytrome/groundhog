@@ -19,8 +19,9 @@ open tests/report.html                # see verdicts + screenshots
 - Match the container's `TZ` to the exit-IP geo (e.g. `TZ=Europe/London docker compose
   up -d`), or the location-coherence detectors will flag a UTC clock behind a non-UTC IP.
 - Exit code is non-zero if any pass/fail detector fails, so it works in CI.
-- `report.html` and `screenshots/` are gitignored (they embed large images); regenerate
-  them by re-running the harness.
+- Two outputs: `report.html` (screenshots embedded, gitignored — open locally) and
+  `../RESULTS.md` (a small committed table anyone can read on GitHub as the public proof).
+  Regenerate both by re-running the harness.
 
 Pass/fail detectors: deviceandbrowserinfo (`isBot`), iphey (Trustworthy), browserscan
 (Normal), sannysoft (0 fails). The **Fingerprint surface** section records diagnostic
