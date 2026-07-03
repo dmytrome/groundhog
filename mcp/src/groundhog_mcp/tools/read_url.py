@@ -1,11 +1,10 @@
 from datetime import UTC, datetime
 from typing import TypedDict
 
-from .. import extract
-from ..config import load_config
-from ..engine import get_provider
+from .. import engine, extract, provenance, retrieval, sanitize
 
 _FORMATS = ("markdown", "text")
+_EXCERPT_CHARS = 80
 
 
 class ReadResult(TypedDict):
@@ -15,23 +14,68 @@ class ReadResult(TypedDict):
     final_url: str
     fetched_at: str
     truncated: bool
+    threats: list[sanitize.Threat]
+    matches: list[retrieval.Match]
+    provenance: provenance.Provenance
 
 
-async def read_url(url: str, format: str = "markdown", max_tokens: int | None = None) -> ReadResult:
-    """Fetch a web page through the stealth browser and return clean Markdown
-    plus provenance (source URL, final URL, title, fetch time). Use this to
-    ground answers in live web content, including sites that block plain
-    fetchers. `format` may be "markdown" (default) or "text"."""
+def _hidden_threats(spans: list[dict]) -> list[sanitize.Threat]:
+    return [
+        {
+            "type": "hidden_css",
+            "reason": s["reason"],
+            "location": s.get("path"),
+            "excerpt": s["text"][:_EXCERPT_CHARS],
+        }
+        for s in spans
+    ]
+
+
+async def read_url(
+    url: str,
+    format: str = "markdown",
+    max_tokens: int | None = None,
+    query: str | None = None,
+    include_hidden: bool = False,
+) -> ReadResult:
+    """Fetch a web page through the stealth browser and return clean, grounded
+    content with provenance. Hidden text injected for models but invisible to
+    humans is stripped by default and reported in `threats`. Pass `query` to get
+    only the passages relevant to it (with `matches` provenance) instead of the
+    whole page. `format` may be "markdown" (default) or "text"; set
+    `include_hidden=true` to keep hidden text. Use this to ground answers in live
+    web content, including sites that block plain fetchers."""
     if format not in _FORMATS:
         raise ValueError(f"format must be one of {_FORMATS}, got {format!r}")
-    cfg = load_config()
-    provider = await get_provider()
-    page = await provider.fetch(url)
+    cfg = engine.load_config()
+    provider = await engine.get_provider()
+    page = await provider.fetch(url, strip_hidden=not include_hidden)
     limit = max_tokens or cfg.max_tokens
+
     if format == "text":
-        body, truncated = extract.truncate(page.text, limit)
+        markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
-        body, truncated = extract.to_markdown(page.html, page.text, page.final_url, limit)
+        markdown, meta = extract.to_document(page.html, page.final_url)
+        if not markdown:
+            markdown = page.text
+
+    markdown, char_threats = sanitize.strip_invisible(markdown, strip=not include_hidden)
+    threats = _hidden_threats(page.hidden_spans) + char_threats
+    prov = provenance.build(markdown, meta, page.meta)
+
+    if query and query.strip():
+        body, matches, truncated = retrieval.select(markdown, query, limit)
+        if matches:
+            # select() admits the top chunk unconditionally, so a single oversized
+            # passage can exceed the budget — clamp it and keep the flag honest.
+            body, over_budget = extract.truncate(body, limit)
+            truncated = truncated or over_budget
+        else:
+            body, truncated = extract.truncate(markdown, limit)
+    else:
+        body, truncated = extract.truncate(markdown, limit)
+        matches = []
+
     return {
         "markdown": body,
         "title": page.title,
@@ -39,4 +83,7 @@ async def read_url(url: str, format: str = "markdown", max_tokens: int | None = 
         "final_url": page.final_url,
         "fetched_at": datetime.now(UTC).isoformat(),
         "truncated": truncated,
+        "threats": threats,
+        "matches": matches,
+        "provenance": prov,
     }
