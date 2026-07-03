@@ -9,7 +9,7 @@ Driven over raw CDP (no Runtime.enable) against `Chrome/149.0.7827.200`, regener
 | [browserscan](https://www.browserscan.net/bot-detection) | **pass** | Normal |
 | [sannysoft](https://bot.sannysoft.com/) | **pass** | fails=0 |
 | [areyouheadless](https://arh.antoinevastel.com/bots/areyouheadless) | **pass** | You are not Chrome headless |
-| [creepjs](https://abrahamjuliot.github.io/creepjs/) | info | 44% like headless \| 0% stealth |
+| [creepjs](https://abrahamjuliot.github.io/creepjs/) | info | 38% like headless \| 0% stealth |
 | [incolumitas](https://bot.incolumitas.com/) | info | behavioralClassificationScore |
 
 ## Fingerprint surface

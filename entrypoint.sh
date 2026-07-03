@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-XVFB_WHD=${XVFB_WHD:-1920x1080x24}
+# Xvfb screen deliberately larger than the Chrome window, so the viewport does
+# not equal the screen (a headless tell: CreepJS `hasVvpScreenRes`).
+XVFB_WHD=${XVFB_WHD:-2560x1440x24}
 PORT=${PORT:-9222}
 CHROME_PORT=${CHROME_PORT:-9223}
 WINDOW_SIZE=${WINDOW_SIZE:-1920,1080}
@@ -84,6 +86,8 @@ exec /opt/google/chrome/chrome \
   --disable-dev-shm-usage \
   "${PROXY_ARGS[@]}" \
   --disable-blink-features=AutomationControlled \
+  --use-fake-device-for-media-stream \
+  --force-dark-mode \
   --enable-webgl \
   "${GPU_ARGS[@]}" \
   about:blank
