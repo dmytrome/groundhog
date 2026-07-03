@@ -26,3 +26,18 @@ def test_strip_false_keeps_chars_but_reports():
     out, threats = strip_invisible("a​b", strip=False)
     assert out == "a​b"
     assert len(threats) == 1
+
+
+def test_unicode_tag_chars_detected_and_stripped():
+    text = "hi" + chr(0xE0041) + chr(0xE0042)  # invisible Tag-block A and B
+    out, threats = strip_invisible(text)
+    assert out == "hi"
+    assert len(threats) == 2
+    assert all(t["type"] == "tag" for t in threats)
+
+
+def test_bidi_isolate_detected_and_stripped():
+    text = "x" + chr(0x2066) + "y" + chr(0x2069)  # LRI ... PDI
+    out, threats = strip_invisible(text)
+    assert out == "xy"
+    assert {t["type"] for t in threats} == {"bidi"}
