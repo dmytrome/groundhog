@@ -10,9 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Separate layer so it doesn't invalidate the cached Chrome install above.
-# tzdata lets Chrome's Intl report a timezone that matches the exit IP's geo
-# (set TZ); a timezone/IP mismatch is itself a block signal.
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
+# tzdata: lets Chrome's Intl report a timezone matching the exit IP's geo (set TZ).
+# fonts: a slim image ships almost none, which reads as a headless/VM tell; a
+# realistic desktop-Linux font set makes font enumeration look like a real box.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      tzdata \
+      fonts-liberation fonts-croscore fonts-dejavu fonts-freefont-ttf fonts-noto-core && \
     rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
