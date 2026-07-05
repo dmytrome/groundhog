@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+_DEFAULT_BROWSER_IMAGE = "ghcr.io/dmytrome/groundhog:latest"
+
 
 @dataclass(frozen=True)
 class Config:
@@ -10,6 +12,7 @@ class Config:
     max_tokens: int
     auto_start_browser: bool
     compose_file: str | None
+    browser_image: str
     max_concurrent_pages: int
 
 
@@ -25,7 +28,8 @@ def load_config() -> Config:
         min_delay_ms=int(os.environ.get("GROUNDHOG_MIN_DELAY_MS", "5000")),
         block_private_ips=_bool(os.environ.get("GROUNDHOG_BLOCK_PRIVATE_IPS"), True),
         max_tokens=int(os.environ.get("GROUNDHOG_MAX_TOKENS", "20000")),
-        auto_start_browser=_bool(os.environ.get("GROUNDHOG_AUTO_START_BROWSER"), False),
+        auto_start_browser=_bool(os.environ.get("GROUNDHOG_AUTO_START_BROWSER"), True),
         compose_file=os.environ.get("GROUNDHOG_COMPOSE_FILE") or None,
+        browser_image=os.environ.get("GROUNDHOG_BROWSER_IMAGE") or _DEFAULT_BROWSER_IMAGE,
         max_concurrent_pages=int(os.environ.get("GROUNDHOG_MAX_CONCURRENT_PAGES", "4")),
     )

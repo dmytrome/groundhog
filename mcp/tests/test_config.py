@@ -7,6 +7,8 @@ def test_defaults(monkeypatch):
         "GROUNDHOG_MIN_DELAY_MS",
         "GROUNDHOG_BLOCK_PRIVATE_IPS",
         "GROUNDHOG_MAX_TOKENS",
+        "GROUNDHOG_AUTO_START_BROWSER",
+        "GROUNDHOG_BROWSER_IMAGE",
     ):
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
@@ -14,6 +16,16 @@ def test_defaults(monkeypatch):
     assert cfg.min_delay_ms == 5000
     assert cfg.block_private_ips is True
     assert cfg.max_tokens == 20000
+    assert cfg.auto_start_browser is True  # turnkey: on by default
+    assert cfg.browser_image == "ghcr.io/dmytrome/groundhog:latest"
+
+
+def test_auto_start_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_AUTO_START_BROWSER", "false")
+    monkeypatch.setenv("GROUNDHOG_BROWSER_IMAGE", "custom/image:1")
+    cfg = load_config()
+    assert cfg.auto_start_browser is False
+    assert cfg.browser_image == "custom/image:1"
 
 
 def test_env_overrides(monkeypatch):
