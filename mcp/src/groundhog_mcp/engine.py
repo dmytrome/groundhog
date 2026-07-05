@@ -1,7 +1,10 @@
 import asyncio
 import json
+import shutil
+import sys
 import urllib.request
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import tldextract
 
@@ -16,17 +19,46 @@ _PROBE_TIMEOUT_S = 2.0
 _AUTOSTART_READY_TRIES = 30
 _ERR_DETAIL_CHARS = 300
 _VERSION_PATH = "/json/version"
+_CONTAINER_NAME = "groundhog-browser"
+_CONTAINER_SHM = "512m"
+_CONTAINER_CDP_PORT = 9222
+_CONTAINER_PLATFORM = "linux/amd64"  # the image is amd64-only (google-chrome-stable)
+_CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
+_RUNTIMES = ("docker", "podman")
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
 class BrowserUnavailableError(Exception):
     """The stealth browser's CDP endpoint could not be reached."""
 
 
+def _container_runtime() -> str | None:
+    for runtime in _RUNTIMES:
+        if shutil.which(runtime):
+            return runtime
+    return None
+
+
+def _is_local(cdp_url: str) -> bool:
+    return (urlparse(cdp_url).hostname or "") in _LOCAL_HOSTS
+
+
+def _port_of(cdp_url: str) -> int:
+    return urlparse(cdp_url).port or _CONTAINER_CDP_PORT
+
+
 def remediation(cfg: Config) -> str:
+    if _container_runtime() is None:
+        return (
+            "No container runtime found (looked for docker, podman). Install Docker "
+            "(https://docs.docker.com/get-docker/) or Podman, or point CDP_URL at a "
+            "hosted Groundhog browser for zero-install use."
+        )
+    bind = f"{_CONTAINER_BIND_HOST}:{_port_of(cfg.cdp_url)}:{_CONTAINER_CDP_PORT}"
     return (
-        f"Cannot reach the stealth browser at {cfg.cdp_url}. "
-        "Start it with `docker compose up -d` (see the Groundhog README), "
-        "or set GROUNDHOG_AUTO_START_BROWSER=true to let Groundhog start it for you."
+        f"Cannot reach the stealth browser at {cfg.cdp_url}. Start it with "
+        f"`docker run -d --rm -p {bind} {cfg.browser_image}` (or `docker compose up -d` "
+        "from the repo), or point CDP_URL at a hosted Groundhog browser."
     )
 
 
@@ -53,24 +85,52 @@ async def _browser_ws_url(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> st
     return (await _fetch_version(cdp_url, timeout))["webSocketDebuggerUrl"]
 
 
-async def _start_browser_container(cfg: Config) -> None:
-    cmd = ["docker", "compose"]
-    if cfg.compose_file:
-        cmd += ["-f", cfg.compose_file]
-    cmd += ["up", "-d"]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-    except FileNotFoundError as exc:
-        raise BrowserUnavailableError(
-            "GROUNDHOG_AUTO_START_BROWSER is set but Docker was not found on PATH. "
-            + remediation(cfg)
-        ) from exc
+async def _run(cmd: list[str]) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
     _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        detail = stderr.decode(errors="replace").strip()[:_ERR_DETAIL_CHARS]
-        raise BrowserUnavailableError(f"`docker compose up -d` failed: {detail}")
+    return proc.returncode or 0, stderr.decode(errors="replace").strip()[:_ERR_DETAIL_CHARS]
+
+
+async def _start_browser(cfg: Config) -> None:
+    """Bring up the stealth browser.
+
+    Default path: `docker run` the published image, so a bare `uvx groundhog-mcp`
+    works with no repo checkout. `GROUNDHOG_COMPOSE_FILE` opts into `docker compose`
+    against a local repo instead.
+    """
+    runtime = _container_runtime()
+    if runtime is None:
+        raise BrowserUnavailableError(remediation(cfg))
+    if cfg.compose_file:
+        cmd = [runtime, "compose", "-f", cfg.compose_file, "up", "-d"]
+    else:
+        await _run([runtime, "rm", "-f", _CONTAINER_NAME])  # clear a stale container, if any
+        cmd = [
+            runtime,
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            _CONTAINER_NAME,
+            "--platform",
+            _CONTAINER_PLATFORM,
+            "--shm-size",
+            _CONTAINER_SHM,
+            "-p",
+            f"{_CONTAINER_BIND_HOST}:{_port_of(cfg.cdp_url)}:{_CONTAINER_CDP_PORT}",
+            "--",
+            cfg.browser_image,
+        ]
+    print(
+        f"[groundhog] starting the stealth browser via {runtime} "
+        "(first run pulls the image, which can take a few minutes)…",
+        file=sys.stderr,
+    )
+    code, detail = await _run(cmd)
+    if code != 0:
+        raise BrowserUnavailableError(f"Could not start the browser via {runtime}: {detail}")
     for _ in range(_AUTOSTART_READY_TRIES):
         if await check_browser(cfg.cdp_url):
             return
@@ -108,16 +168,18 @@ class EngineProvider:
         await self._cdp.connect()
 
     async def _resolve_ws(self) -> str:
+        cfg = self._cfg
         try:
-            return await _browser_ws_url(self._cfg.cdp_url)
+            return await _browser_ws_url(cfg.cdp_url)
         except OSError as exc:
-            if not self._cfg.auto_start_browser:
-                raise BrowserUnavailableError(remediation(self._cfg)) from exc
-        await _start_browser_container(self._cfg)
+            # A remote/hosted CDP_URL is the user's to manage; only auto-start a local one.
+            if not (cfg.auto_start_browser and _is_local(cfg.cdp_url)):
+                raise BrowserUnavailableError(remediation(cfg)) from exc
+        await _start_browser(cfg)
         try:
-            return await _browser_ws_url(self._cfg.cdp_url)
+            return await _browser_ws_url(cfg.cdp_url)
         except OSError as exc:
-            raise BrowserUnavailableError(remediation(self._cfg)) from exc
+            raise BrowserUnavailableError(remediation(cfg)) from exc
 
     async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         await safety.check_url(url, self._cfg)

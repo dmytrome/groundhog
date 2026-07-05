@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-05
+
+### Added
+
+- One-command turnkey install: `GROUNDHOG_AUTO_START_BROWSER` now defaults on, and the MCP
+  server pulls-and-runs the published stealth-browser image (`ghcr.io/dmytrome/groundhog`)
+  with `docker run` when the browser isn't reachable — no repo checkout or manual step.
+  Detects Docker or Podman and falls back to an actionable message (install a runtime, or
+  point `CDP_URL` at a hosted browser). `GROUNDHOG_BROWSER_IMAGE` overrides the image;
+  `GROUNDHOG_COMPOSE_FILE` still opts into `docker compose` for local-repo use.
+- The stealth-browser image is published to GHCR on each release.
+
+### Changed
+
+- Auto-start only manages a local `CDP_URL`; a remote/hosted endpoint is left untouched.
+
 ## [0.4.0] - 2026-07-03
 
 ### Added
@@ -111,6 +127,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.5.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.4.0
 [0.3.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.3.1
 [0.3.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.3.0

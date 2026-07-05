@@ -14,20 +14,9 @@ agent / crawler  ──MCP──▶  Groundhog (read_url)  ──CDP──▶  s
 
 ## Quick start
 
-> **Prerequisite: the stealth browser must be running.** The MCP server is a thin
-> client that drives Chrome over CDP, so start the browser first. If it isn't reachable,
-> `read_url` returns a plain-language message on how to start it, and the `status` tool
-> reports reachability. Set `GROUNDHOG_AUTO_START_BROWSER=true` to have Groundhog run
-> `docker compose up -d` for you (requires Docker).
-
-### 1. Start the stealth browser
-
-```bash
-docker compose up --build -d
-curl -s http://localhost:9222/json/version    # CDP is live
-```
-
-### 2. Add it to your MCP client
+Add Groundhog to your MCP client — that's it. On the first `read_url`, Groundhog pulls and
+starts the stealth-browser container for you (Docker or Podman required); no repo checkout,
+no manual steps.
 
 Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 
@@ -36,15 +25,27 @@ Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
   "mcpServers": {
     "groundhog": {
       "command": "uvx",
-      "args": ["groundhog-mcp"],
-      "env": { "CDP_URL": "http://127.0.0.1:9222" }
+      "args": ["groundhog-mcp"]
     }
   }
 }
 ```
 
-`uvx` fetches `groundhog-mcp` from PyPI on first run. To run from source instead:
-`cd mcp && uv sync && uv run groundhog-mcp`.
+`uvx` fetches `groundhog-mcp` from PyPI on first run. The first fetch pulls the browser
+image (once, a few minutes); later fetches are instant. No container runtime? The `status`
+tool and any error say how to install one — or point `CDP_URL` at a hosted browser for
+zero-install use.
+
+**Prefer to manage the browser yourself?** Start it and Groundhog will just use it:
+
+```bash
+docker run -d --rm -p 127.0.0.1:9222:9222 ghcr.io/dmytrome/groundhog:latest
+# or, from a repo checkout: docker compose up --build -d
+curl -s http://localhost:9222/json/version    # CDP is live
+```
+
+Set `GROUNDHOG_AUTO_START_BROWSER=false` to disable auto-start. To run the MCP server from
+source: `cd mcp && uv sync && uv run groundhog-mcp`.
 
 ## Tools
 
@@ -91,8 +92,9 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 | `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
 | `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
 | `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Cap on concurrent open tabs                                                              |
-| `GROUNDHOG_AUTO_START_BROWSER`   | `false`                 | If `true`, run `docker compose up -d` when the browser isn't reachable (requires Docker) |
-| `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Compose file for auto-start (defaults to `docker compose` in the current directory)      |
+| `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Auto-pull-and-run the browser container when it isn't reachable (needs Docker/Podman); `false` to manage it yourself |
+| `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image used for auto-start                                                    |
+| `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Use `docker compose -f <file> up -d` for auto-start instead of `docker run` (local repo) |
 
 **Dependencies:** `py3langid` (which pulls in numpy) is used for language detection in the
 `provenance` result. It is installed in the MCP server package only — not in the browser
