@@ -33,6 +33,21 @@ def test_trafilatura_wins_over_meta():
     assert prov["author"] == "Traf Author"
 
 
+def test_implausible_trafilatura_author_is_rejected():
+    # trafilatura scrapes Wikipedia's authority-control box as the "author".
+    junk = "Authority control databases National United States Israel Other Yale LUX"
+    to_meta = build(
+        "text",
+        ExtractMeta(author=junk, published=None, canonical=None),
+        _engine_meta(meta={"article:author": "Real Byline"}),
+    )
+    assert to_meta["author"] == "Real Byline"
+    to_none = build(
+        "text", ExtractMeta(author=junk, published=None, canonical=None), _engine_meta()
+    )
+    assert to_none["author"] is None
+
+
 def test_modified_from_meta_only_and_null_when_absent():
     with_mod = build(
         "t",

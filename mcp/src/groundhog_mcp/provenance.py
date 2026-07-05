@@ -10,6 +10,20 @@ _PUBLISHED_KEYS = ("article:published_time", "datepublished", "dc.date")
 _MODIFIED_KEYS = ("article:modified_time", "datemodified", "og:updated_time")
 _MIN_CHARS_FOR_DETECTION = 20
 _DETECTION_SAMPLE_CHARS = 2000
+# A byline is short; trafilatura's text heuristic otherwise scrapes nav/footer
+# blocks (e.g. Wikipedia's authority-control box) as the author. Reject anything
+# too long to be one — misattributing an author is worse than reporting none.
+_MAX_AUTHOR_CHARS = 80
+_MAX_AUTHOR_WORDS = 8
+
+
+def _plausible_author(value: str | None) -> str | None:
+    if not value:
+        return None
+    collapsed = " ".join(value.split())
+    if len(collapsed) > _MAX_AUTHOR_CHARS or len(collapsed.split()) > _MAX_AUTHOR_WORDS:
+        return None
+    return collapsed
 
 
 class Provenance(TypedDict):
@@ -46,7 +60,7 @@ def build(markdown: str, extract_meta: ExtractMeta, engine_meta: dict) -> Proven
     return {
         "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
         "word_count": len(markdown.split()),
-        "author": extract_meta.author or _first(raw, _AUTHOR_KEYS),
+        "author": _plausible_author(extract_meta.author) or _first(raw, _AUTHOR_KEYS),
         "published": extract_meta.published or _first(raw, _PUBLISHED_KEYS),
         "modified": _first(raw, _MODIFIED_KEYS),
         "canonical": extract_meta.canonical

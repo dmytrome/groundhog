@@ -91,7 +91,6 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 | `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
 | `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
 | `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Cap on concurrent open tabs                                                              |
-| `PROXY`                          | _(none)_                | Optional upstream proxy for the browser                                                  |
 | `GROUNDHOG_AUTO_START_BROWSER`   | `false`                 | If `true`, run `docker compose up -d` when the browser isn't reachable (requires Docker) |
 | `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Compose file for auto-start (defaults to `docker compose` in the current directory)      |
 
@@ -103,10 +102,11 @@ container.
 
 | Env var       | Default                       | Purpose                                                           |
 | ------------- | ----------------------------- | ----------------------------------------------------------------- |
-| `USER_AGENT`  | derived from installed Chrome | UA set at launch, so it is clean in every scope including workers |
-| `TZ`          | `UTC`                         | Browser timezone — match it to the proxy/exit-IP geo              |
-| `WINDOW_SIZE` | `1920,1080`                   | Initial Chrome window size                                        |
-| `XVFB_WHD`    | `1920x1080x24`                | Virtual display geometry                                          |
+| `USER_AGENT`  | derived from installed Chrome | UA set at launch, so it is clean in every scope including workers        |
+| `PROXY`       | _(none)_                      | Upstream proxy (`http://user:pass@host:port`); auth is relayed and timezone/locale auto-align to the exit IP |
+| `TZ`          | `UTC`                         | Fallback timezone; auto-derived from the exit IP when `PROXY` is set     |
+| `WINDOW_SIZE` | `1920,1080`                   | Initial Chrome window size                                               |
+| `XVFB_WHD`    | `1920x1080x24`                | Virtual display geometry                                                 |
 
 ## Why Groundhog
 
@@ -134,8 +134,11 @@ DevTools) can drive it — Groundhog is one such client.
   `false`.
 - **UA set at launch** from the installed Chrome version (`USER_AGENT`), so it is clean
   in every scope — main frame, network, and Web/Service Worker globals.
-- **`TZ`** sets the browser timezone; match it to the proxy/exit-IP geo (a timezone/IP
-  mismatch is itself a signal).
+- **Proxy geo-coherence.** When `PROXY` is set, the entrypoint geolocates the exit IP and
+  aligns the browser timezone and locale to it — a timezone or locale that disagrees with
+  the IP is itself a block signal. The country→locale table is CLDR likely-subtags. Chrome
+  can't authenticate to a proxy over `--proxy-server`, so credentials are relayed through a
+  local tinyproxy; WebRTC is pinned to the proxy path so the real IP can't leak.
 - **GPU-aware WebGL.** The entrypoint auto-detects a GPU (NVIDIA via the Container
   Toolkit, or Intel/AMD via `/dev/dri`) and uses hardware acceleration; without one it
   runs Mesa `llvmpipe`, a coherent software renderer that VMs and servers legitimately

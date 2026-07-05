@@ -1,6 +1,6 @@
 [project]
 name = "groundhog-mcp"
-version = "0.3.1"
+version = "0.4.0"
 description = "Stealth-browser grounding tools for AI agents, over MCP"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -13,13 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # tzdata: lets Chrome's Intl report a timezone matching the exit IP's geo (set TZ).
 # fonts: a slim image ships almost none, which reads as a headless/VM tell; a
 # realistic desktop-Linux font set makes font enumeration look like a real box.
+# tinyproxy: local relay that injects proxy credentials upstream, since Chrome's
+# --proxy-server cannot authenticate.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tzdata \
+      tzdata jq tinyproxy \
       fonts-liberation fonts-croscore fonts-dejavu fonts-freefont-ttf fonts-noto-core && \
     rm -rf /var/lib/apt/lists/*
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# CLDR likely-subtags country → locale table, consulted at launch to align the
+# browser locale with the proxy exit-IP's country.
+COPY locales.map /opt/locales.map
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
 
 EXPOSE 9222
 ENTRYPOINT ["/usr/bin/tini","--","/entrypoint.sh"]
