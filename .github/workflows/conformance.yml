@@ -54,25 +54,25 @@ jobs:
   # Separate job so the write-scoped token is never present while the untrusted
   # container build / pip install / harness run in the antibot job.
   #
-  # Opens a PR for a human to merge rather than pushing to protected main or
-  # auto-merging: a bot-created PR can't trigger the required "test" check anyway
-  # (GITHUB_TOKEN pushes don't fire pull_request), and the content includes text
-  # read from external sites, so a human glance before merge is the right gate.
+  # Pushes to a branch for a human to open/merge the PR rather than pushing to
+  # protected main: it can't push there directly (requires the "test" check), can't
+  # auto-merge (a bot PR never triggers that check — GitHub's recursion guard), and
+  # can't even open the PR itself (Actions is disallowed from creating PRs on this
+  # repo) — so this stops at the one step that reliably works, and a human takes it
+  # from there. The content also includes text read from external sites, so a human
+  # glance before merge is the right gate regardless.
   publish:
     needs: antibot
     if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: conformance
-      - name: Open or update a PR with the refreshed results
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push refreshed results to a branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -85,11 +85,7 @@ jobs:
           git checkout -B "$BRANCH"
           git commit -m "chore: refresh conformance results"
           git push -f origin "$BRANCH"
-          if ! gh pr create --base main --head "$BRANCH" \
-            --title "chore: refresh conformance results" \
-            --body "Automated weekly conformance results update. Merge once reviewed." \
-            2>/tmp/pr_create.err
-          then
-            grep -qi "already exists" /tmp/pr_create.err || { cat /tmp/pr_create.err >&2; exit 1; }
-            echo "PR already open for $BRANCH; force-push above updated it."
-          fi
+          {
+            echo "### Conformance results ready"
+            echo "[Open a PR for \`$BRANCH\`](https://github.com/${GITHUB_REPOSITORY}/pull/new/$BRANCH)"
+          } >> "$GITHUB_STEP_SUMMARY"
