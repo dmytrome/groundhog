@@ -129,12 +129,12 @@ DETECTORS = [
         _isbot_pass,
     ),
     (
-        # iphey flickers "Suspicious" mid-load before settling; give it room.
+        # Informational: iphey's Location flag fires on hosting IPs, not fingerprint.
         "iphey",
         "https://iphey.com/",
         26,
         "(document.body.innerText.match(/(Trustworthy|Suspicious|Unreliable)/i)||['?'])[0]",
-        _match_pass(r"(Trustworthy|Suspicious|Unreliable)", r"Trustworthy"),
+        _info,
     ),
     (
         "browserscan",
@@ -244,7 +244,14 @@ def _markdown(version, rows, fp):
     """A small, image-free table committed as the public proof (RESULTS.md)."""
 
     def cell(x):
-        return str(x).replace("|", "\\|").replace("\n", " ")
+        # Detail text can include content read from external, adversarial-reachable
+        # sites; neutralize markdown/HTML-active characters before it lands in a
+        # file this workflow commits.
+        s = str(x).replace("\n", " ")
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        for ch in "|[]`":
+            s = s.replace(ch, "\\" + ch)
+        return s
 
     out = [
         "# Anti-bot conformance results",

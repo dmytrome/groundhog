@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-06
+
+### Fixed
+
+- The scheduled Conformance workflow's `publish` job pushed directly to `main`, which now
+  fails under the repo's required-status-check branch protection. It opens a PR and merges
+  once checks pass instead, going through the same gate as any other change.
+- Bumped several GitHub Actions to their latest release (all now declare the `node24`
+  runtime), clearing a Node.js 20 deprecation warning on every run.
+- `iphey` moved from pass/fail to informational in the conformance harness: its one
+  recurring flag (Location) is driven by IP hosting-reputation, not fingerprint quality —
+  confirmed via `ip-api.com` showing `hosting: true` on both a proxy exit and the CI
+  runner's own IP. Documented in the README.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added
@@ -139,6 +153,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.6.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.1
 [0.6.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.4.0
