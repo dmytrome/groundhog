@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
 
@@ -28,7 +28,7 @@ jobs:
           echo "CDP never became ready" >&2
           exit 1
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -43,7 +43,7 @@ jobs:
           done
           [[ "$ok" == 1 ]]
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: conformance
@@ -53,21 +53,43 @@ jobs:
 
   # Separate job so the write-scoped token is never present while the untrusted
   # container build / pip install / harness run in the antibot job.
+  #
+  # Opens a PR for a human to merge rather than pushing to protected main or
+  # auto-merging: a bot-created PR can't trigger the required "test" check anyway
+  # (GITHUB_TOKEN pushes don't fire pull_request), and the content includes text
+  # read from external sites, so a human glance before merge is the right gate.
   publish:
     needs: antibot
     if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: conformance
-      - name: Commit refreshed RESULTS.md
+      - name: Open or update a PR with the refreshed results
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add RESULTS.md
-          git diff --cached --quiet || git commit -m "chore: refresh conformance results [skip ci]"
-          git push
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+            exit 0
+          fi
+          BRANCH="bot/conformance-results"
+          git checkout -B "$BRANCH"
+          git commit -m "chore: refresh conformance results"
+          git push -f origin "$BRANCH"
+          if ! gh pr create --base main --head "$BRANCH" \
+            --title "chore: refresh conformance results" \
+            --body "Automated weekly conformance results update. Merge once reviewed." \
+            2>/tmp/pr_create.err
+          then
+            grep -qi "already exists" /tmp/pr_create.err || { cat /tmp/pr_create.err >&2; exit 1; }
+            echo "PR already open for $BRANCH; force-push above updated it."
+          fi
