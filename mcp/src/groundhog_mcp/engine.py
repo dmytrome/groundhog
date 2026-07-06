@@ -15,6 +15,7 @@ from .detect_js import DETECT_AND_COLLECT
 from .ratelimit import RateLimiter
 
 _GOTO_TIMEOUT_S = 60.0
+_DETECT_TIMEOUT_S = 15.0
 _PROBE_TIMEOUT_S = 2.0
 _AUTOSTART_READY_TRIES = 30
 _ERR_DETAIL_CHARS = 300
@@ -207,7 +208,16 @@ class EngineProvider:
             # A page can redirect to an internal address the initial check never saw;
             # re-check the final URL so its content is never returned.
             await safety.check_url(final_url, self._cfg)
-            collected = await self._eval(sid, f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)})")
+            detect_expr = f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)})"
+            try:
+                collected = await asyncio.wait_for(
+                    self._eval(sid, detect_expr), timeout=_DETECT_TIMEOUT_S
+                )
+            except TimeoutError as exc:
+                # An adversarial page (deeply nested, huge DOM) could otherwise force
+                # unbounded style-recalc work here; fail this fetch instead of hanging
+                # the page's concurrency slot indefinitely.
+                raise CDPError("hidden-text detection timed out") from exc
             return RenderedPage(
                 html=await self._eval(sid, "document.documentElement.outerHTML"),
                 text=await self._eval(sid, "document.body ? document.body.innerText : ''"),

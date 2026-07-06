@@ -85,6 +85,58 @@ async def test_detect_and_collect_finds_and_removes_hidden_text():
         srv.shutdown()
 
 
+ADVANCED_HIDING_HTML = """<html><body>
+<p>Visible paragraph content here for baseline.</p>
+<p style="color:#767676">Ordinary muted gray text, still clearly readable MUTED TEXT MARKER</p>
+<div style="color:#ffffff;background:#ffffff">WHITE ON WHITE PAYLOAD MARKER</div>
+<span style="width:1px;height:1px;overflow:hidden;position:absolute">SR ONLY PAYLOAD MARKER</span>
+<div style="clip:rect(0,0,0,0);position:absolute">CLIP RECT PAYLOAD MARKER</div>
+<div style="position:absolute;left:-9999px;top:-9999px">OFFSCREEN PAYLOAD MARKER</div>
+<div style="height:3000px"></div>
+<p style="margin-top:10px">BELOW THE FOLD LEGIT CONTENT MARKER</p>
+<!-- a sufficiently long html comment carrying an embedded COMMENT PAYLOAD MARKER -->
+</body></html>"""
+
+
+async def test_detect_and_collect_finds_advanced_hiding_techniques():
+    srv = _serve(ADVANCED_HIDING_HTML)
+    port = srv.server_address[1]
+    cfg = dataclasses.replace(load_config(), block_private_ips=False)
+    provider = EngineProvider(cfg)
+    await provider.start()
+    try:
+        page = await provider.fetch(f"http://host.docker.internal:{port}/")
+        by_marker = {h["text"]: h["reason"] for h in page.hidden_spans}
+
+        def reason_for(marker):
+            return next((r for t, r in by_marker.items() if marker in t), None)
+
+        assert reason_for("WHITE ON WHITE") == "color-contrast<1.15"
+        assert reason_for("SR ONLY") == "sr-only-1px"
+        assert reason_for("CLIP RECT") == "clip-zero-rect"
+        assert reason_for("OFFSCREEN") == "off-screen"
+        assert reason_for("COMMENT PAYLOAD") == "html-comment"
+
+        # False-positive guards: none of these should ever be flagged as hidden,
+        # and — unlike the payloads above — their text must survive stripping.
+        assert reason_for("Visible paragraph") is None
+        assert reason_for("MUTED TEXT") is None
+        assert reason_for("BELOW THE FOLD") is None
+        assert "Visible paragraph content here" in page.html
+        assert "MUTED TEXT MARKER" in page.html
+        assert "BELOW THE FOLD LEGIT CONTENT MARKER" in page.html
+        assert "BELOW THE FOLD LEGIT CONTENT MARKER" in page.text
+
+        assert "WHITE ON WHITE" not in page.html
+        assert "SR ONLY PAYLOAD" not in page.html
+        assert "CLIP RECT PAYLOAD" not in page.html
+        assert "OFFSCREEN PAYLOAD" not in page.html
+        assert "COMMENT PAYLOAD" not in page.html
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+
+
 async def test_fetch_exposes_hidden_spans_and_meta():
     provider = engine.EngineProvider(load_config())
     await provider.start()

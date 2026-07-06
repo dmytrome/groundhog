@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-06
+
+### Added
+
+- Hidden-instruction detection hardening: catches the sub-pixel box used by
+  `.sr-only`/`.visually-hidden` accessibility utility classes (also usable to hide prompt
+  injection, since it reads as an ordinary accessibility class), the legacy `clip: rect(...)`
+  hiding technique, text-color transparency and color-matching the background (near-1:1
+  contrast — "white text on white background"), and elements positioned entirely outside the
+  rendered page (`left: -9999px` and similar). Non-trivial HTML comments are now reported in
+  `threats` too (diagnostic only — they never reached extracted content either way).
+
 ## [0.5.0] - 2026-07-05
 
 ### Added
@@ -127,6 +139,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.6.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.4.0
 [0.3.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.3.1
