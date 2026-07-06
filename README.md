@@ -123,6 +123,8 @@ container.
 - **A real fingerprint.** It's real Chrome, run headful under Xvfb (no `HeadlessChrome`
   token) — authentic TLS/HTTP2 fingerprint, real WebGL/canvas — not a Python HTTP client,
   so fingerprint-driven blocks go away and cheap proxies work where they otherwise wouldn't.
+- **Self-hosted.** You run the container; the pages you fetch and the content extracted
+  from them never leave your own infrastructure.
 
 ## Under the hood: the stealth Chrome container
 
