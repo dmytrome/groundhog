@@ -66,10 +66,16 @@ Fetches a page and returns clean content plus provenance.
 | `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present         |
 
 Because Groundhog renders a real DOM, it can evaluate computed styles. Text invisible to
-humans — `display:none`, `visibility:hidden`, `opacity ≤ 0.05`, `font-size < 4 px`, and
-zero-size elements — is **stripped by default** and each occurrence reported in `threats`
-with its signal type and a short excerpt. Pass `include_hidden=True` to keep the stripped
-text in the output; `threats` is still populated so you know it was there. Pass `query` to
+humans is **stripped by default** and each occurrence reported in `threats` with its signal
+type and a short excerpt: `display:none`/`visibility:hidden`, `opacity ≤ 0.05`,
+`font-size < 4 px`, zero-size elements, the sub-pixel box used by `.sr-only`/
+`.visually-hidden` accessibility utility classes (a pattern attackers now mimic), the legacy
+`clip: rect(...)` hiding technique, text-color transparency or matching the background color
+(near-1:1 contrast), and elements positioned entirely outside the rendered page (e.g.
+`left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
+extracted content either way, but a page embedding instructions this way is worth knowing
+about. Pass `include_hidden=True` to keep the stripped text in the output; `threats` is
+still populated so you know it was there. Pass `query` to
 replace blunt head-truncation with relevance-ranked passage selection: content is chunked
 on markdown structure, ranked by lexical (BM25) relevance, and the top passages within the
 token budget are returned; `matches` gives each passage's heading, character offset, and
