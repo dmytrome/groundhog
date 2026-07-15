@@ -3,8 +3,6 @@ services:
     build: .
     image: chrome-cdp
     shm_size: 512m
-    # Remove `platform` if you are on an amd64 host.
-    platform: linux/amd64
     environment:
       - WINDOW_SIZE=1920,1080
       # Upstream proxy, e.g. http://user:pass@host:port. When set, the entrypoint
@@ -29,3 +27,38 @@ services:
       interval: 20s
       timeout: 5s
       retries: 3
+
+  # Public "try it" playground (paste a URL, see the safe markdown + provenance +
+  # stripped threats). Talks to the `chrome` service over the compose network.
+  demo:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    environment:
+      - CDP_URL=http://chrome:9222
+      - GROUNDHOG_AUTO_START_BROWSER=false
+      - DEMO_RATE_LIMIT_PER_HOUR=${DEMO_RATE_LIMIT_PER_HOUR:-8}
+      - DEMO_GLOBAL_RATE_LIMIT_PER_MINUTE=${DEMO_GLOBAL_RATE_LIMIT_PER_MINUTE:-20}
+    depends_on:
+      chrome:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Reverse proxy + automatic Let's Encrypt TLS for the demo. Set DEMO_DOMAIN
+  # (and optionally DEMO_EMAIL for the ACME account) in a .env file.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DEMO_DOMAIN=${DEMO_DOMAIN:?set DEMO_DOMAIN to your demo's hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - demo
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

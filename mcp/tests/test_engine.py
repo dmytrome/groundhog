@@ -82,7 +82,7 @@ async def test_start_browser_builds_docker_run(monkeypatch):
     assert run[:3] == ["docker", "run", "-d"]
     assert engine._CONTAINER_NAME in run
     assert f"{engine._CONTAINER_BIND_HOST}:7000:{engine._CONTAINER_CDP_PORT}" in run
-    assert engine._CONTAINER_PLATFORM in run
+    assert "--platform" not in run  # multi-arch image: let the runtime pick the native arch
     assert run[-2:] == ["--", "img:tag"]  # `--` guards against a flag-like image ref
 
 

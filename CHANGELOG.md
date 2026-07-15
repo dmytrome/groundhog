@@ -13,6 +13,15 @@ All notable changes to this project are documented here. The format is based on
   before extracting, tracking in-flight requests via CDP `Network` events (never
   Runtime/Console, so the stealth posture is unchanged).
 
+### Added
+
+- linux/arm64 image: Google ships no arm64 Chrome, so arm64 builds install Debian
+  Chromium behind the same `/usr/local/bin/chrome` entrypoint — Apple Silicon hosts run
+  the browser natively instead of crashing under amd64 emulation on heavy pages. Stealth
+  conformance remains validated on the amd64 real-Chrome image. The publish workflow now
+  builds both platforms, and the MCP no longer forces `--platform linux/amd64` when
+  auto-starting the container.
+
 ## [0.6.2] - 2026-07-07
 
 ### Fixed

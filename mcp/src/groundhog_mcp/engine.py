@@ -31,7 +31,6 @@ _AUTOSTART_READY_TRIES = 30
 _ERR_DETAIL_CHARS = 300
 _VERSION_PATH = "/json/version"
 _CONTAINER_NAME = "groundhog-browser"
-_CONTAINER_PLATFORM = "linux/amd64"  # the image is amd64-only (google-chrome-stable)
 _CONTAINER_SHM = "512m"
 _CONTAINER_CDP_PORT = 9222
 _CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
@@ -125,8 +124,6 @@ async def _start_browser(cfg: Config) -> None:
             "--rm",
             "--name",
             _CONTAINER_NAME,
-            "--platform",
-            _CONTAINER_PLATFORM,
             "--shm-size",
             _CONTAINER_SHM,
             "-p",

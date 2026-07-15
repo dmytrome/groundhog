@@ -13,7 +13,7 @@ WINDOW_SIZE=${WINDOW_SIZE:-1920,1080}
 # frame, network, and Web/Service Worker globals; a client-side per-context
 # override does not reach worker scope, so the default HeadlessChrome token would
 # otherwise leak there. Chrome freezes the UA's minor digits to 0.0.0.
-CHROME_MAJOR=$(/opt/google/chrome/chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+CHROME_MAJOR=$(/usr/local/bin/chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
 if [[ -z "$CHROME_MAJOR" ]]; then
   echo "[chrome-cdp] WARN: could not read Chrome version; UA left as default" >&2
   DEFAULT_UA=""
@@ -144,7 +144,7 @@ echo "[chrome-cdp] starting Chrome (headful under Xvfb) on :$CHROME_PORT, expose
 # Headful under Xvfb, not --headless=new: headless carries extra fingerprint
 # tells and reports a HeadlessChrome browser string; the virtual display lets
 # real (headful) Chrome run and engages the GPU compositing path.
-exec /opt/google/chrome/chrome \
+exec /usr/local/bin/chrome \
   --no-first-run \
   --no-default-browser-check \
   --remote-debugging-port="$CHROME_PORT" \
