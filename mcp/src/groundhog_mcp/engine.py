@@ -198,6 +198,9 @@ class EngineProvider:
             # Only Page is enabled — never Runtime/Console, which would expose the CDP
             # session to the page as the `isAutomatedWithCDP` signal.
             await self._cdp.send("Page.enable", session_id=sid)
+            # Re-check right before navigate: the rate-limiter/semaphore wait above plus
+            # Chrome's own independent DNS resolution at nav time reopen a rebinding window.
+            await safety.check_url(url, self._cfg)
             loaded = self._cdp.expect_event("Page.domContentEventFired", session_id=sid)
             nav = await self._cdp.send("Page.navigate", {"url": url}, session_id=sid)
             if nav.get("errorText"):
