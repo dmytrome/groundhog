@@ -3,6 +3,7 @@ import json
 import shutil
 import sys
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -16,14 +17,23 @@ from .ratelimit import RateLimiter
 
 _GOTO_TIMEOUT_S = 60.0
 _DETECT_TIMEOUT_S = 15.0
+_SETTLE_POLL_S = 0.25
+_SETTLE_QUIET_S = 1.0
+_SETTLE_TIMEOUT_S = 8.0
+# Element count + visible-text length: cheap to sample, and one of them moves
+# whenever an SPA hydrates or streams content in.
+_DOM_SIZE_EXPR = (
+    "document.querySelectorAll('*').length + '|' + "
+    "(document.body ? document.body.innerText.length : 0)"
+)
 _PROBE_TIMEOUT_S = 2.0
 _AUTOSTART_READY_TRIES = 30
 _ERR_DETAIL_CHARS = 300
 _VERSION_PATH = "/json/version"
 _CONTAINER_NAME = "groundhog-browser"
+_CONTAINER_PLATFORM = "linux/amd64"  # the image is amd64-only (google-chrome-stable)
 _CONTAINER_SHM = "512m"
 _CONTAINER_CDP_PORT = 9222
-_CONTAINER_PLATFORM = "linux/amd64"  # the image is amd64-only (google-chrome-stable)
 _CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
 _RUNTIMES = ("docker", "podman")
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -156,6 +166,39 @@ def registrable_domain(url: str) -> str:
     return ext.registered_domain or ext.fqdn or url
 
 
+class _InflightRequests:
+    """Tracks a session's in-flight network requests by CDP request id.
+
+    Ids rather than a counter: `Network.requestWillBeSent` re-fires per redirect
+    hop with the same request id while `loadingFinished`/`loadingFailed` fire
+    once, so a counter would drift upward and never return to zero.
+    """
+
+    def __init__(self) -> None:
+        self._ids: set[str] = set()
+
+    @property
+    def busy(self) -> bool:
+        return bool(self._ids)
+
+    def _started(self, params: dict) -> None:
+        request_id = params.get("requestId")
+        if request_id:
+            self._ids.add(request_id)
+
+    def _finished(self, params: dict) -> None:
+        request_id = params.get("requestId")
+        if request_id:
+            self._ids.discard(request_id)
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        return [
+            cdp.on_event("Network.requestWillBeSent", session_id, self._started),
+            cdp.on_event("Network.loadingFinished", session_id, self._finished),
+            cdp.on_event("Network.loadingFailed", session_id, self._finished),
+        ]
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -194,10 +237,13 @@ class EngineProvider:
         tid = target["targetId"]
         att = await self._cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
         sid = att["sessionId"]
+        inflight = _InflightRequests()
+        unsubscribes = inflight.attach(self._cdp, sid)
         try:
-            # Only Page is enabled — never Runtime/Console, which would expose the CDP
-            # session to the page as the `isAutomatedWithCDP` signal.
+            # Only Page and Network are enabled — never Runtime/Console, which would
+            # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
             await self._cdp.send("Page.enable", session_id=sid)
+            await self._cdp.send("Network.enable", session_id=sid)
             # Re-check right before navigate: the rate-limiter/semaphore wait above plus
             # Chrome's own independent DNS resolution at nav time reopen a rebinding window.
             await safety.check_url(url, self._cfg)
@@ -206,6 +252,7 @@ class EngineProvider:
             if nav.get("errorText"):
                 raise CDPError(f"navigation failed: {nav['errorText']}")
             await asyncio.wait_for(loaded, timeout=_GOTO_TIMEOUT_S)
+            await self._settle(sid, inflight)
 
             final_url = await self._eval(sid, "document.location.href")
             # A page can redirect to an internal address the initial check never saw;
@@ -234,7 +281,29 @@ class EngineProvider:
                 },
             )
         finally:
+            for unsubscribe in unsubscribes:
+                unsubscribe()
             await self._cdp.send("Target.closeTarget", {"targetId": tid})
+
+    async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
+        """Wait until the network is quiet and the DOM stops changing.
+
+        DOMContentLoaded fires on an SPA's empty shell. In-flight data fetches
+        hold the wait open; the _SETTLE_QUIET_S window catches the render work
+        and short timers that follow them; _SETTLE_TIMEOUT_S caps the whole wait.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SETTLE_TIMEOUT_S
+        prev: object = None
+        quiet_since = loop.time()
+        while loop.time() < deadline:
+            current = await self._eval(session_id, _DOM_SIZE_EXPR)
+            if current != prev or inflight.busy:
+                prev = current
+                quiet_since = loop.time()
+            elif loop.time() - quiet_since >= _SETTLE_QUIET_S:
+                return
+            await asyncio.sleep(_SETTLE_POLL_S)
 
     async def _eval(self, session_id: str, expression: str) -> object:
         res = await self._cdp.send(

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- SPA pages no longer return the pre-render shell: after DOMContentLoaded, `fetch` now
+  waits until the network is quiet and the DOM has stopped changing for 1s (capped at 8s)
+  before extracting, tracking in-flight requests via CDP `Network` events (never
+  Runtime/Console, so the stealth posture is unchanged).
+
 ## [0.6.2] - 2026-07-07
 
 ### Fixed

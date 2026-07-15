@@ -86,6 +86,14 @@ async def test_start_browser_builds_docker_run(monkeypatch):
     assert run[-2:] == ["--", "img:tag"]  # `--` guards against a flag-like image ref
 
 
+def test_inflight_requests_redirect_refire_does_not_leak():
+    inflight = engine._InflightRequests()
+    inflight._started({"requestId": "r1"})
+    inflight._started({"requestId": "r1"})  # a redirect hop re-fires with the same id
+    inflight._finished({"requestId": "r1"})
+    assert inflight.busy is False
+
+
 async def test_start_browser_uses_podman(monkeypatch):
     calls: list[list[str]] = []
     _stub_start(monkeypatch, calls, runtime="podman")

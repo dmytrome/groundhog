@@ -1,6 +1,7 @@
 import asyncio
 import itertools
 import json
+from collections.abc import Callable
 
 import websockets
 
@@ -24,6 +25,7 @@ class CDPClient:
         self._ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict]] = {}
         self._event_waiters: dict[tuple[str | None, str], list[asyncio.Future[dict]]] = {}
+        self._event_listeners: dict[tuple[str | None, str], list[Callable[[dict], None]]] = {}
         self._reader: asyncio.Task | None = None
 
     async def connect(self) -> None:
@@ -47,6 +49,8 @@ class CDPClient:
                     for fut in self._event_waiters.pop(key, []):
                         if not fut.done():
                             fut.set_result(msg.get("params", {}))
+                    for cb in list(self._event_listeners.get(key, [])):
+                        cb(msg.get("params", {}))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # connection dropped — fail everything waiting
@@ -82,6 +86,22 @@ class CDPClient:
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._event_waiters.setdefault((session_id, method), []).append(fut)
         return fut
+
+    def on_event(
+        self, method: str, session_id: str | None, callback: Callable[[dict], None]
+    ) -> Callable[[], None]:
+        """Persistent listener (expect_event is one-shot). Returns an unsubscribe."""
+        key = (session_id, method)
+        self._event_listeners.setdefault(key, []).append(callback)
+
+        def unsubscribe() -> None:
+            callbacks = self._event_listeners.get(key, [])
+            if callback in callbacks:
+                callbacks.remove(callback)
+            if not callbacks:
+                self._event_listeners.pop(key, None)
+
+        return unsubscribe
 
     async def close(self) -> None:
         if self._reader is not None:
