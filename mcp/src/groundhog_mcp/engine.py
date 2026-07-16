@@ -202,6 +202,7 @@ class EngineProvider:
         self._cdp: CDPClient | None = None
         self._rl = RateLimiter(cfg.min_delay_ms / 1000)
         self._pages = asyncio.Semaphore(cfg.max_concurrent_pages)
+        self._reconnect_lock = asyncio.Lock()
 
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
@@ -222,8 +223,24 @@ class EngineProvider:
         except OSError as exc:
             raise BrowserUnavailableError(remediation(cfg)) from exc
 
+    async def _ensure_connected(self) -> None:
+        """Reconnect if the browser dropped the CDP socket.
+
+        The MCP process outlives browser containers (Docker restarts, image
+        upgrades); the endpoint can answer HTTP probes while this process's
+        websocket is dead — without this, every fetch fails until a restart.
+        """
+        if self._cdp is not None and not self._cdp.closed:
+            return
+        async with self._reconnect_lock:
+            if self._cdp is None or self._cdp.closed:
+                if self._cdp is not None:
+                    await self._cdp.close()
+                await self.start()
+
     async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         await safety.check_url(url, self._cfg)
+        await self._ensure_connected()
         await self._rl.acquire(registrable_domain(url))
         async with self._pages:
             return await self._fetch_in_target(url, strip_hidden)

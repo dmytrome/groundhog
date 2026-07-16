@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The MCP server now reconnects when the browser drops the CDP websocket (container
+  replaced, Docker restarted). Previously the long-lived server kept the dead
+  connection forever: `status` reported the endpoint healthy while every `read_url`
+  failed with "no close frame received or sent" until the server was restarted.
+
 ## [0.7.0] - 2026-07-15
 
 ### Fixed
