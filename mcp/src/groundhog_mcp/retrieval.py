@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 _CHARS_PER_TOKEN = 4
 _WORD_RE = re.compile(r"[a-z0-9]+")
@@ -23,11 +23,16 @@ class _Chunk:
     text: str
 
 
+class _Scored(NamedTuple):
+    chunk: _Chunk
+    score: float
+
+
 def _tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
-def _chunk(markdown: str) -> list[_Chunk]:
+def _chunk_document(markdown: str) -> list[_Chunk]:
     # Scan line by line so a heading with no blank line before its body still
     # splits into a heading + a searchable body chunk (a blank-line-delimited
     # block would swallow the body into the heading and drop it).
@@ -89,29 +94,37 @@ def _bm25(chunks: list[_Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool]:
-    chunks = _chunk(markdown)
+def _rank(chunks: list[_Chunk], query: str, max_tokens: int) -> tuple[list[_Scored], bool]:
+    """Score passages against `query` and admit the best that fit the budget."""
     scores = _bm25(chunks, _tokenize(query))
-    ranked = sorted(
+    by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
         key=lambda i: (-scores[i], i),
     )
-    if not ranked:
-        return "", [], False
+    if not by_relevance:
+        return [], False
     limit = max_tokens * _CHARS_PER_TOKEN
     chosen: list[int] = []
     used = 0
-    for i in ranked:
+    for i in by_relevance:
         blen = len(chunks[i].text) + 2
         if chosen and used + blen > limit:
             break
         chosen.append(i)
         used += blen
-    truncated = len(chosen) < len(ranked)
-    chosen.sort()
+    return [_Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
+
+
+def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool]:
+    ranked, truncated = _rank(_chunk_document(markdown), query, max_tokens)
+    if not ranked:
+        return "", [], False
+    # Within one document, offset order is reading order — what a caller wants to
+    # read back, unlike the relevance order `_rank` returns.
+    by_offset = sorted(ranked, key=lambda s: s.chunk.offset)
     matches: list[Match] = [
-        {"heading": chunks[i].heading, "offset": chunks[i].offset, "score": round(scores[i], 4)}
-        for i in chosen
+        {"heading": s.chunk.heading, "offset": s.chunk.offset, "score": round(s.score, 4)}
+        for s in by_offset
     ]
-    body = "\n\n".join(chunks[i].text for i in chosen)
+    body = "\n\n".join(s.chunk.text for s in by_offset)
     return body, matches, truncated

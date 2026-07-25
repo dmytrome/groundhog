@@ -27,6 +27,7 @@ class CDPClient:
         self._event_waiters: dict[tuple[str | None, str], list[asyncio.Future[dict]]] = {}
         self._event_listeners: dict[tuple[str | None, str], list[Callable[[dict], None]]] = {}
         self._reader: asyncio.Task | None = None
+        self._closed = False
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._ws_url, max_size=None)
@@ -51,12 +52,20 @@ class CDPClient:
                             fut.set_result(msg.get("params", {}))
                     for cb in list(self._event_listeners.get(key, [])):
                         cb(msg.get("params", {}))
+            # Clean close from the browser side — fail waiters, don't strand them.
+            self._fail_all(CDPError("CDP connection closed"))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # connection dropped — fail everything waiting
             self._fail_all(CDPError(f"CDP connection closed: {exc}"))
 
+    @property
+    def closed(self) -> bool:
+        """Whether this client can no longer talk to the browser."""
+        return self._ws is None or self._closed
+
     def _fail_all(self, exc: Exception) -> None:
+        self._closed = True
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(exc)
@@ -70,7 +79,7 @@ class CDPClient:
     async def send(
         self, method: str, params: dict | None = None, session_id: str | None = None
     ) -> dict:
-        if self._ws is None:
+        if self.closed:
             raise CDPError("CDP client is not connected")
         mid = next(self._ids)
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()

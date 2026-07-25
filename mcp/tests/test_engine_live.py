@@ -148,6 +148,25 @@ async def test_fetch_waits_for_content_rendered_after_domcontentloaded():
     assert "LATE RENDERED PRODUCT GRID MARKER" in page.html
 
 
+async def test_fetch_reconnects_after_connection_drop():
+    srv = _serve(HIDDEN_HTML)
+    cfg = dataclasses.replace(load_config(), block_private_ips=False)
+    provider = EngineProvider(cfg)
+    await provider.start()
+    try:
+        url = f"http://host.docker.internal:{srv.server_address[1]}/"
+        await provider.fetch(url)
+        # Simulate the CDP websocket dying under a long-lived MCP process
+        # (browser container replaced or Docker restarted): the endpoint still
+        # answers HTTP probes, but this connection is gone.
+        await provider._cdp._ws.close()
+        page = await provider.fetch(url)  # must reconnect, not raise
+        assert "Visible paragraph content here" in page.html
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+
+
 async def test_fetch_exposes_hidden_spans_and_meta():
     provider = engine.EngineProvider(load_config())
     await provider.start()

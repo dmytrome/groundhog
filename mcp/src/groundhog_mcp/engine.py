@@ -1,10 +1,13 @@
 import asyncio
+import ipaddress
 import json
 import shutil
+import socket
 import sys
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import tldextract
@@ -77,10 +80,38 @@ def _http_json(url: str, timeout: float) -> dict:
         return json.load(resp)
 
 
+def _ip_probe_url(cdp_url: str) -> str:
+    """Swap a DNS hostname in `cdp_url` for its resolved IP.
+
+    Chrome rejects DevTools HTTP/WS requests whose Host header is a
+    non-localhost DNS name (its DNS-rebinding protection), so a CDP_URL like
+    http://chrome:9222 (compose/k8s service names) must be dialed by address —
+    Chrome then also advertises a connectable `webSocketDebuggerUrl`.
+    """
+    parts = urlparse(cdp_url)
+    host = parts.hostname or ""
+    if host in _LOCAL_HOSTS:
+        return cdp_url
+    try:
+        ipaddress.ip_address(host)
+        return cdp_url
+    except ValueError:
+        pass
+    infos = socket.getaddrinfo(host, parts.port, proto=socket.IPPROTO_TCP)
+    family, _, _, _, addr = min(infos, key=lambda info: info[0] != socket.AF_INET)  # prefer IPv4
+    netloc = f"[{addr[0]}]" if family == socket.AF_INET6 else addr[0]
+    if parts.port:
+        netloc += f":{parts.port}"
+    return parts._replace(netloc=netloc).geturl()
+
+
 async def _fetch_version(cdp_url: str, timeout: float) -> dict:
     """Read the CDP `/json/version` document off the event loop."""
-    url = cdp_url.rstrip("/") + _VERSION_PATH
-    return await asyncio.get_running_loop().run_in_executor(None, lambda: _http_json(url, timeout))
+    return await asyncio.get_running_loop().run_in_executor(
+        None,
+        # _ip_probe_url resolves DNS, which also blocks — keep it in the executor.
+        lambda: _http_json(_ip_probe_url(cdp_url).rstrip("/") + _VERSION_PATH, timeout),
+    )
 
 
 async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool:
@@ -148,14 +179,30 @@ async def _start_browser(cfg: Config) -> None:
     )
 
 
+class HiddenSpan(TypedDict):
+    """A span the page hid from humans, as reported by the in-page collector."""
+
+    text: str
+    reason: str
+    path: NotRequired[str]
+
+
+class PageMeta(TypedDict):
+    """Document-level metadata the in-page collector reads off the live DOM."""
+
+    meta: dict[str, str]
+    lang: str | None
+    canonical: str | None
+
+
 @dataclass
 class RenderedPage:
     html: str
     text: str
     final_url: str
     title: str
-    hidden_spans: list[dict]
-    meta: dict
+    hidden_spans: list[HiddenSpan]
+    meta: PageMeta
 
 
 def registrable_domain(url: str) -> str:
@@ -202,6 +249,7 @@ class EngineProvider:
         self._cdp: CDPClient | None = None
         self._rl = RateLimiter(cfg.min_delay_ms / 1000)
         self._pages = asyncio.Semaphore(cfg.max_concurrent_pages)
+        self._reconnect_lock = asyncio.Lock()
 
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
@@ -222,8 +270,24 @@ class EngineProvider:
         except OSError as exc:
             raise BrowserUnavailableError(remediation(cfg)) from exc
 
+    async def _ensure_connected(self) -> None:
+        """Reconnect if the browser dropped the CDP socket.
+
+        The MCP process outlives browser containers (Docker restarts, image
+        upgrades); the endpoint can answer HTTP probes while this process's
+        websocket is dead — without this, every fetch fails until a restart.
+        """
+        if self._cdp is not None and not self._cdp.closed:
+            return
+        async with self._reconnect_lock:
+            if self._cdp is None or self._cdp.closed:
+                if self._cdp is not None:
+                    await self._cdp.close()
+                await self.start()
+
     async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         await safety.check_url(url, self._cfg)
+        await self._ensure_connected()
         await self._rl.acquire(registrable_domain(url))
         async with self._pages:
             return await self._fetch_in_target(url, strip_hidden)

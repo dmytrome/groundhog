@@ -30,6 +30,14 @@ services:
 
   # Public "try it" playground (paste a URL, see the safe markdown + provenance +
   # stripped threats). Talks to the `chrome` service over the compose network.
+  #
+  # GO-LIVE GATE (public exposure only): the SSRF guard validates the navigation
+  # URL and final_url, but a rendered hostile page's own JS/subresource requests
+  # are NOT checked and can reach link-local/metadata/RFC1918 addresses. Fine for
+  # a private operator MCP; for a public demo where hostile input is expected,
+  # drop RFC1918 + link-local egress from the `chrome` container at the host
+  # firewall (nftables/iptables) or via an egress-proxy sidecar before exposing
+  # this. Full in-app fix is tracked in ROADMAP (CDP Fetch-domain interception).
   demo:
     build:
       context: .

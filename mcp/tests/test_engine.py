@@ -86,6 +86,21 @@ async def test_start_browser_builds_docker_run(monkeypatch):
     assert run[-2:] == ["--", "img:tag"]  # `--` guards against a flag-like image ref
 
 
+def test_ip_probe_url_keeps_ip_and_localhost():
+    assert engine._ip_probe_url("http://127.0.0.1:9222") == "http://127.0.0.1:9222"
+    assert engine._ip_probe_url("http://localhost:9222") == "http://localhost:9222"
+    assert engine._ip_probe_url("http://[::1]:9222") == "http://[::1]:9222"
+
+
+def test_ip_probe_url_resolves_dns_names(monkeypatch):
+    monkeypatch.setattr(
+        engine.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0))],
+    )
+    assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
+
+
 def test_inflight_requests_redirect_refire_does_not_leak():
     inflight = engine._InflightRequests()
     inflight._started({"requestId": "r1"})
