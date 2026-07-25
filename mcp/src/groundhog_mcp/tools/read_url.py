@@ -1,10 +1,6 @@
-from datetime import UTC, datetime
 from typing import TypedDict
 
-from .. import engine, extract, provenance, retrieval, sanitize
-
-_FORMATS = ("markdown", "text")
-_EXCERPT_CHARS = 80
+from .. import document, engine, extract, provenance, retrieval, sanitize
 
 
 class ReadResult(TypedDict):
@@ -19,21 +15,9 @@ class ReadResult(TypedDict):
     provenance: provenance.Provenance
 
 
-def _hidden_threats(spans: list[dict]) -> list[sanitize.Threat]:
-    return [
-        {
-            "type": "hidden_css",
-            "reason": s["reason"],
-            "location": s.get("path"),
-            "excerpt": s["text"][:_EXCERPT_CHARS],
-        }
-        for s in spans
-    ]
-
-
 async def read_url(
     url: str,
-    format: str = "markdown",
+    format: document.Format = "markdown",
     max_tokens: int | None = None,
     query: str | None = None,
     include_hidden: bool = False,
@@ -45,45 +29,29 @@ async def read_url(
     whole page. `format` may be "markdown" (default) or "text"; set
     `include_hidden=true` to keep hidden text. Use this to ground answers in live
     web content, including sites that block plain fetchers."""
-    if format not in _FORMATS:
-        raise ValueError(f"format must be one of {_FORMATS}, got {format!r}")
-    cfg = engine.load_config()
-    provider = await engine.get_provider()
-    page = await provider.fetch(url, strip_hidden=not include_hidden)
-    limit = max_tokens or cfg.max_tokens
+    doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
+    limit = max_tokens or engine.load_config().max_tokens
 
-    if format == "text":
-        markdown, meta = page.text, extract.ExtractMeta(None, None, None)
-    else:
-        markdown, meta = extract.to_document(page.html, page.final_url)
-        if not markdown:
-            markdown = page.text
-
-    markdown, char_threats = sanitize.strip_invisible(markdown, strip=not include_hidden)
-    threats = _hidden_threats(page.hidden_spans) + char_threats
-    prov = provenance.build(markdown, meta, page.meta)
-
+    body, matches, truncated = doc.markdown, [], False
     if query and query.strip():
-        body, matches, truncated = retrieval.select(markdown, query, limit)
-        if matches:
-            # select() admits the top chunk unconditionally, so a single oversized
-            # passage can exceed the budget — clamp it and keep the flag honest.
-            body, over_budget = extract.truncate(body, limit)
-            truncated = truncated or over_budget
-        else:
-            body, truncated = extract.truncate(markdown, limit)
-    else:
-        body, truncated = extract.truncate(markdown, limit)
-        matches = []
+        selected, selected_matches, selected_truncated = retrieval.select(
+            doc.markdown, query, limit
+        )
+        if selected_matches:
+            body, matches, truncated = selected, selected_matches, selected_truncated
+    # select() admits the top passage unconditionally, so even a ranked body can
+    # exceed the budget — one clamp covers both paths and keeps the flag honest.
+    body, over_budget = extract.truncate(body, limit)
+    truncated = truncated or over_budget
 
     return {
         "markdown": body,
-        "title": page.title,
-        "url": url,
-        "final_url": page.final_url,
-        "fetched_at": datetime.now(UTC).isoformat(),
+        "title": doc.title,
+        "url": doc.url,
+        "final_url": doc.final_url,
+        "fetched_at": doc.fetched_at,
         "truncated": truncated,
-        "threats": threats,
+        "threats": doc.threats,
         "matches": matches,
-        "provenance": prov,
+        "provenance": doc.provenance,
     }
