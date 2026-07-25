@@ -32,7 +32,8 @@ async def read_url(
     doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
     limit = max_tokens or engine.load_config().max_tokens
 
-    body, matches, truncated = doc.markdown, [], False
+    matches: list[retrieval.Match] = []
+    body, truncated = doc.markdown, False
     if query and query.strip():
         selected, selected_matches, selected_truncated = retrieval.select(
             doc.markdown, query, limit

@@ -1,9 +1,12 @@
 import hashlib
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import py3langid
 
 from .extract import ExtractMeta
+
+if TYPE_CHECKING:  # keeps this module free of the browser engine at runtime
+    from .engine import PageMeta
 
 _AUTHOR_KEYS = ("author", "article:author", "dc.creator")
 _PUBLISHED_KEYS = ("article:published_time", "datepublished", "dc.date")
@@ -55,7 +58,7 @@ def _detect_language(text: str, hint: str | None) -> str | None:
         return hint or None
 
 
-def build(markdown: str, extract_meta: ExtractMeta, engine_meta: dict) -> Provenance:
+def build(markdown: str, extract_meta: ExtractMeta, engine_meta: "PageMeta") -> Provenance:
     raw = {k.lower(): v for k, v in engine_meta.get("meta", {}).items()}
     return {
         "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),

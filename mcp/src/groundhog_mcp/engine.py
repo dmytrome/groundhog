@@ -187,6 +187,14 @@ class HiddenSpan(TypedDict):
     path: NotRequired[str]
 
 
+class PageMeta(TypedDict):
+    """Document-level metadata the in-page collector reads off the live DOM."""
+
+    meta: dict[str, str]
+    lang: str | None
+    canonical: str | None
+
+
 @dataclass
 class RenderedPage:
     html: str
@@ -194,7 +202,7 @@ class RenderedPage:
     final_url: str
     title: str
     hidden_spans: list[HiddenSpan]
-    meta: dict
+    meta: PageMeta
 
 
 def registrable_domain(url: str) -> str:
