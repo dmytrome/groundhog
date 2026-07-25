@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-07-25
 
 ### Added
 
@@ -25,8 +25,9 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - `read_url`'s `format` argument is now typed `Literal["markdown", "text"]` and validated at
-  the MCP boundary by the tool schema. MCP clients get a clearer error; callers importing
-  `read_url` directly as a library no longer receive a `ValueError` for an unknown format.
+  the MCP boundary by the tool schema, so MCP clients get a clearer error. Note for callers
+  importing `read_url` directly as a library: an unrecognised format no longer raises
+  `ValueError`, it falls back to markdown. Pass one of the two documented values.
 
 ## [0.7.0] - 2026-07-15
 
