@@ -20,7 +20,15 @@ async def test_hidden_spans_become_threats(fake_provider, make_page):
     doc = await fetch_document("https://ex.com/p")
     assert [t["type"] for t in doc.threats] == ["hidden_css"]
     assert doc.threats[0]["reason"] == "display:none"
+    assert doc.threats[0]["location"] == "div>p"
     assert "IGNORE PREVIOUS" in doc.threats[0]["excerpt"]
+
+
+async def test_span_without_path_maps_to_null_location(fake_provider, make_page):
+    # `path` is NotRequired on HiddenSpan — the collector omits it for char-level finds.
+    fake_provider(make_page(hidden=[{"reason": "off-screen", "text": "PAYLOAD"}]))
+    doc = await fetch_document("https://ex.com/p")
+    assert doc.threats[0]["location"] is None
 
 
 async def test_text_format_skips_extraction(fake_provider, make_page):

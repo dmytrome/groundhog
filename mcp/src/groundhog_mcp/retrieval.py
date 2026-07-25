@@ -17,16 +17,14 @@ class Match(TypedDict):
 
 
 @dataclass
-class Chunk:
-    """One passage of a document, with its heading and character offset."""
-
+class _Chunk:
     heading: str | None
     offset: int
     text: str
 
 
-class Scored(NamedTuple):
-    chunk: Chunk
+class _Scored(NamedTuple):
+    chunk: _Chunk
     score: float
 
 
@@ -34,12 +32,11 @@ def _tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
-def chunk_document(markdown: str) -> list[Chunk]:
-    """Split markdown into heading-delimited passages."""
+def _chunk_document(markdown: str) -> list[_Chunk]:
     # Scan line by line so a heading with no blank line before its body still
     # splits into a heading + a searchable body chunk (a blank-line-delimited
     # block would swallow the body into the heading and drop it).
-    chunks: list[Chunk] = []
+    chunks: list[_Chunk] = []
     heading: str | None = None
     lines: list[str] = []
     offset = 0
@@ -48,7 +45,7 @@ def chunk_document(markdown: str) -> list[Chunk]:
     def flush() -> None:
         nonlocal lines
         if lines:
-            chunks.append(Chunk(heading=heading, offset=offset, text="\n".join(lines)))
+            chunks.append(_Chunk(heading=heading, offset=offset, text="\n".join(lines)))
             lines = []
 
     for raw in markdown.splitlines(keepends=True):
@@ -68,7 +65,7 @@ def chunk_document(markdown: str) -> list[Chunk]:
     return chunks
 
 
-def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
+def _bm25(chunks: list[_Chunk], query_terms: list[str]) -> list[float]:
     docs = [_tokenize(c.text) for c in chunks]
     n = len(docs)
     if n == 0:
@@ -97,12 +94,8 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def rank(chunks: list[Chunk], query: str, max_tokens: int) -> tuple[list[Scored], bool]:
-    """Score passages against `query` and admit the best that fit the budget.
-
-    Returned best-first. A single BM25 pass over the whole list keeps IDF, and
-    therefore the scores, comparable between every passage it was given.
-    """
+def _rank(chunks: list[_Chunk], query: str, max_tokens: int) -> tuple[list[_Scored], bool]:
+    """Score passages against `query` and admit the best that fit the budget."""
     scores = _bm25(chunks, _tokenize(query))
     by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
@@ -119,15 +112,15 @@ def rank(chunks: list[Chunk], query: str, max_tokens: int) -> tuple[list[Scored]
             break
         chosen.append(i)
         used += blen
-    return [Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
+    return [_Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
 
 
 def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool]:
-    ranked, truncated = rank(chunk_document(markdown), query, max_tokens)
+    ranked, truncated = _rank(_chunk_document(markdown), query, max_tokens)
     if not ranked:
         return "", [], False
     # Within one document, offset order is reading order — what a caller wants to
-    # read back, unlike the relevance order `rank` returns.
+    # read back, unlike the relevance order `_rank` returns.
     by_offset = sorted(ranked, key=lambda s: s.chunk.offset)
     matches: list[Match] = [
         {"heading": s.chunk.heading, "offset": s.chunk.offset, "score": round(s.score, 4)}

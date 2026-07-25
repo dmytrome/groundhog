@@ -1,7 +1,7 @@
 import pytest
 
 from groundhog_mcp import engine
-from groundhog_mcp.engine import RenderedPage
+from groundhog_mcp.engine import HiddenSpan, RenderedPage
 
 # No <meta name="author"> here — the engine's JS collector provides it via engine_meta,
 # not via the HTML. trafilatura does not surface it reliably for short articles.
@@ -17,32 +17,32 @@ _DEFAULT_META = {"meta": {"author": "A. Writer"}, "lang": "en", "canonical": Non
 
 
 class _FakeProvider:
-    def __init__(self, page):
+    def __init__(self, page: RenderedPage) -> None:
         self._page = page
 
-    async def fetch(self, url, strip_hidden=True):
+    async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         return self._page
 
 
 @pytest.fixture
 def make_page():
-    def _make(html=_PAGE_HTML, hidden=None, meta=None):
+    def _make(hidden: list[HiddenSpan] | None = None) -> RenderedPage:
         return RenderedPage(
-            html=html,
+            html=_PAGE_HTML,
             text="unused",
             final_url="https://ex.com/p",
             title="Doc",
             hidden_spans=hidden or [],
-            meta=meta or _DEFAULT_META,
+            meta=_DEFAULT_META,
         )
 
     return _make
 
 
 @pytest.fixture
-def fake_provider(monkeypatch):
-    def _install(page):
-        async def _get():
+def fake_provider(monkeypatch: pytest.MonkeyPatch):
+    def _install(page: RenderedPage) -> None:
+        async def _get() -> _FakeProvider:
             return _FakeProvider(page)
 
         monkeypatch.setattr(engine, "get_provider", _get)
