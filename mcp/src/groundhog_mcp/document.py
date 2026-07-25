@@ -21,7 +21,7 @@ class Document:
     provenance: provenance.Provenance
 
 
-def _hidden_threats(spans: list[dict]) -> list[sanitize.Threat]:
+def _hidden_threats(spans: list[engine.HiddenSpan]) -> list[sanitize.Threat]:
     return [
         {
             "type": "hidden_css",

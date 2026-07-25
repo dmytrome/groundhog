@@ -7,6 +7,7 @@ import sys
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import tldextract
@@ -178,13 +179,21 @@ async def _start_browser(cfg: Config) -> None:
     )
 
 
+class HiddenSpan(TypedDict):
+    """A span the page hid from humans, as reported by the in-page collector."""
+
+    text: str
+    reason: str
+    path: NotRequired[str]
+
+
 @dataclass
 class RenderedPage:
     html: str
     text: str
     final_url: str
     title: str
-    hidden_spans: list[dict]
+    hidden_spans: list[HiddenSpan]
     meta: dict
 
 
