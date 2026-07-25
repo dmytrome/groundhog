@@ -6,12 +6,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Public "try it" playground (`demo/`): paste a URL, see the safe markdown, provenance and
+  stripped threats. Runs behind Caddy with per-visitor and global rate limits, as a
+  non-root container. Not yet publicly deployed.
+
 ### Fixed
 
 - The MCP server now reconnects when the browser drops the CDP websocket (container
   replaced, Docker restarted). Previously the long-lived server kept the dead
   connection forever: `status` reported the endpoint healthy while every `read_url`
   failed with "no close frame received or sent" until the server was restarted.
+- A `CDP_URL` naming the browser by DNS host (`http://chrome:9222` in Compose, a Kubernetes
+  service, a remote machine) now works: Chrome rejects DevTools requests whose Host header
+  is a non-localhost DNS name, so the endpoint is dialled by resolved IP.
+
+### Changed
+
+- `read_url`'s `format` argument is now typed `Literal["markdown", "text"]` and validated at
+  the MCP boundary by the tool schema. MCP clients get a clearer error; callers importing
+  `read_url` directly as a library no longer receive a `ValueError` for an unknown format.
 
 ## [0.7.0] - 2026-07-15
 

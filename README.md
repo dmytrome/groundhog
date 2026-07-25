@@ -93,7 +93,7 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 
 | Env var                          | Default                 | Purpose                                                                                  |
 | -------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint of the stealth browser                                                      |
+| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint of the stealth browser. May be remote (a DNS name or IP); auto-start is skipped for non-local values. The endpoint is unauthenticated — keep it on a private network or a tunnel. |
 | `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | Enforce the SSRF guard (resolve + block private ranges)                                  |
 | `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
 | `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
