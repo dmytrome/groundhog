@@ -6,6 +6,7 @@ from typing import NamedTuple, TypedDict
 _CHARS_PER_TOKEN = 4
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
+SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
 _K1 = 1.5
 _B = 0.75
 
@@ -17,14 +18,17 @@ class Match(TypedDict):
 
 
 @dataclass
-class _Chunk:
+class Chunk:
     heading: str | None
     offset: int
     text: str
+    # Optional because single-document ranking has no URL to attribute to;
+    # `research` sets it so pooled passages stay attributable to their source.
+    source: str | None = None
 
 
-class _Scored(NamedTuple):
-    chunk: _Chunk
+class Scored(NamedTuple):
+    chunk: Chunk
     score: float
 
 
@@ -32,11 +36,11 @@ def _tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
-def _chunk_document(markdown: str) -> list[_Chunk]:
+def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
     # Scan line by line so a heading with no blank line before its body still
     # splits into a heading + a searchable body chunk (a blank-line-delimited
     # block would swallow the body into the heading and drop it).
-    chunks: list[_Chunk] = []
+    chunks: list[Chunk] = []
     heading: str | None = None
     lines: list[str] = []
     offset = 0
@@ -45,7 +49,9 @@ def _chunk_document(markdown: str) -> list[_Chunk]:
     def flush() -> None:
         nonlocal lines
         if lines:
-            chunks.append(_Chunk(heading=heading, offset=offset, text="\n".join(lines)))
+            chunks.append(
+                Chunk(heading=heading, offset=offset, text="\n".join(lines), source=source)
+            )
             lines = []
 
     for raw in markdown.splitlines(keepends=True):
@@ -65,7 +71,7 @@ def _chunk_document(markdown: str) -> list[_Chunk]:
     return chunks
 
 
-def _bm25(chunks: list[_Chunk], query_terms: list[str]) -> list[float]:
+def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     docs = [_tokenize(c.text) for c in chunks]
     n = len(docs)
     if n == 0:
@@ -94,7 +100,7 @@ def _bm25(chunks: list[_Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def _rank(chunks: list[_Chunk], query: str, max_tokens: int) -> tuple[list[_Scored], bool]:
+def rank(chunks: list[Chunk], query: str, max_tokens: int) -> tuple[list[Scored], bool]:
     """Score passages against `query` and admit the best that fit the budget."""
     scores = _bm25(chunks, _tokenize(query))
     by_relevance = sorted(
@@ -112,18 +118,22 @@ def _rank(chunks: list[_Chunk], query: str, max_tokens: int) -> tuple[list[_Scor
             break
         chosen.append(i)
         used += blen
-    return [_Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
+    return [Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
 
 
 def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool]:
-    ranked, truncated = _rank(_chunk_document(markdown), query, max_tokens)
+    ranked, truncated = rank(chunk_document(markdown), query, max_tokens)
     if not ranked:
         return "", [], False
     # Within one document, offset order is reading order — what a caller wants to
-    # read back, unlike the relevance order `_rank` returns.
+    # read back, unlike the relevance order `rank` returns.
     by_offset = sorted(ranked, key=lambda s: s.chunk.offset)
     matches: list[Match] = [
-        {"heading": s.chunk.heading, "offset": s.chunk.offset, "score": round(s.score, 4)}
+        {
+            "heading": s.chunk.heading,
+            "offset": s.chunk.offset,
+            "score": round(s.score, SCORE_DIGITS),
+        }
         for s in by_offset
     ]
     body = "\n\n".join(s.chunk.text for s in by_offset)

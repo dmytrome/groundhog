@@ -200,8 +200,14 @@ class RenderedPage:
 
 
 def registrable_domain(url: str) -> str:
+    """The key requests are grouped under, for rate limiting and source diversity.
+
+    Falls back to the bare host for addresses with no public suffix (IPs,
+    `localhost`, unknown TLDs) — grouping on the full URL instead would give
+    every path its own bucket and effectively disable both.
+    """
     ext = tldextract.extract(url)
-    return ext.registered_domain or ext.fqdn or url
+    return ext.top_domain_under_public_suffix or ext.fqdn or urlparse(url).hostname or url
 
 
 class _InflightRequests:

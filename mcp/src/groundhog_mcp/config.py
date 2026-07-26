@@ -45,6 +45,15 @@ def load_config() -> Config:
     )
 
 
+def token_budget(requested: int | None, default: int) -> int:
+    """Resolve a caller-supplied token budget.
+
+    MCP arguments are model-supplied, and a non-positive budget would otherwise
+    reach truncation and yield a meaningless fragment.
+    """
+    return requested if requested and requested > 0 else default
+
+
 def _search_backend() -> SearchBackend:
     value = (os.environ.get("GROUNDHOG_SEARCH_BACKEND") or "auto").strip().lower()
     for backend in _SEARCH_BACKENDS:

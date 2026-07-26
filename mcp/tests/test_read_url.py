@@ -51,3 +51,17 @@ async def test_empty_query_uses_full_document(fake_provider, make_page):
     result = await read_url("https://ex.com/p", query="   ")
     assert "Cats" in result["markdown"] and "Dogs" in result["markdown"]
     assert result["matches"] == []
+
+
+@pytest.mark.parametrize("bad", [0, -1, -10_000])
+async def test_nonpositive_max_tokens_falls_back_to_the_configured_budget(
+    fake_provider, make_page, bad
+):
+    # A model-supplied budget reaches this boundary directly; a non-positive one
+    # would otherwise flow into ranking, where the first passage is admitted
+    # unconditionally and the budget check is skipped.
+    fake_provider(make_page())
+    result = await read_url("https://ex.com/p", max_tokens=bad)
+    default = await read_url("https://ex.com/p")
+    assert result["markdown"] == default["markdown"]
+    assert result["truncated"] is False

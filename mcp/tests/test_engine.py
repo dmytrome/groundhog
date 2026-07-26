@@ -142,3 +142,17 @@ async def test_remote_cdp_url_is_not_auto_started(monkeypatch):
             await provider.start()
     finally:
         await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://sub.example.co.uk/path", "example.co.uk"),  # multi-label public suffix
+        ("https://example.com/path", "example.com"),
+        ("http://127.0.0.1:9222/", "127.0.0.1"),  # no public suffix: bare host
+        ("http://localhost:8080/x", "localhost"),
+        ("https://a.unknowntld/1", "a.unknowntld"),  # grouping must not become per-URL
+    ],
+)
+def test_registrable_domain(url, expected):
+    assert engine.registrable_domain(url) == expected
