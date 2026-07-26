@@ -2,6 +2,7 @@ import asyncio
 from typing import Literal, TypedDict
 
 from .. import (
+    config,
     document,
     engine,
     extract,
@@ -117,7 +118,7 @@ async def research(
     if not query.strip():
         raise ValueError("query must not be empty")
     cfg = load_config()
-    limit = max_tokens or cfg.max_tokens
+    limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
 
     hits, backend = await search_backend.search(query, cfg, capped * _OVERFETCH)

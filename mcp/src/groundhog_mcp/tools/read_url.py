@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from .. import document, engine, extract, provenance, retrieval, sanitize
+from .. import config, document, engine, extract, provenance, retrieval, sanitize
 
 
 class ReadResult(TypedDict):
@@ -30,7 +30,7 @@ async def read_url(
     `include_hidden=true` to keep hidden text. Use this to ground answers in live
     web content, including sites that block plain fetchers."""
     doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
-    limit = max_tokens or engine.load_config().max_tokens
+    limit = config.token_budget(max_tokens, engine.load_config().max_tokens)
 
     matches: list[retrieval.Match] = []
     body, truncated = doc.markdown, False
