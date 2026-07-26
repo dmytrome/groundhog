@@ -4,7 +4,6 @@ import json
 import shutil
 import socket
 import sys
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NotRequired, TypedDict
@@ -12,7 +11,7 @@ from urllib.parse import urlparse
 
 import tldextract
 
-from . import safety
+from . import http, safety
 from .cdp import CDPClient, CDPError
 from .config import Config, load_config
 from .detect_js import DETECT_AND_COLLECT
@@ -75,11 +74,6 @@ def remediation(cfg: Config) -> str:
     )
 
 
-def _http_json(url: str, timeout: float) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.load(resp)
-
-
 def _ip_probe_url(cdp_url: str) -> str:
     """Swap a DNS hostname in `cdp_url` for its resolved IP.
 
@@ -110,7 +104,7 @@ async def _fetch_version(cdp_url: str, timeout: float) -> dict:
     return await asyncio.get_running_loop().run_in_executor(
         None,
         # _ip_probe_url resolves DNS, which also blocks — keep it in the executor.
-        lambda: _http_json(_ip_probe_url(cdp_url).rstrip("/") + _VERSION_PATH, timeout),
+        lambda: http.read_json(_ip_probe_url(cdp_url).rstrip("/") + _VERSION_PATH, timeout),
     )
 
 

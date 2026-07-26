@@ -338,6 +338,7 @@ name = "groundhog-mcp"
 version = "0.8.0"
 source = { editable = "." }
 dependencies = [
+    { name = "lxml" },
     { name = "mcp" },
     { name = "py3langid" },
     { name = "tldextract" },
@@ -354,6 +355,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "lxml", specifier = ">=6.1.1" },
     { name = "mcp", specifier = ">=1.28,<2" },
     { name = "py3langid", specifier = ">=0.3" },
     { name = "tldextract", specifier = ">=5.1" },

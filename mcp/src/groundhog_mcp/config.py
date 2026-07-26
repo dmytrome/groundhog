@@ -1,7 +1,13 @@
 import os
 from dataclasses import dataclass
+from typing import Literal, get_args
+from urllib.parse import urlparse
 
 _DEFAULT_BROWSER_IMAGE = "ghcr.io/dmytrome/groundhog:latest"
+
+SearchBackend = Literal["auto", "searxng", "serp"]
+_SEARCH_BACKENDS = get_args(SearchBackend)
+_ALLOWED_SEARXNG_SCHEMES = ("http", "https")
 
 
 @dataclass(frozen=True)
@@ -14,6 +20,8 @@ class Config:
     compose_file: str | None
     browser_image: str
     max_concurrent_pages: int
+    search_backend: SearchBackend
+    searxng_url: str | None
 
 
 def _bool(value: str | None, default: bool) -> bool:
@@ -32,4 +40,26 @@ def load_config() -> Config:
         compose_file=os.environ.get("GROUNDHOG_COMPOSE_FILE") or None,
         browser_image=os.environ.get("GROUNDHOG_BROWSER_IMAGE") or _DEFAULT_BROWSER_IMAGE,
         max_concurrent_pages=int(os.environ.get("GROUNDHOG_MAX_CONCURRENT_PAGES", "4")),
+        search_backend=_search_backend(),
+        searxng_url=_searxng_url(),
     )
+
+
+def _search_backend() -> SearchBackend:
+    value = (os.environ.get("GROUNDHOG_SEARCH_BACKEND") or "auto").strip().lower()
+    for backend in _SEARCH_BACKENDS:
+        if value == backend:
+            return backend
+    raise ValueError(f"GROUNDHOG_SEARCH_BACKEND must be one of {_SEARCH_BACKENDS}, got {value!r}")
+
+
+def _searxng_url() -> str | None:
+    value = os.environ.get("SEARXNG_URL") or None
+    if value is None:
+        return None
+    scheme = urlparse(value).scheme
+    if scheme not in _ALLOWED_SEARXNG_SCHEMES:
+        # Report the scheme only: the full value is an internal address that
+        # would otherwise land in model context and transcripts.
+        raise ValueError(f"SEARXNG_URL must be http(s), got scheme {scheme!r}")
+    return value
