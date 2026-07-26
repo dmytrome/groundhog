@@ -1,0 +1,208 @@
+{
+  "query": "python programming language",
+  "results": [
+    {
+      "template": "default.html",
+      "title": "Python (programming language) - Wikipedia",
+      "content": "Python supports multiple programming paradigms but with an emphasis on object-oriented programming and dynamic typing. Guido van Rossum began working on Python in the late 1980s as a successor to the ABC programming language. Python 3.0, released in 2008, was a major revision and not completely backward-compatible with earlier versions.",
+      "img_src": "",
+      "iframe_src": "",
+      "audio_src": "",
+      "thumbnail": "",
+      "publishedDate": null,
+      "pubdate": "",
+      "length": null,
+      "views": "",
+      "author": "",
+      "metadata": "",
+      "priority": "",
+      "engines": [
+        "startpage",
+        "duckduckgo",
+        "google cse"
+      ],
+      "open_group": false,
+      "close_group": false,
+      "positions": [
+        1,
+        1,
+        3
+      ],
+      "score": 7.0,
+      "category": "general",
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "engine": "google cse",
+      "parsed_url": [
+        "https",
+        "en.wikipedia.org",
+        "/wiki/Python_(programming_language)",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "template": "default.html",
+      "title": "Coding: a Practical Guide: Python - Subject Guides - University of York",
+      "content": "Python is a coding language used for a wide range of things, including working with data, building systems and software, and even creating games.",
+      "img_src": "",
+      "iframe_src": "",
+      "audio_src": "",
+      "thumbnail": "",
+      "publishedDate": null,
+      "pubdate": "",
+      "length": null,
+      "views": "",
+      "author": "",
+      "metadata": "",
+      "priority": "",
+      "engines": [
+        "startpage",
+        "google cse"
+      ],
+      "open_group": false,
+      "close_group": false,
+      "positions": [
+        4,
+        4
+      ],
+      "score": 1.0,
+      "category": "general",
+      "url": "https://subjectguides.york.ac.uk/coding/python",
+      "engine": "google cse",
+      "parsed_url": [
+        "https",
+        "subjectguides.york.ac.uk",
+        "/coding/python",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "template": "default.html",
+      "title": "Download Python | Python.org",
+      "content": "The official home of the Python Programming Language",
+      "img_src": "",
+      "iframe_src": "",
+      "audio_src": "",
+      "thumbnail": "",
+      "publishedDate": null,
+      "pubdate": "",
+      "length": null,
+      "views": "",
+      "author": "",
+      "metadata": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo"
+      ],
+      "open_group": false,
+      "close_group": false,
+      "positions": [
+        2
+      ],
+      "score": 0.5,
+      "category": "general",
+      "url": "https://www.python.org/downloads/",
+      "engine": "duckduckgo",
+      "parsed_url": [
+        "https",
+        "www.python.org",
+        "/downloads/",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "template": "default.html",
+      "title": "Online Python Compiler (Interpreter) - Programiz",
+      "content": "Write and run your Python code using our online compiler. Enjoy additional features like code sharing, dark mode, and support for multiple programming languages.",
+      "img_src": "",
+      "iframe_src": "",
+      "audio_src": "",
+      "thumbnail": "",
+      "publishedDate": null,
+      "pubdate": "",
+      "length": null,
+      "views": "",
+      "author": "",
+      "metadata": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo"
+      ],
+      "open_group": false,
+      "close_group": false,
+      "positions": [
+        4
+      ],
+      "score": 0.25,
+      "category": "general",
+      "url": "https://www.programiz.com/python-programming/online-compiler/",
+      "engine": "duckduckgo",
+      "parsed_url": [
+        "https",
+        "www.programiz.com",
+        "/python-programming/online-compiler/",
+        "",
+        "",
+        ""
+      ]
+    }
+  ],
+  "answers": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "engine": "duckduckgo",
+      "parsed_url": [
+        "https",
+        "en.wikipedia.org",
+        "/wiki/Python_(programming_language)",
+        "",
+        "",
+        ""
+      ],
+      "template": "answer/legacy.html",
+      "answer": "Python is a high-level, general-purpose programming language that emphasizes code readability, simplicity, and ease-of-writing with the use of significant indentation, an extensive standard library, and garbage collection. Python supports multiple programming paradigms but with an emphasis on object-oriented programming and dynamic typing. Guido van Rossum began working on Python in the late 1980s as a successor to the ABC programming language. More at Wikipedia"
+    }
+  ],
+  "corrections": [],
+  "infoboxes": [
+    {
+      "infobox": "Python (programming language)",
+      "id": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "content": "Python is a high-level, general-purpose programming language that emphasizes code readability, simplicity, and ease-of-writing with the use of significant indentation, an extensive (\"batteries-included\") standard library, and garbage collection. Python supports multiple programming paradigms but with an emphasis on object-oriented programming and dynamic typing.",
+      "img_src": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/330px-Python-logo-notext.svg.png",
+      "urls": [
+        {
+          "title": "Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Python_(programming_language)"
+        }
+      ],
+      "engine": "wikipedia",
+      "url": null,
+      "template": "default.html",
+      "parsed_url": null,
+      "title": "",
+      "thumbnail": "",
+      "priority": "",
+      "engines": [
+        "wikipedia"
+      ],
+      "positions": "",
+      "score": 0,
+      "category": "",
+      "publishedDate": null,
+      "attributes": []
+    }
+  ],
+  "suggestions": [],
+  "unresponsive_engines": [
+    [
+      "brave",
+      "Suspended: too many requests"
+    ]
+  ]
+}

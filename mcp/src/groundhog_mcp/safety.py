@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from .config import Config
 
+ALLOWED_SCHEMES = ("http", "https")
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
@@ -23,7 +24,7 @@ def is_blocked_ip(ip: str) -> bool:
 
 async def check_url(url: str, cfg: Config) -> None:
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme not in ALLOWED_SCHEMES:
         raise BlockedURLError(f"scheme not allowed: {parsed.scheme!r}")
     if parsed.username or parsed.password:
         raise BlockedURLError("credentials in URL are not allowed")

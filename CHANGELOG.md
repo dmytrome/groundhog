@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `search(query, limit=10)` MCP tool: ranked hits (title, url, snippet, engine, score) for a
+  query, so an agent can find pages and then `read_url` the ones it wants. Backend is chosen
+  automatically — your own SearXNG instance when `SEARXNG_URL` is set (it needs
+  `formats: [html, json]`, off by default upstream), otherwise a search page rendered
+  through the stealth browser, so search works with no extra infrastructure.
+  `GROUNDHOG_SEARCH_BACKEND` forces one.
+- Hit titles and snippets are stripped of invisible characters like page content is: a
+  poisoned result controls how it describes itself, and must not be a smuggling channel
+  into the model.
+- A search backend that is unreachable, has JSON disabled, or whose upstream engines are all
+  rate-limited now raises an actionable error instead of reporting an empty web. The same
+  applies when the rendered SERP's layout no longer matches — a stale selector is reported,
+  not silently returned as "no results".
+
 ## [0.8.0] - 2026-07-25
 
 ### Added

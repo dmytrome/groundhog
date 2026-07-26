@@ -9,7 +9,7 @@ without the SSRF holes of plain fetchers and without getting blocked like plain 
 clients.
 
 ```text
-agent / crawler  ──MCP──▶  Groundhog (read_url)  ──CDP──▶  stealth Chrome  ──▶  the web
+agent / crawler  ──MCP──▶  Groundhog (search, read_url)  ──CDP──▶  stealth Chrome  ──▶  the web
 ```
 
 ## Quick start
@@ -82,6 +82,24 @@ token budget are returned; `matches` gives each passage's heading, character off
 score for downstream citation. Ranking runs on sanitized content, so hidden-text injection
 payloads cannot influence which passages surface.
 
+### `search(query, limit=10)`
+
+Finds pages for a query and returns ranked hits — `title`, `url`, `snippet`, `engine`,
+`score`, `published` — plus the `backend` that answered. Hits are links only: nothing is
+fetched until you pass a URL to `read_url`.
+
+Two backends, chosen automatically. Set `SEARXNG_URL` to use your own
+[SearXNG](https://docs.searxng.org) instance (best results; needs `formats: [html, json]`
+in its `settings.yml`, since JSON is off by default upstream). With no instance configured,
+Groundhog renders a search page through the stealth browser instead — no extra
+infrastructure, at the cost of depending on that page's layout. Force one with
+`GROUNDHOG_SEARCH_BACKEND=searxng|serp`.
+
+Hit titles and snippets are attacker-influenceable — a poisoned page controls how it
+describes itself — so they pass through the same invisible-character stripping as page
+content. A backend that is unreachable, has JSON disabled, or whose every upstream engine
+is rate-limited raises an actionable error rather than reporting an empty web.
+
 ### `status()`
 
 Reports whether Groundhog can reach the stealth browser. Returns `browser_reachable`,
@@ -98,6 +116,8 @@ Reports whether Groundhog can reach the stealth browser. Returns `browser_reacha
 | `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
 | `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
 | `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Cap on concurrent open tabs                                                              |
+| `SEARXNG_URL`                    | _(unset)_               | Your SearXNG instance for `search`, e.g. `http://searxng:8080`. Needs `formats: [html, json]`. Unset → SERP via the stealth browser. |
+| `GROUNDHOG_SEARCH_BACKEND`       | `auto`                  | `auto` (SearXNG when `SEARXNG_URL` is set, else SERP), or force `searxng` / `serp`        |
 | `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Auto-pull-and-run the browser container when it isn't reachable (needs Docker/Podman); `false` to manage it yourself |
 | `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image used for auto-start                                                    |
 | `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Use `docker compose -f <file> up -d` for auto-start instead of `docker run` (local repo) |

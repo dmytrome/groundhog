@@ -36,3 +36,19 @@ def test_env_overrides(monkeypatch):
     assert cfg.cdp_url == "http://127.0.0.1:9333"
     assert cfg.min_delay_ms == 0
     assert cfg.block_private_ips is False
+
+
+def test_search_defaults_to_auto_with_no_instance(monkeypatch):
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    monkeypatch.delenv("GROUNDHOG_SEARCH_BACKEND", raising=False)
+    cfg = load_config()
+    assert cfg.search_backend == "auto"
+    assert cfg.searxng_url is None
+
+
+def test_search_backend_and_instance_from_env(monkeypatch):
+    monkeypatch.setenv("SEARXNG_URL", "http://sx:8080/")
+    monkeypatch.setenv("GROUNDHOG_SEARCH_BACKEND", "searxng")
+    cfg = load_config()
+    assert cfg.search_backend == "searxng"
+    assert cfg.searxng_url == "http://sx:8080/"

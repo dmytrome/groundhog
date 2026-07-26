@@ -14,6 +14,8 @@ def _cfg(**over):
         compose_file=None,
         browser_image="ghcr.io/x/y:latest",
         max_concurrent_pages=1,
+        search_backend="auto",
+        searxng_url=None,
     )
     base.update(over)
     return Config(**base)
