@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import engine
 from .tools.read_url import read_url
+from .tools.research import research
 from .tools.search import search
 from .tools.status import status
 
@@ -20,6 +21,7 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[dict[str, object]]:
 def build_server() -> FastMCP:
     mcp = FastMCP("groundhog", lifespan=_lifespan)
     mcp.tool()(read_url)
+    mcp.tool()(research)
     mcp.tool()(search)
     mcp.tool()(status)
     return mcp

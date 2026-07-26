@@ -6,6 +6,7 @@ from . import engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _EXCERPT_CHARS = 80
+_MAX_TITLE_CHARS = 300
 
 
 @dataclass
@@ -52,9 +53,12 @@ async def fetch_document(
             markdown = page.text
 
     markdown, char_threats = sanitize.strip_invisible(markdown, strip=not include_hidden)
+    # The title is page-authored too, and on a search-chosen URL that means
+    # attacker-authored — strip and cap it like the body.
+    title, _ = sanitize.strip_invisible(page.title)
     return Document(
         markdown=markdown,
-        title=page.title,
+        title=title.strip()[:_MAX_TITLE_CHARS],
         url=url,
         final_url=page.final_url,
         fetched_at=datetime.now(UTC).isoformat(),
