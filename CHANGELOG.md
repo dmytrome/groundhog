@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `research(query, max_sources=5, max_tokens=None)` MCP tool: searches, reads the top
+  sources through the stealth browser, and returns passages ranked across **all** of them in
+  one BM25 pass, so a passage from the last source competes fairly with one from the first.
+  Returns `passages` (text, source_url, heading, score) and `sources` (url, title, status,
+  threats, provenance). At most one page per registrable domain. Passages are extracts, not
+  summaries — no model, no API key.
+- A source that fails is reported in `sources` with a `blocked`/`timeout`/`error` status
+  instead of failing the whole call, and the fan-out is bounded so one slow page cannot cost
+  the caller the others.
+
 - `search(query, limit=10)` MCP tool: ranked hits (title, url, snippet, engine, score) for a
   query, so an agent can find pages and then `read_url` the ones it wants. Backend is chosen
   automatically — your own SearXNG instance when `SEARXNG_URL` is set (it needs
@@ -32,6 +42,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Page titles and provenance metadata (author, dates, canonical) are now stripped of
+  invisible characters and length-capped like page content is. They come from the page's own
+  markup, so on a URL chosen by a search engine they are attacker-authored.
+- Requests are grouped by bare host when a URL has no public suffix (IP addresses,
+  `localhost`, unknown TLDs). They previously fell back to the full URL, which gave every
+  path its own bucket and effectively disabled per-domain rate limiting for those hosts.
+- A non-positive `max_tokens` is no longer honoured: it reached truncation and produced a
+  meaningless fragment. Requires `tldextract>=5.3`.
 - The MCP server now reconnects when the browser drops the CDP websocket (container
   replaced, Docker restarted). Previously the long-lived server kept the dead
   connection forever: `status` reported the endpoint healthy while every `read_url`

@@ -9,7 +9,7 @@ without the SSRF holes of plain fetchers and without getting blocked like plain 
 clients.
 
 ```text
-agent / crawler  ──MCP──▶  Groundhog (search, read_url)  ──CDP──▶  stealth Chrome  ──▶  the web
+agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ──CDP──▶  stealth Chrome  ──▶  the web
 ```
 
 ## Quick start
@@ -99,6 +99,29 @@ Hit titles and snippets are attacker-influenceable — a poisoned page controls 
 describes itself — so they pass through the same invisible-character stripping as page
 content. A backend that is unreachable, has JSON disabled, or whose every upstream engine
 is rate-limited raises an actionable error rather than reporting an empty web.
+
+### `research(query, max_sources=5, max_tokens=None)`
+
+One call for "find out about X": searches, reads the top sources through the stealth
+browser, and returns the passages most relevant to `query` — ranked across **all** sources
+in a single pass, so a passage from source 4 competes fairly with one from source 1.
+
+Returns `passages` (each with `text`, `source_url`, `heading`, `score`) and `sources` (each
+with `url`, `title`, `status`, `threats`, `provenance`). At most one page per registrable
+domain, for source diversity. Passages are extracts, not summaries — nothing is generated,
+and no model or API key is involved. When a passage isn't enough, `read_url` its
+`source_url` for the whole page.
+
+A source that fails doesn't fail the call: it appears in `sources` with a status of
+`blocked` (SSRF guard), `timeout`, or `error`, so a partial answer is still usable and you
+can see what was missed. Because search results are chosen by a third party — and
+SEO-poisoned results are a documented in-the-wild attack — every fetched URL goes through
+the same SSRF guard and hidden-text stripping as `read_url`, and each source reports what
+was stripped from it.
+
+It's slower than an API-backed research tool: a real browser renders every source. That's
+the trade for reading pages that block plain fetchers, and for being able to tell you what
+was hidden in them.
 
 ### `status()`
 
