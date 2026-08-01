@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-08-01
+
+### Added
+
+- An `audit_hidden_text` prompt: given a URL, it walks the model through fetching the page
+  twice — once stripped, once with `include_hidden=true` — and reporting the difference,
+  signal by signal. Both halves are ordinary `read_url` calls; the comparison between them
+  is the part nobody composes on their own, and it is the one thing this server does that a
+  plain fetcher cannot. The template also tells the model to quote what it finds rather than
+  obey it, since the text it is being walked through was written to steer models.
+
+  Prompts reach fewer clients than tools (5 of 22 on the official clients page, against 20
+  for tools), but those five include Claude Desktop and Claude Code, where it appears as a
+  slash command. Resources are still not implemented: they carry contextual data the client
+  attaches and manages, and a fetcher that reads live pages on demand has no corpus to hand
+  over.
+
 ## [0.9.5] - 2026-08-01
 
 ### Changed
@@ -577,6 +594,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.6]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.6
 [0.9.5]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.4
 [0.9.3]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.3
