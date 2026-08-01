@@ -91,6 +91,30 @@ DETECT_AND_COLLECT = r"""
     }
     return { r: 255, g: 255, b: 255, a: 1 };
   };
+  // Whether anything this element renders paints a box. A Range over its contents
+  // measures the content rather than the element, which is what matters for a node that
+  // generates no box of its own. A filled `<slot>` needs its assigned nodes measured
+  // instead: they are light-DOM children of the host, so they are not inside the slot
+  // and a Range over it would report nothing for every slot on the page.
+  const rendersContent = (el) => {
+    const assigned = el.tagName === 'SLOT' && el.assignedNodes
+      ? el.assignedNodes({ flatten: true })
+      : null;
+    const range = document.createRange();
+    if (assigned && assigned.length) {
+      for (const node of assigned) {
+        if (node.nodeType === 1) {
+          if (node.getClientRects().length) return true;
+          continue;
+        }
+        range.selectNode(node);
+        if (range.getClientRects().length) return true;
+      }
+      return false;
+    }
+    range.selectNodeContents(el);
+    return range.getClientRects().length > 0;
+  };
   const isHidden = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden')
@@ -113,7 +137,15 @@ DETECT_AND_COLLECT = r"""
       return 'opacity<=' + ALPHA_THRESHOLD;
     if (parseFloat(cs.fontSize) < 4) return 'font-size<4px';
     const r = el.getBoundingClientRect();
-    if (!noBox) {
+    if (noBox) {
+      // Generating no box of its own is not the same as rendering nothing, so judge it
+      // by what its content paints. Skipping the box tests outright let a `display:
+      // contents` element inside a `display:none` subtree through: `zero-size` is the
+      // only signal that models "no box because of where this sits", and it was the one
+      // being skipped. Measured in Chrome 150 — a legitimate wrapper's contents return
+      // 1-2 rects, the same wrapper under `display:none` returns none.
+      if (!rendersContent(el)) return 'no-rendered-content';
+    } else {
       if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) return 'zero-size';
       // A real (non-zero) but sub-pixel box; safe here since the walker only reaches
       // elements with non-empty text, and no legitimate visible text renders in 1px.
@@ -181,7 +213,13 @@ DETECT_AND_COLLECT = r"""
           for (const node of assigned) shadowHidden.add(node);
         }
       }
-      const text = (el.textContent || '').trim();
+      // `textContent` is node-tree text, so a shadow host reads as empty however much
+      // its shadow tree renders — and skipping it here meant `isHidden` was never called
+      // on the host at all. `<x-note style="display:none"></x-note>` with the payload in
+      // its shadow root was therefore never flagged, and composition then copied it into
+      // the output: the scan-before-compose rule broken by its own fast path.
+      const shadowText = el.shadowRoot ? (el.shadowRoot.textContent || '').trim() : '';
+      const text = (el.textContent || '').trim() || shadowText;
       if (!text) continue;
       if (flagged.some((p) => p.contains(el))) continue;
       const reason = isHidden(el);
@@ -196,6 +234,24 @@ DETECT_AND_COLLECT = r"""
     for (const host of nested) scan(host.shadowRoot, true, []);
   };
   scan(root, false, lightHosts);
+  // A TreeWalker never returns its own root, so `<body>` was the one element in the page
+  // no signal was ever applied to. `content-visibility: hidden` on it kept a principal
+  // box, so the layout-collapse check below did not fire either, and text with no element
+  // of its own — a bare text node child, or one under a `display: contents` wrapper — had
+  // nothing else to catch it. Flagging the root removes the whole subtree, which is the
+  // right answer: a page that hides its own body renders nothing a reader could see.
+  if (root && !toRemove.includes(root)) {
+    const rootReason = isHidden(root);
+    if (rootReason) {
+      const rootText = (root.textContent || '').trim();
+      if (rootText) {
+        hidden.push({ text: rootText.slice(0, MAX_TEXT), reason: rootReason, path: pathOf(root) });
+      }
+      // Ahead of everything the walk found: removing it drops those nodes anyway, and a
+      // path resolved inside a removed subtree would no longer address anything.
+      toRemove.unshift(root);
+    }
+  }
   // Nothing below is removed from the live document. `remove()` is [CEReactions]: a
   // custom element's disconnectedCallback would run synchronously as it returned,
   // letting the page write content the reader never saw — as a text node, into an
@@ -252,7 +308,11 @@ DETECT_AND_COLLECT = r"""
   let stripIncomplete = false;
   let html;
   let copy = null;
-  if (strip) {
+  // Built whenever there is shadow content to compose, not only when stripping: a shadow
+  // tree is absent from `outerHTML` either way, so `include_hidden` used to return a
+  // document with that content silently missing — the exact omission this release closes
+  // for the default path. Only the removals below are conditional on `strip`.
+  if (strip || lightHosts.length) {
     const inert = document.implementation.createHTMLDocument('');
     copy = inert.importNode(document.documentElement, true);
     // Resolve every path before mutating anything: removing renumbers later siblings,
@@ -279,8 +339,14 @@ DETECT_AND_COLLECT = r"""
     // this by two routes — inside a shadow tree, or projected back through a `<slot>`
     // after already being removed from the copy by position — and a projected node can
     // be a text node, which a check placed after the element branch would wave through.
-    const dropped = new Set(shadowHidden);
-    for (const node of toRemove) dropped.add(node);
+    // Nothing is dropped when the caller asked to keep hidden text: `include_hidden`
+    // means the composed shadow tree arrives with its hidden nodes intact, exactly as
+    // the light DOM does, and `threats` still reports them.
+    const dropped = new Set();
+    if (strip) {
+      for (const node of shadowHidden) dropped.add(node);
+      for (const node of toRemove) dropped.add(node);
+    }
     const composed = (live) => {
       if (dropped.has(live)) return null;
       if (live.nodeType === 3) return inert.createTextNode(live.data);
@@ -324,8 +390,11 @@ DETECT_AND_COLLECT = r"""
   //   * a flagged node wins the cascade — an inline `!important` beats an author sheet,
   //     as do a transition origin and `::slotted` from an inner tree; and
   //   * nothing renders at all, because the page hid its own <body> or <html>. Then
-  //     `innerText` falls back to raw text and hands back everything it hid, which the
-  //     sheet cannot suppress because the node was never flagged in the first place.
+  //     `innerText` falls back to raw text and hands back everything it hid. The flagged
+  //     descendants *are* hidden by the sheet — it simply does not matter, because
+  //     `innerText` on an unrendered element returns textContent without consulting
+  //     layout. Reading this as "nothing was flagged" would send the next reader to fix
+  //     the walk, which is not where the problem is.
   // Either way the live text is abandoned for the copy the markup was stripped from,
   // where the flagged nodes are gone structurally and no cascade can bring them back.
   // Subtracting the node's text from the string instead was wrong: when its text was a
@@ -344,7 +413,7 @@ DETECT_AND_COLLECT = r"""
     'address,article,aside,blockquote,br,caption,center,dd,details,dialog,div,dl,dt,' +
     'fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hgroup,hr,legend,' +
     'li,main,menu,nav,ol,p,pre,search,section,summary,table,tbody,td,tfoot,th,thead,tr,ul';
-  if (strip && document.body) {
+  if ((strip || lightHosts.length) && document.body) {
     let untrusted = document.body.getClientRects().length === 0;
     if (!untrusted) {
       for (const el of toRemove) {
@@ -357,7 +426,9 @@ DETECT_AND_COLLECT = r"""
     // that route. Reporting it costs a threat entry on every web-component page; not
     // reporting it made the weaker source silently selectable.
     if (untrusted || lightHosts.length) {
-      stripIncomplete = true;
+      // Not a failed strip when the caller asked to keep hidden text — there was no
+      // strip to fall short of.
+      if (strip) stripIncomplete = true;
       // Never rendered, so it is not part of the text a reader would have seen.
       const noise = copy.querySelectorAll('script,style,noscript,template');
       for (const el of Array.prototype.slice.call(noise)) el.remove();

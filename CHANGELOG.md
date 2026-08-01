@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-08-01
+
+### Fixed
+
+- Five ways page content reached the model without ever being examined, all introduced by
+  0.9.2's shadow-DOM composition and all found by review of that release. The rule that
+  makes composing shadow content safe is that scanning strictly precedes it; each of these
+  broke that rule somewhere different:
+  - **A shadow host with no light children was never tested.** The walk skips elements whose
+    `textContent` is empty, and `textContent` is node-tree text — a host reads as empty
+    however much its shadow tree renders. `<x-note style="display:none"></x-note>` with the
+    payload in its shadow root was never passed to any signal, then composed into the
+    output. The gate now counts the shadow tree's text too.
+  - **A `<slot>` hidden by its container projected anyway.** A filled slot has no text of its
+    own and is `display: contents`, so it had no box to measure; the container hiding it has
+    no text either. Neither was examined and the projected nodes were composed in.
+  - **`display: contents` skipped every box test.** That guard existed so a component's slot
+    fallback was not flagged on sight, but `zero-size` is the only signal modelling "no box
+    because of where this sits", so skipping it let such an element inside a `display:none`
+    subtree through. It is now judged by whether its contents paint anything — measured in
+    Chrome 150, a real wrapper returns boxes and a hidden one returns none. `checkVisibility()`
+    is not usable here: it reports `false` for legitimate wrappers too.
+  - **`<body>` was never tested.** A TreeWalker never returns its own root, so the one
+    element no signal was applied to was the body. `content-visibility: hidden` on it kept a
+    principal box, so the layout-collapse check did not fire either, and text owned by no
+    element — a bare text node, or one under a `display: contents` wrapper — had nothing else
+    to catch it.
+  - **`include_hidden=true` dropped shadow content silently.** The composed copy is the only
+    place that content exists and it was built only when stripping, so the very omission
+    0.9.2 closed for the default path remained on that one, undisclosed. The copy is now
+    built whenever there are open shadow roots, and nothing is dropped from it when the
+    caller asked to keep hidden text.
+
+  Each is covered by a live test that fails when its fix is reverted.
+
+### Changed
+
+- `strip_incomplete`'s reason now says what happened — the rendered text was rebuilt from
+  markup rather than read from layout — instead of implying a node resisted removal. Its
+  most common trigger is a page using open shadow roots, which is routine, not adversarial.
+
 ## [0.9.3] - 2026-08-01
 
 ### Fixed
@@ -70,10 +111,10 @@ All notable changes to this project are documented here. The format is based on
   deliberately not flagged: that content renders once scrolled into view.
 - Hidden text no longer reaches `format="text"` and the extraction fallback when the page
   defends it with an inline `!important`, which beats the author stylesheet that hides
-  flagged nodes, or when the page hides its own `<body>`/`<html>` — in that case nothing is
-  flagged at all (the walk starts at `<body>` and never visits it) and `innerText` falls
-  back to raw text, handing back everything the page hid. Both are detected and the text is
-  taken from the already-stripped markup instead of from layout.
+  flagged nodes, or when the page hides its own `<body>`/`<html>` — nothing renders then, so
+  `innerText` falls back to raw text and hands back everything the page hid, which the sheet
+  cannot suppress because `innerText` on an unrendered element never consults layout at all.
+  Both are detected and the text is taken from the already-stripped markup instead.
 
 ### Added
 
@@ -514,6 +555,8 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.4
+[0.9.3]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.3
 [0.9.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.2
 [0.9.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.1
 [0.9.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.0
