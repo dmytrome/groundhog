@@ -36,6 +36,12 @@ All notable changes to this project are documented here. The format is based on
   `<table>` is foster-parented out. Each shifts every later sibling, so the recorded node
   positions addressed the wrong nodes: the strip deleted visible text and left the hidden
   payload in place. Covered by `test_node_indices_still_address_the_right_node_after_a_shift`.
+- `content-visibility: hidden` is detected, closing a bypass that delivered a payload
+  straight into the Markdown with **no threat reported at all**. It skips the subtree from
+  layout while the element keeps an ordinary `display`, a real box and a normal font, so
+  every one of the nine existing signals missed it — yet a reader sees nothing and it is
+  absent from `innerText`. It is now a tenth signal. `content-visibility: auto` is
+  deliberately not flagged: that content renders once scrolled into view.
 - Hidden text no longer reaches `format="text"` and the extraction fallback when the page
   defends it with an inline `!important`, which beats the author stylesheet that hides
   flagged nodes, or when the page hides its own `<body>`/`<html>` — in that case nothing is

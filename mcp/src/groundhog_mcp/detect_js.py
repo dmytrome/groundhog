@@ -67,6 +67,12 @@ DETECT_AND_COLLECT = r"""
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden')
       return 'display:none/visibility:hidden';
+    // The element keeps an ordinary display, a real box and a normal font — only its
+    // contents are skipped — so every check below misses it while a reader sees nothing
+    // and `innerText` omits it. It reached the extractor as ordinary article text.
+    // `checkVisibility()` does not answer this: the element itself is still rendered.
+    // `auto` is deliberately not treated as hidden; it renders once scrolled into view.
+    if (cs.contentVisibility === 'hidden') return 'content-visibility:hidden';
     if (parseFloat(cs.opacity) <= ALPHA_THRESHOLD) return 'opacity<=' + ALPHA_THRESHOLD;
     if (parseFloat(cs.fontSize) < 4) return 'font-size<4px';
     const r = el.getBoundingClientRect();
@@ -122,6 +128,12 @@ DETECT_AND_COLLECT = r"""
   // per level, and an `include_hidden` fetch strips nothing.
   const hiddenPaths = strip ? toRemove.map(indexPathOf) : [];
   const hiddenSelectors = strip ? toRemove.map(selectorOf) : [];
+  // Located by position, never by searching the copy for a <body>. `document.body` is
+  // the first body child of <html>, but `querySelector('body')` returns the first one
+  // in document order — so a <body> the page appends to <head> is never walked (the
+  // walk roots at `document.body`) yet would become the whole of the rebuilt text,
+  // replacing the article outright.
+  const bodyPath = document.body ? indexPathOf(document.body) : null;
   // HTML comments are never part of an element's textContent, so they were never
   // reaching the extracted markdown either way — this is a diagnostic-only signal
   // (a page embedding instructions this way is still worth reporting in threats[]).
@@ -202,6 +214,15 @@ DETECT_AND_COLLECT = r"""
   // where the flagged nodes are gone structurally and no cascade can bring them back.
   // Subtracting the node's text from the string instead was wrong: when its text was a
   // substring of earlier visible text, the visible copy was cut and the payload stayed.
+  //
+  // Which elements end a line has to come from a tag list: the copy has no layout to
+  // read it from, and the branch that hides a resisting node is the one case where the
+  // live tree could have answered — using it there would mean two ways to do one thing.
+  // So a page styling a listed tag `display:inline` gets a break a reader never saw.
+  const BREAKS_LINE =
+    'address,article,aside,blockquote,br,caption,center,dd,details,dialog,div,dl,dt,' +
+    'fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hgroup,hr,legend,' +
+    'li,main,menu,nav,ol,p,pre,search,section,summary,table,tbody,td,tfoot,th,thead,tr,ul';
   if (strip && document.body) {
     let untrusted = document.body.getClientRects().length === 0;
     if (!untrusted) {
@@ -214,8 +235,24 @@ DETECT_AND_COLLECT = r"""
       // Never rendered, so it is not part of the text a reader would have seen.
       const noise = copy.querySelectorAll('script,style,noscript,template');
       for (const el of Array.prototype.slice.call(noise)) el.remove();
-      const body = copy.querySelector('body');
-      text = (body || copy).textContent;
+      // `textContent` concatenates with no regard for layout, so on markup served
+      // without whitespace between tags it runs sentences together
+      // ("Alpha one.Beta two."). The copy is inert and already serialized into `html`,
+      // so a newline is appended to every element that would have ended a line — the
+      // same reason invisible width-occupying characters are replaced by a space
+      // rather than deleted. `<br>` is in the list rather than replaced: the copy is
+      // read only through `textContent`, and a text child sits at the same position in
+      // tree order that the `<br>` itself occupied.
+      const breaks = copy.querySelectorAll(BREAKS_LINE);
+      for (const el of Array.prototype.slice.call(breaks)) {
+        el.appendChild(copy.ownerDocument.createTextNode('\n'));
+      }
+      const body = bodyPath ? atIndexPath(copy, bodyPath) : null;
+      // Nesting gives one newline per ancestor, and the source indentation `textContent`
+      // preserves adds more. Left alone, wrapper-heavy markup returns text that is mostly
+      // blank lines, which spends the token budget and splits every sentence into its own
+      // chunk downstream, where blank lines are the chunk boundary.
+      text = (body || copy).textContent.replace(/[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim();
     }
   }
   if (adopted) {

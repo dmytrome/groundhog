@@ -61,7 +61,7 @@ source: `cd mcp && uv sync && uv run groundhog-mcp`.
 - **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it
   can judge what a *human* would actually see and strip what they could not, reporting each
   occurrence in `threats`. A strong heuristic, not a proof — see
-  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The nine signals,
+  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The ten signals,
   the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
 - **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
   language, word count, and author/date when the page declares them — so a downstream claim
@@ -101,12 +101,13 @@ Fetches a page and returns clean content plus provenance.
 
 Because Groundhog renders a real DOM, it can evaluate computed styles. Text invisible to
 humans is **stripped by default** and each occurrence reported in `threats` with its signal
-type and a short excerpt: `display:none`/`visibility:hidden`, `opacity ≤ 0.05`,
-`font-size < 4 px`, zero-size elements, the sub-pixel box used by `.sr-only`/
-`.visually-hidden` accessibility utility classes (a pattern attackers now mimic), the legacy
-`clip: rect(...)` hiding technique, fully transparent text color, text color matching the
-background color (near-1:1 contrast), and elements positioned entirely outside the rendered
-page (e.g. `left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
+type and a short excerpt: `display:none`/`visibility:hidden`, `content-visibility: hidden`
+(the subtree is skipped from layout while the element keeps an ordinary box, so no other
+signal sees it), `opacity ≤ 0.05`, `font-size < 4 px`, zero-size elements, the sub-pixel box
+used by `.sr-only`/`.visually-hidden` accessibility utility classes (a pattern attackers now
+mimic), the legacy `clip: rect(...)` hiding technique, fully transparent text color, text
+color matching the background color (near-1:1 contrast), and elements positioned entirely
+outside the rendered page (e.g. `left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
 extracted content either way, but a page embedding instructions this way is worth knowing
 about. A second, character-level class is stripped and reported alongside these: zero-width
 characters, bidi marks and RTL overrides, and the Unicode Tag block — an invisible ASCII
@@ -309,10 +310,19 @@ gets no synchronous hook to react to the strip. What that does *not* cover:
   uses; if the browser ever declines to provide one, the result carries a
   `detection_degraded` threat rather than quietly weaker detection.
 - **Thresholds can be sat just inside.** `opacity: 0.06`, `font-size: 4px`, a contrast ratio
-  just above 1.15 — all pass, as do hiding techniques the nine signals don't model
+  just above 1.15 — all pass, as do hiding techniques the ten signals don't model
   (`clip-path`, `text-indent`, `transform: scale(0)`).
 - **Invisible-character coverage is a set, not a rule.** Zero-width, bidi and the Unicode Tag
   block are stripped and reported; codepoints outside that set are not.
+- **When the text is rebuilt, line breaks are guessed from tag names.** In the two cases
+  above the rendered text is taken from the stripped markup, which has no layout — so an
+  element the page styled `display:inline` still gets a break, and a block-level tag outside
+  the list gets none. Word boundaries are preserved; exact line structure is not.
+- **Shadow DOM is invisible to both the detector and the output.** `outerHTML` omits shadow
+  roots and `innerText` does not cross them, so content a web component renders inside a
+  shadow tree is neither scanned for hidden text nor returned — it is missing from the
+  Markdown rather than silently trusted. Serializing it without also extending detection
+  into it would be worse than leaving it out, so that is deliberate until both land.
 - **A page can win the cascade against the hiding sheet, or hide its own `<body>`.** An
   inline `!important` beats an author stylesheet, and `innerText` returns raw text when
   nothing renders at all. In either case the rendered text is abandoned for the stripped
