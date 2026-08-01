@@ -1,5 +1,7 @@
 import asyncio
-from typing import Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
+
+from pydantic import Field
 
 from .. import (
     config,
@@ -108,9 +110,29 @@ async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]
 
 
 async def research(
-    query: str,
-    max_sources: int = _DEFAULT_MAX_SOURCES,
-    max_tokens: int | None = None,
+    query: Annotated[
+        str,
+        Field(description="The question to research. Passages are ranked against it."),
+    ],
+    max_sources: Annotated[
+        int,
+        Field(
+            description=(
+                f"How many pages to read. Values outside 1-{_MAX_SOURCES} are clamped "
+                "rather than rejected. Each source is a full page fetch, so this is the "
+                "main cost and latency control."
+            )
+        ),
+    ] = _DEFAULT_MAX_SOURCES,
+    max_tokens: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Token budget for the returned passages. Omit to use the server's "
+                "GROUNDHOG_MAX_TOKENS (20000 by default). Must be positive."
+            )
+        ),
+    ] = None,
 ) -> ResearchResult:
     """Search the web and return ranked passages drawn from several sources.
 
@@ -119,6 +141,10 @@ async def research(
     `query` — each attributed to its source, with that source's provenance
     receipt and any stripped injection payloads. A source that fails is reported
     in `sources` rather than failing the whole call.
+
+    Prefer `read_url` when you already have the URL, and `search` when you only
+    want links. This reads `max_sources` pages, rate limited per domain, so it is
+    the slowest of the three and the one to avoid for a single known page.
     """
     if not query.strip():
         raise ValueError("query must not be empty")

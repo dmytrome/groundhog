@@ -7,12 +7,12 @@
     "url": "https://github.com/dmytrome/groundhog",
     "source": "github"
   },
-  "version": "0.9.4",
+  "version": "0.9.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "groundhog-mcp",
-      "version": "0.9.4",
+      "version": "0.9.5",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

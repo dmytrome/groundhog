@@ -1,4 +1,6 @@
-from typing import TypedDict
+from typing import Annotated, TypedDict
+
+from pydantic import Field
 
 from .. import engine, safety, search as search_backend
 from ..config import load_config
@@ -14,8 +16,22 @@ class SearchResult(TypedDict):
     hits: list[SearchHit]
 
 
-async def search(query: str, limit: int = _DEFAULT_LIMIT) -> SearchResult:
+async def search(
+    query: Annotated[str, Field(description="What to search for. Must not be empty.")],
+    limit: Annotated[
+        int,
+        Field(
+            description=(
+                f"How many hits to return. Values outside 1-{_MAX_LIMIT} are clamped "
+                "rather than rejected."
+            )
+        ),
+    ] = _DEFAULT_LIMIT,
+) -> SearchResult:
     """Search the web and return ranked hits (title, url, snippet, engine).
+
+    Not for reading: it returns links, never page content. Use `read_url` for one
+    known URL, or `research` when you want the answer rather than the links.
 
     Use this to find pages, then pass the URLs you want to `read_url` for safe,
     grounded content. Results come from a self-hosted SearXNG instance when
