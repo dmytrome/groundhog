@@ -41,6 +41,7 @@ def make_page():
         final_url: str = "https://ex.com/p",
         meta: PageMeta | None = None,
         isolated: bool = True,
+        strip_incomplete: bool = False,
     ) -> RenderedPage:
         return RenderedPage(
             html=_PAGE_HTML,
@@ -50,6 +51,7 @@ def make_page():
             hidden_spans=hidden or [],
             meta=meta or _DEFAULT_META,
             isolated=isolated,
+            strip_incomplete=strip_incomplete,
         )
 
     return _make

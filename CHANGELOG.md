@@ -4,6 +4,85 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-08-01
+
+### Fixed
+
+- A page can no longer write into the result by reacting to the strip. `Element.remove()`
+  is `[CEReactions]`, so removing a hidden node ran a custom element's
+  `disconnectedCallback` *synchronously*, and that callback could add content the reader
+  never saw — as a bare text node, by writing into an element that already existed, by
+  moving a node into view, or through `document.title` and `<meta>`. None of it was
+  reported. A single hidden decoy element was enough.
+
+  Nothing is removed from the live document now, so the callback never runs at all and all
+  five routes close together. The markup is stripped inside a separate inert document; the
+  rendered text still comes from the live page, with the flagged nodes hidden by one
+  adopted stylesheet — which disconnects nothing and rewrites no existing attribute, so it
+  queues no reaction. Covered by
+  `tests/test_engine_live.py::test_a_removal_reaction_cannot_write_into_the_result`,
+  parametrized over all five, plus a page that re-renders on disconnect to prove ordinary
+  content still comes through.
+- The copy taken to build that markup no longer runs the page's code either. `cloneNode` is
+  itself `[CEReactions]`: it re-creates every custom element with the synchronous flag
+  unset, which enqueues an upgrade reaction drained as it returns — so a clone would have
+  run the page's `constructor` and `attributeChangedCallback` inside the strip, moving the
+  hook rather than closing it. The tree is now imported into a document from
+  `createHTMLDocument`, which has no browsing context, so no definition is looked up and no
+  reaction is queued. Covered by `test_an_upgrade_reaction_cannot_write_into_the_result`.
+- Imported rather than serialized and reparsed, so the strip removes the node it meant to.
+  Reparsing is not structure-preserving — measured in Chrome 150, adjacent text nodes merge
+  into one, `<noscript>` parses as markup with scripting off, and a script-inserted child of
+  `<table>` is foster-parented out. Each shifts every later sibling, so the recorded node
+  positions addressed the wrong nodes: the strip deleted visible text and left the hidden
+  payload in place. Covered by `test_node_indices_still_address_the_right_node_after_a_shift`.
+- An element with `display: contents` is no longer reported as hidden. It generates no box
+  of its own while its children render normally, so every box-shaped test read it as
+  invisible — which made a web component's `<slot>` fallback copy a finding on sight, since
+  `<slot>` is `display: contents` by default. Its children are still walked in their own
+  right, so nothing goes unexamined.
+- `content-visibility: hidden` is detected, closing a bypass that delivered a payload
+  straight into the Markdown with **no threat reported at all**. It skips the subtree from
+  layout while the element keeps an ordinary `display`, a real box and a normal font, so
+  every one of the nine existing signals missed it — yet a reader sees nothing and it is
+  absent from `innerText`. It is now a tenth signal. `content-visibility: auto` is
+  deliberately not flagged: that content renders once scrolled into view.
+- Hidden text no longer reaches `format="text"` and the extraction fallback when the page
+  defends it with an inline `!important`, which beats the author stylesheet that hides
+  flagged nodes, or when the page hides its own `<body>`/`<html>` — in that case nothing is
+  flagged at all (the walk starts at `<body>` and never visits it) and `innerText` falls
+  back to raw text, handing back everything the page hid. Both are detected and the text is
+  taken from the already-stripped markup instead of from layout.
+
+### Added
+
+- Content rendered inside an **open shadow root** is read. `importNode` does not carry
+  shadow roots and neither `outerHTML` nor `innerText` crosses one, so a page built from web
+  components previously came back with that content missing from `markdown`, `text` and the
+  extraction alike — silently, since nothing reported the omission. The shadow tree is now
+  scanned for hidden text in its own scope and composed into the result as the flat tree a
+  reader sees: `<slot>` is replaced by the nodes assigned to it, so light children appear
+  once and in the position they render, and an unfilled slot contributes its fallback.
+  Nested roots compose recursively. Scanning comes first by construction — a node flagged
+  anywhere, in a shadow tree or already removed from the light DOM, is skipped during
+  composition, so this adds content to the output without adding a route into it that the
+  detector never examined. A `<slot>` is examined in its own right, since a filled one has
+  no text of its own and the nodes it projects inherit their style through it. Verified in
+  Chrome 150 to queue no custom-element reaction and to leave the live tree untouched.
+
+  Reading a page this way means its text is rebuilt from markup rather than from layout,
+  which is a weaker source, so such a page reports `strip_incomplete` — a page can attach
+  an open shadow root at will, and that choice should not be silent. Threat locations name
+  the host and the boundary they crossed, e.g. `div#widget::shadow>section>div`.
+
+  **Closed** shadow roots remain unreadable from the isolated world; their content is
+  therefore neither scanned nor composed in, and stays out of the result as before.
+- A `strip_incomplete` threat, reported when the strip could not remove a flagged node
+  outright: the node won the cascade against the hiding stylesheet, the page hid its own
+  root so nothing rendered, or a recorded node position did not resolve in the copy. Each
+  leaves a weaker guarantee than a structural removal, so the caller is told rather than
+  being handed a result that looks fully stripped.
+
 ## [0.9.1] - 2026-08-01
 
 ### Fixed
@@ -414,6 +493,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.2
 [0.9.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.1
 [0.9.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.0
 [0.8.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.8.0

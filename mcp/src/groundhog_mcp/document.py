@@ -80,12 +80,7 @@ def _capped(
     if not dropped:
         return kept
     return kept + [
-        {
-            "type": "report_truncated",
-            "reason": f"{dropped} further threats not reported (cap {limit})",
-            "location": None,
-            "excerpt": "",
-        }
+        sanitize.notice("report_truncated", f"{dropped} further threats not reported (cap {limit})")
     ]
 
 
@@ -131,24 +126,30 @@ async def fetch_document(
         # can replace the DOM APIs it uses. Say so: a short `threats` list would
         # otherwise read as "little was hidden here".
         threats.append(
-            {
-                "type": "detection_degraded",
-                "reason": "hidden-text detection ran in the page's own JavaScript world",
-                "location": None,
-                "excerpt": "",
-            }
+            sanitize.notice(
+                "detection_degraded",
+                "hidden-text detection ran in the page's own JavaScript world",
+            )
+        )
+    if page.strip_incomplete:
+        # Either half of the strip fell short — see `detect_js.py` for when. Disclosed
+        # because the caller cannot otherwise tell a page with nothing hidden from one
+        # whose hidden node the strip could not fully account for.
+        threats.append(
+            sanitize.notice(
+                "strip_incomplete",
+                "a flagged node could not be removed outright; content was recovered another way",
+            )
         )
     if not page.final_url:
         # Appended after the cap: a disclosure the cap could drop would be no
         # disclosure. Substituting the requested URL silently would tell the caller
         # no redirect happened.
         threats.append(
-            {
-                "type": "final_url_suppressed",
-                "reason": "the page's final URL was unusable; the requested URL is reported",
-                "location": None,
-                "excerpt": "",
-            }
+            sanitize.notice(
+                "final_url_suppressed",
+                "the page's final URL was unusable; the requested URL is reported",
+            )
         )
     return Document(
         markdown=markdown,

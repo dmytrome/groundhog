@@ -13,12 +13,60 @@ DETECT_AND_COLLECT = r"""
   // deeply-nested page can't turn this into an O(elements x depth) style-recalc cost.
   const MAX_BG_ANCESTORS = 16;
   const hidden = [];
+  // Position among *all* child nodes, from documentElement down. `importNode(el, true)`
+  // copies the tree node-for-node, so the same walk locates the node in the copy.
+  const indexPathOf = (el) => {
+    const parts = [];
+    for (let n = el; n && n !== document.documentElement; n = n.parentNode) {
+      parts.unshift(Array.prototype.indexOf.call(n.parentNode.childNodes, n));
+    }
+    return parts;
+  };
+  const atIndexPath = (rootNode, parts) =>
+    parts.reduce((n, i) => (n ? n.childNodes[i] : null), rootNode);
+  // The children a reader sees: a host's shadow tree stands in for its own children, and
+  // a `<slot>` stands in for the light nodes assigned to it. `assignedNodes` returns the
+  // host's own children, so recursion terminates — a slot never re-enters its own host.
+  const childrenOf = (node) => {
+    const source = node.shadowRoot ? node.shadowRoot : node;
+    const out = [];
+    for (const child of Array.prototype.slice.call(source.childNodes)) {
+      if (child.nodeType === 1 && child.tagName === 'SLOT' && child.assignedNodes) {
+        const assigned = child.assignedNodes({ flatten: true });
+        // An unfilled slot renders its own fallback content instead.
+        const shown = assigned.length ? assigned : Array.prototype.slice.call(child.childNodes);
+        for (const a of shown) out.push(a);
+        continue;
+      }
+      out.push(child);
+    }
+    return out;
+  };
+  // The same position as a selector, for the stylesheet that hides it.
+  const selectorOf = (el) => {
+    const parts = [];
+    for (let n = el; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
+      const at = Array.prototype.indexOf.call(n.parentElement.children, n) + 1;
+      parts.unshift(':nth-child(' + at + ')');
+    }
+    return ':root > ' + parts.join(' > ');
+  };
   const pathOf = (el) => {
     const parts = [];
-    for (let n = el; n && n.nodeType === 1 && parts.length < 5; n = n.parentElement) {
+    let crossed = false;
+    for (let n = el; n && n.nodeType === 1 && parts.length < 5; ) {
       let s = n.tagName.toLowerCase();
       if (n.id) s += '#' + n.id;
+      if (crossed) { s += '::shadow'; crossed = false; }
       parts.unshift(s);
+      // `parentElement` is null at a shadow boundary — the parent of a shadow root's
+      // child is the ShadowRoot, not an Element — so the walk stopped there and every
+      // finding inside a component reported a path with no hint of which host it came
+      // from. Step to the host instead, and mark where the boundary was.
+      if (n.parentElement) { n = n.parentElement; continue; }
+      const rootNode = n.getRootNode ? n.getRootNode() : null;
+      if (rootNode && rootNode.host) { crossed = true; n = rootNode.host; continue; }
+      break;
     }
     return parts.join('>');
   };
@@ -47,18 +95,35 @@ DETECT_AND_COLLECT = r"""
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden')
       return 'display:none/visibility:hidden';
-    if (parseFloat(cs.opacity) <= ALPHA_THRESHOLD) return 'opacity<=' + ALPHA_THRESHOLD;
+    // The element keeps an ordinary display, a real box and a normal font — only its
+    // contents are skipped — so every check below misses it while a reader sees nothing
+    // and `innerText` omits it. It reached the extractor as ordinary article text.
+    // `checkVisibility()` does not answer this: the element itself is still rendered.
+    // `auto` is deliberately not treated as hidden; it renders once scrolled into view.
+    if (cs.contentVisibility === 'hidden') return 'content-visibility:hidden';
+    // `display: contents` generates no box of its own while its children render in the
+    // parent's formatting context, so every box-shaped test reads it as hidden — which
+    // made a web component's `<slot>` fallback copy a finding on sight, `<slot>` being
+    // `display: contents` by default. Only the box tests are skipped: `font-size` and
+    // `color` inherit through it and still hide the text, so those must keep running.
+    // Skipping them all let `display:contents` + `font-size:1px` walk straight through.
+    // `opacity` is skipped with the box tests — with no box there is nothing to composite.
+    const noBox = cs.display === 'contents';
+    if (!noBox && parseFloat(cs.opacity) <= ALPHA_THRESHOLD)
+      return 'opacity<=' + ALPHA_THRESHOLD;
     if (parseFloat(cs.fontSize) < 4) return 'font-size<4px';
     const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) return 'zero-size';
-    // A real (non-zero) but sub-pixel box; safe here since the walker only reaches
-    // elements with non-empty text, and no legitimate visible text renders in 1px.
-    const w = parseFloat(cs.width);
-    const h = parseFloat(cs.height);
-    if (w <= TINY_BOX_PX && h <= TINY_BOX_PX) return 'sr-only-1px';
-    // Legacy `clip: rect(...)` hiding — the pre-clip-path version of the same idiom.
-    if (cs.clip && /rect\(\s*0[a-z%]*[\s,]+0[a-z%]*[\s,]+0[a-z%]*[\s,]+0[a-z%]*\s*\)/.test(cs.clip))
-      return 'clip-zero-rect';
+    if (!noBox) {
+      if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) return 'zero-size';
+      // A real (non-zero) but sub-pixel box; safe here since the walker only reaches
+      // elements with non-empty text, and no legitimate visible text renders in 1px.
+      const w = parseFloat(cs.width);
+      const h = parseFloat(cs.height);
+      if (w <= TINY_BOX_PX && h <= TINY_BOX_PX) return 'sr-only-1px';
+      // Legacy `clip: rect(...)` hiding — the pre-clip-path version of the same idiom.
+      const zeroRect = /rect\(\s*0[a-z%]*[\s,]+0[a-z%]*[\s,]+0[a-z%]*[\s,]+0[a-z%]*\s*\)/;
+      if (cs.clip && zeroRect.test(cs.clip)) return 'clip-zero-rect';
+    }
     // Off-canvas (e.g. `left:-9999px`), checked against full document extent so
     // below-the-fold content — still within scrollHeight — is never flagged.
     if (r.width > 0 && r.height > 0) {
@@ -78,31 +143,80 @@ DETECT_AND_COLLECT = r"""
     return null;
   };
   const root = document.body || document.documentElement;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  // Flagged nodes in the light DOM, addressed later by position in the copy.
   const toRemove = [];
-  while (walker.nextNode()) {
-    const el = walker.currentNode;
-    const text = (el.textContent || '').trim();
-    if (!text) continue;
-    // only flag the closest hiding ancestor: skip if a parent already flagged
-    if (toRemove.some((p) => p.contains(el))) continue;
-    const reason = isHidden(el);
-    if (reason) {
-      hidden.push({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
-      toRemove.push(el);
+  // Flagged nodes the composition must not re-admit, held by identity because the copy
+  // has no shadow trees to address into. Also carries light-DOM nodes: one already
+  // removed by position is handed back by `assignedNodes`, since slot assignment is by
+  // name and indifferent to whether the node renders.
+  const shadowHidden = new Set();
+  // Open shadow hosts, outermost first, so composition can mirror the flat tree.
+  const lightHosts = [];
+  // `createTreeWalker` does not cross a shadow boundary and `contains` does not either,
+  // so each tree is walked in its own scope with its own "closest hiding ancestor" set.
+  // Without this a shadow tree is never scanned at all — and anything the composition
+  // below puts into the markup would arrive unexamined, which is the one thing the
+  // strip must never do. Closed roots stay unreachable, and so stay out of the output.
+  const scan = (scopeRoot, inShadow, hosts) => {
+    const walker = document.createTreeWalker(scopeRoot, NodeFilter.SHOW_ELEMENT);
+    const flagged = [];
+    const nested = [];
+    while (walker.nextNode()) {
+      const el = walker.currentNode;
+      if (el.shadowRoot) { hosts.push(el); nested.push(el); }
+      // A filled `<slot>` has no text of its own — its `textContent` is only the unused
+      // fallback — so the check below skips it, yet the nodes it projects inherit their
+      // style through it. A bare slotted *text* node has no element of its own for the
+      // walk to reach either, so hiding it on the slot was examined by nothing at all.
+      if (el.tagName === 'SLOT' && el.assignedNodes) {
+        const assigned = el.assignedNodes({ flatten: true });
+        const slotReason = assigned.length ? isHidden(el) : null;
+        if (slotReason) {
+          const projected = assigned.map((n) => n.textContent || '').join('').trim();
+          if (projected) {
+            hidden.push({
+              text: projected.slice(0, MAX_TEXT), reason: slotReason, path: pathOf(el),
+            });
+          }
+          for (const node of assigned) shadowHidden.add(node);
+        }
+      }
+      const text = (el.textContent || '').trim();
+      if (!text) continue;
+      if (flagged.some((p) => p.contains(el))) continue;
+      const reason = isHidden(el);
+      if (reason) {
+        hidden.push({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
+        flagged.push(el);
+        if (inShadow) shadowHidden.add(el); else toRemove.push(el);
+      }
     }
-  }
-  // `remove()` is [CEReactions]: a custom element's disconnectedCallback runs
-  // synchronously as this returns, so a page can mutate the document mid-strip. That
-  // is a real and open limitation — see "Limits of hidden-text detection" in the
-  // README. It is deliberately not chased here: an identity census over elements
-  // closes one primitive of several while turning an ordinary `innerHTML = innerHTML`
-  // re-render into a total content wipe, which is worse than the leak.
-  if (strip) for (const el of toRemove) el.remove();
+    // Nested hosts are recorded against their own tree, not the light DOM: composition
+    // reaches them through their parent's shadow content, not by document position.
+    for (const host of nested) scan(host.shadowRoot, true, []);
+  };
+  scan(root, false, lightHosts);
+  // Nothing below is removed from the live document. `remove()` is [CEReactions]: a
+  // custom element's disconnectedCallback would run synchronously as it returned,
+  // letting the page write content the reader never saw — as a text node, into an
+  // element that already existed, by moving a node, or into `document.title`. Where
+  // each half gets its content instead is explained at its own step.
+  //
+  // Positions are recorded only when they will be used; both walks cost O(siblings)
+  // per level, and an `include_hidden` fetch strips nothing.
+  const hiddenPaths = strip ? toRemove.map(indexPathOf) : [];
+  const hiddenSelectors = strip ? toRemove.map(selectorOf) : [];
+  // Located by position, never by searching the copy for a <body>. `document.body` is
+  // the first body child of <html>, but `querySelector('body')` returns the first one
+  // in document order — so a <body> the page appends to <head> is never walked (the
+  // walk roots at `document.body`) yet would become the whole of the rebuilt text,
+  // replacing the article outright.
+  const bodyPath = document.body ? indexPathOf(document.body) : null;
   // HTML comments are never part of an element's textContent, so they were never
   // reaching the extracted markdown either way — this is a diagnostic-only signal
   // (a page embedding instructions this way is still worth reporting in threats[]).
   const commentWalker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
+  const commentPaths = [];
   while (commentWalker.nextNode()) {
     const c = commentWalker.currentNode;
     const text = (c.textContent || '').trim();
@@ -110,7 +224,7 @@ DETECT_AND_COLLECT = r"""
     hidden.push({
       text: text.slice(0, MAX_TEXT), reason: 'html-comment', path: pathOf(c.parentElement),
     });
-    if (strip) c.remove();
+    if (strip) commentPaths.push(indexPathOf(c));
   }
   const meta = {};
   for (const m of document.querySelectorAll('meta[name], meta[property]')) {
@@ -120,19 +234,167 @@ DETECT_AND_COLLECT = r"""
   }
   const canonEl = document.querySelector('link[rel="canonical"]');
   const langAttr = document.documentElement.getAttribute('lang');
-  // Read the content here, in the same synchronous task that removed the hidden
-  // nodes. Reading it in a later round trip let the page put them back: `remove()`
-  // mutates the shared DOM, so a MutationObserver in the page's own world fires and
-  // re-appends the node before the next evaluate arrives. A microtask cannot
-  // interleave inside this function, so what is read here is what was stripped.
+  // Markup: imported into an inert document, not cloned. `cloneNode` is [CEReactions]:
+  // it re-creates every custom element with the synchronous flag unset, which enqueues
+  // an upgrade reaction drained as it returns — running the page's constructor and
+  // attributeChangedCallback inside the strip. A document from `createHTMLDocument` has
+  // no browsing context, so definition lookup returns null there and nothing is queued.
+  //
+  // Imported rather than serialized-and-reparsed: reparsing is not structure-preserving,
+  // so the index paths below would address the wrong nodes. Measured in Chrome 150 —
+  // adjacent text nodes merge into one, `<noscript>` parses as markup with scripting
+  // off, and a script-inserted child of `<table>` is foster-parented out; each shifts
+  // every later sibling, and the strip then deleted visible text while leaving the
+  // hidden payload in place. `importNode` copies the tree node-for-node.
+  const title = document.title;
+  // Set by either half when it could not fully carry out the strip, so a partial
+  // result is never returned as if it were complete.
+  let stripIncomplete = false;
+  let html;
+  let copy = null;
+  if (strip) {
+    const inert = document.implementation.createHTMLDocument('');
+    copy = inert.importNode(document.documentElement, true);
+    // Resolve every path before mutating anything: removing renumbers later siblings,
+    // and the composition below replaces whole subtrees.
+    const doomed = hiddenPaths.concat(commentPaths).map((parts) => atIndexPath(copy, parts));
+    const hostPairs = lightHosts.map((h) => [h, atIndexPath(copy, indexPathOf(h))]);
+    for (const node of doomed) {
+      // A path that does not resolve means this markup still contains a node that was
+      // flagged; say so rather than returning it as fully stripped.
+      if (!node) { stripIncomplete = true; continue; }
+      node.remove();
+    }
+    // `importNode` does not carry shadow roots, and neither `outerHTML` nor `innerText`
+    // crosses one, so a page rendering through web components used to come back with
+    // that content simply missing. It is rebuilt here as ordinary markup — the flat tree
+    // a reader actually sees — so the extractor handles it like any other page.
+    //
+    // Built node by node from the live tree rather than imported wholesale, because the
+    // filter is the point: a node flagged inside a shadow tree is skipped here, which is
+    // how shadow content can be added to the output without adding an unscanned path
+    // into it. `<slot>` is replaced by the nodes assigned to it, so light children
+    // appear where they are rendered instead of twice or in the wrong place.
+    // Both sets, and checked before the node type is looked at: a flagged node reaches
+    // this by two routes — inside a shadow tree, or projected back through a `<slot>`
+    // after already being removed from the copy by position — and a projected node can
+    // be a text node, which a check placed after the element branch would wave through.
+    const dropped = new Set(shadowHidden);
+    for (const node of toRemove) dropped.add(node);
+    const composed = (live) => {
+      if (dropped.has(live)) return null;
+      if (live.nodeType === 3) return inert.createTextNode(live.data);
+      if (live.nodeType !== 1) return null;
+      const el = inert.importNode(live, false);
+      for (const child of childrenOf(live)) {
+        const built = composed(child);
+        if (built) el.appendChild(built);
+      }
+      return el;
+    };
+    for (const [live, copyHost] of hostPairs) {
+      // A host inside a subtree that was just removed is detached; nothing to fill.
+      if (!copyHost || !copy.contains(copyHost)) continue;
+      while (copyHost.firstChild) copyHost.removeChild(copyHost.firstChild);
+      for (const child of childrenOf(live)) {
+        const built = composed(child);
+        if (built) copyHost.appendChild(built);
+      }
+    }
+    html = copy.outerHTML;
+  } else {
+    html = document.documentElement.outerHTML;
+  }
+
+  // Rendered text needs live layout, so the flagged nodes are hidden rather than
+  // removed. Adopting a constructed stylesheet is not a tree mutation, so — unlike
+  // appending <style> — a MutationObserver sees nothing and the page is never handed
+  // the position of every node the detector flagged.
+  let adopted = null;
+  if (strip && hiddenSelectors.length && 'adoptedStyleSheets' in Document.prototype) {
+    adopted = new CSSStyleSheet();
+    adopted.replaceSync(hiddenSelectors.join(',') + '{display:none !important}');
+    const sheets = Array.prototype.slice.call(document.adoptedStyleSheets);
+    sheets.push(adopted);
+    document.adoptedStyleSheets = sheets;
+  }
+  let text = document.body ? document.body.innerText : '';
+  // `innerText` is only trustworthy while the sheet above is actually deciding what
+  // renders. Two ways it stops being:
+  //   * a flagged node wins the cascade — an inline `!important` beats an author sheet,
+  //     as do a transition origin and `::slotted` from an inner tree; and
+  //   * nothing renders at all, because the page hid its own <body> or <html>. Then
+  //     `innerText` falls back to raw text and hands back everything it hid, which the
+  //     sheet cannot suppress because the node was never flagged in the first place.
+  // Either way the live text is abandoned for the copy the markup was stripped from,
+  // where the flagged nodes are gone structurally and no cascade can bring them back.
+  // Subtracting the node's text from the string instead was wrong: when its text was a
+  // substring of earlier visible text, the visible copy was cut and the payload stayed.
+  //
+  // An open shadow root takes the same route for a different reason: `innerText` does not
+  // cross one, so its text is missing rather than wrong, and the copy is the only place
+  // the composed flat tree exists. That is not a failed strip, so it sets no threat —
+  // pages without web components keep the live text untouched.
+  //
+  // Which elements end a line has to come from a tag list: the copy has no layout to
+  // read it from, and the branch that hides a resisting node is the one case where the
+  // live tree could have answered — using it there would mean two ways to do one thing.
+  // So a page styling a listed tag `display:inline` gets a break a reader never saw.
+  const BREAKS_LINE =
+    'address,article,aside,blockquote,br,caption,center,dd,details,dialog,div,dl,dt,' +
+    'fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hgroup,hr,legend,' +
+    'li,main,menu,nav,ol,p,pre,search,section,summary,table,tbody,td,tfoot,th,thead,tr,ul';
+  if (strip && document.body) {
+    let untrusted = document.body.getClientRects().length === 0;
+    if (!untrusted) {
+      for (const el of toRemove) {
+        if (getComputedStyle(el).display !== 'none') { untrusted = true; break; }
+      }
+    }
+    // Disclosed on the shadow route too. The rebuilt text is read from markup rather
+    // than layout, so it can carry what layout suppressed for a reason no signal models
+    // — and attaching one throwaway open shadow root is a free way for a page to choose
+    // that route. Reporting it costs a threat entry on every web-component page; not
+    // reporting it made the weaker source silently selectable.
+    if (untrusted || lightHosts.length) {
+      stripIncomplete = true;
+      // Never rendered, so it is not part of the text a reader would have seen.
+      const noise = copy.querySelectorAll('script,style,noscript,template');
+      for (const el of Array.prototype.slice.call(noise)) el.remove();
+      // `textContent` concatenates with no regard for layout, so on markup served
+      // without whitespace between tags it runs sentences together
+      // ("Alpha one.Beta two."). The copy is inert and already serialized into `html`,
+      // so a newline is appended to every element that would have ended a line — the
+      // same reason invisible width-occupying characters are replaced by a space
+      // rather than deleted. `<br>` is in the list rather than replaced: the copy is
+      // read only through `textContent`, and a text child sits at the same position in
+      // tree order that the `<br>` itself occupied.
+      const breaks = copy.querySelectorAll(BREAKS_LINE);
+      for (const el of Array.prototype.slice.call(breaks)) {
+        el.appendChild(copy.ownerDocument.createTextNode('\n'));
+      }
+      const body = bodyPath ? atIndexPath(copy, bodyPath) : null;
+      // Nesting gives one newline per ancestor, and the source indentation `textContent`
+      // preserves adds more. Left alone, wrapper-heavy markup returns text that is mostly
+      // blank lines, which spends the token budget and splits every sentence into its own
+      // chunk downstream, where blank lines are the chunk boundary.
+      text = (body || copy).textContent.replace(/[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim();
+    }
+  }
+  if (adopted) {
+    document.adoptedStyleSheets = Array.prototype.filter.call(
+      document.adoptedStyleSheets, (s) => s !== adopted);
+  }
+
   return {
     hidden,
     meta,
     lang: langAttr || null,
     canonical: canonEl ? canonEl.href : null,
-    html: document.documentElement.outerHTML,
-    text: document.body ? document.body.innerText : '',
-    title: document.title,
+    html,
+    text,
+    title,
+    stripIncomplete,
   };
 }
 """
