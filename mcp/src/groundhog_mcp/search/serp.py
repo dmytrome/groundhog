@@ -3,7 +3,7 @@ import urllib.parse
 import lxml.html
 
 from .. import engine
-from ..safety import ALLOWED_SCHEMES
+from ..config import ALLOWED_SCHEMES
 from .types import SearchHit, SearchUnavailableError
 
 _ENGINE = "duckduckgo"
@@ -32,6 +32,9 @@ def _real_url(href: str) -> str | None:
             return None
         href = target[0]
         parsed = urllib.parse.urlparse(href)
+    # Checked here as well as at the shared boundary: this unwrapper percent-decodes
+    # the redirect target, so it is where a `javascript:`/`file:` URL can first come
+    # into existence — rejecting at the point of introduction, not a second policy.
     return href if parsed.scheme in ALLOWED_SCHEMES else None
 
 

@@ -2,8 +2,12 @@ import asyncio
 import itertools
 import json
 from collections.abc import Callable
+from typing import TypeVar
 
 import websockets
+
+_T = TypeVar("_T")
+_MAX_FRAME_BYTES = 64 * 1024 * 1024  # generous for real pages, fatal for a memory bomb
 
 
 class CDPError(Exception):
@@ -30,7 +34,10 @@ class CDPClient:
         self._closed = False
 
     async def connect(self) -> None:
-        self._ws = await websockets.connect(self._ws_url, max_size=None)
+        # Bounded, not unlimited: a CDP response carries the page's own `outerHTML`,
+        # so a hostile page choosing its size could otherwise stream this process out
+        # of memory — the same reason `http.MAX_BYTES` exists for plain fetches.
+        self._ws = await websockets.connect(self._ws_url, max_size=_MAX_FRAME_BYTES)
         self._reader = asyncio.create_task(self._read_loop())
 
     async def _read_loop(self) -> None:
@@ -83,18 +90,46 @@ class CDPClient:
             raise CDPError("CDP client is not connected")
         mid = next(self._ids)
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        self._pending[mid] = fut
         msg: dict = {"id": mid, "method": method, "params": params or {}}
         if session_id:
             msg["sessionId"] = session_id
-        await self._ws.send(json.dumps(msg))
-        return await fut
+        self._pending[mid] = fut
+        try:
+            # The send is inside the block too: a cancellation or a dropped socket
+            # while suspended here would otherwise strand the entry for the life of
+            # the connection, once per wedged page.
+            await self._ws.send(json.dumps(msg))
+            return await fut
+        finally:
+            self._pending.pop(mid, None)
 
     def expect_event(self, method: str, session_id: str | None = None) -> asyncio.Future[dict]:
-        """Register a waiter BEFORE the command that triggers the event, then await it."""
+        """Register a waiter BEFORE the command that triggers the event, then await it.
+
+        The waiter removes itself once settled. An event that never arrives — a
+        navigation that times out, or fails before the load fires — would otherwise
+        retain its entry for the life of the connection, once per such fetch.
+        """
+        key = (session_id, method)
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        self._event_waiters.setdefault((session_id, method), []).append(fut)
+        self._event_waiters.setdefault(key, []).append(fut)
+        fut.add_done_callback(lambda settled: self._discard(self._event_waiters, key, settled))
         return fut
+
+    @staticmethod
+    def _discard(
+        registry: dict[tuple[str | None, str], list[_T]],
+        key: tuple[str | None, str],
+        item: _T,
+    ) -> None:
+        """Remove one entry from a per-(session, method) registry, pruning the key."""
+        entries = registry.get(key)
+        if not entries:
+            return  # already delivered: `_read_loop` pops the whole list
+        if item in entries:
+            entries.remove(item)
+        if not entries:
+            registry.pop(key, None)
 
     def on_event(
         self, method: str, session_id: str | None, callback: Callable[[dict], None]
@@ -104,11 +139,7 @@ class CDPClient:
         self._event_listeners.setdefault(key, []).append(callback)
 
         def unsubscribe() -> None:
-            callbacks = self._event_listeners.get(key, [])
-            if callback in callbacks:
-                callbacks.remove(callback)
-            if not callbacks:
-                self._event_listeners.pop(key, None)
+            self._discard(self._event_listeners, key, callback)
 
         return unsubscribe
 

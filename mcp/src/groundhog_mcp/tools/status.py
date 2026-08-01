@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+from .. import safety
 from ..config import load_config
 from ..engine import check_browser, remediation
 
@@ -17,4 +18,8 @@ async def status() -> StatusResult:
     cfg = load_config()
     reachable = await check_browser(cfg.cdp_url)
     hint = None if reachable else remediation(cfg)
-    return {"browser_reachable": reachable, "cdp_url": cfg.cdp_url, "hint": hint}
+    return {
+        "browser_reachable": reachable,
+        "cdp_url": safety.redacted_url(cfg.cdp_url),
+        "hint": hint,
+    }

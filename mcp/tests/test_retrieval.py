@@ -1,4 +1,4 @@
-from groundhog_mcp.retrieval import select
+from groundhog_mcp.retrieval import chunk_document, select
 
 DOC = """# Intro
 
@@ -54,3 +54,10 @@ def test_body_without_blank_line_after_heading_is_searchable():
     body, matches, _ = select(doc, "loyal domesticated companionship", max_tokens=10000)
     assert "Loyal domesticated" in body
     assert matches and matches[0]["heading"] == "Dogs"
+
+
+def test_heading_is_capped():
+    # Headings ride along in every match/passage and never pass through the
+    # token budget, so an enormous one would flood context outside max_tokens.
+    chunks = chunk_document("# " + "h" * 500 + "\n\nbody text here\n")
+    assert len(chunks[0].heading) == 200

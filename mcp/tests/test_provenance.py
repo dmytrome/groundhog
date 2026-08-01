@@ -1,3 +1,5 @@
+import pytest
+
 from groundhog_mcp.extract import ExtractMeta
 from groundhog_mcp.provenance import build
 
@@ -68,3 +70,22 @@ def test_language_detected_from_content():
 def test_language_falls_back_to_hint_for_short_text():
     prov = build("hi", ExtractMeta(None, None, None), _engine_meta(lang="de"))
     assert prov["language"] == "de"
+
+
+def test_canonical_is_dropped_rather_than_rewritten():
+    # A truncated URL is a different, valid-looking URL — and provenance is the
+    # receipt for exactly what was read, so a mutated citation is worse than none.
+    long_url = "https://ex.com/" + "c" * 4000
+    prov = build("text", ExtractMeta(None, None, long_url), _engine_meta())
+    assert prov["canonical"] is None
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["javascript:alert(document.cookie)", "data:text/html,<script>alert(1)</script>"],
+)
+def test_canonical_with_a_dangerous_scheme_is_dropped(hostile):
+    # `canonEl.href` returns `javascript:`/`data:` verbatim, and provenance is
+    # model-facing — a citation must pass the same rules as any other URL.
+    prov = build("text", ExtractMeta(None, None, hostile), _engine_meta())
+    assert prov["canonical"] is None
