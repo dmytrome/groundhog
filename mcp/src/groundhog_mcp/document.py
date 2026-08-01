@@ -138,7 +138,7 @@ async def fetch_document(
         threats.append(
             sanitize.notice(
                 "strip_incomplete",
-                "a flagged node could not be removed outright; content was recovered another way",
+                "the rendered text was rebuilt from markup rather than read from layout",
             )
         )
     if not page.final_url:

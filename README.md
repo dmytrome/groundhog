@@ -61,7 +61,7 @@ source: `cd mcp && uv sync && uv run groundhog-mcp`.
 - **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it
   can judge what a *human* would actually see and strip what they could not, reporting each
   occurrence in `threats`. A strong heuristic, not a proof — see
-  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The ten signals,
+  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The eleven signals,
   the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
 - **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
   language, word count, and author/date when the page declares them — so a downstream claim
@@ -103,7 +103,8 @@ Because Groundhog renders a real DOM, it can evaluate computed styles. Text invi
 humans is **stripped by default** and each occurrence reported in `threats` with its signal
 type and a short excerpt: `display:none`/`visibility:hidden`, `content-visibility: hidden`
 (the subtree is skipped from layout while the element keeps an ordinary box, so no other
-signal sees it), `opacity ≤ 0.05`, `font-size < 4 px`, zero-size elements, the sub-pixel box
+signal sees it), `opacity ≤ 0.05`, `font-size < 4 px`, zero-size elements, an element that generates no box
+of its own (`display: contents`) whose contents render nothing, the sub-pixel box
 used by `.sr-only`/`.visually-hidden` accessibility utility classes (a pattern attackers now
 mimic), the legacy `clip: rect(...)` hiding technique, fully transparent text color, text
 color matching the background color (near-1:1 contrast), and elements positioned entirely
@@ -124,7 +125,7 @@ there.
 | `report_truncated` | How many entries were dropped when the cap was hit. Its own type, so it cannot be miscounted as a finding |
 | `final_url_suppressed` | The page's own final URL was unusable (over-long, or carrying invisible characters) and was not returned; `final_url` reports the URL you requested instead |
 | `detection_degraded` | The collector had to run in the page's own JavaScript world, where the page can replace the DOM APIs it uses. A short list proves nothing on that page |
-| `strip_incomplete` | A flagged node could not be removed outright — it won the cascade against the hiding stylesheet (an inline `!important` does), the page hid its own `<body>`, or its recorded position did not resolve. The text is then taken from the stripped markup rather than from layout. A weaker guarantee than a structural strip |
+| `strip_incomplete` | The rendered text was rebuilt from markup rather than read from layout. Either a flagged node could not be removed outright — it won the cascade against the hiding stylesheet (an inline `!important` does) or its recorded position did not resolve — or the page renders through open shadow roots, whose content has no layout to read. The second is by far the more common, and is routine rather than adversarial |
 
 The value of stripping is that the payload is out of the content being reasoned over, not
 that it is invisible to the model. At most **50 findings per page** are returned (**10 per
@@ -310,7 +311,7 @@ gets no synchronous hook to react to the strip. What that does *not* cover:
   uses; if the browser ever declines to provide one, the result carries a
   `detection_degraded` threat rather than quietly weaker detection.
 - **Thresholds can be sat just inside.** `opacity: 0.06`, `font-size: 4px`, a contrast ratio
-  just above 1.15 — all pass, as do hiding techniques the ten signals don't model
+  just above 1.15 — all pass, as do hiding techniques the eleven signals don't model
   (`clip-path`, `text-indent`, `transform: scale(0)`).
 - **Invisible-character coverage is a set, not a rule.** Zero-width, bidi and the Unicode Tag
   block are stripped and reported; codepoints outside that set are not.
