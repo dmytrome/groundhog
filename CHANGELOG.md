@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-08-01
+
+### Fixed
+
+- The package declared `requires-python = ">=3.11"` but did not work on 3.11: pydantic
+  rejects `typing.TypedDict` below 3.12, so building the tool schemas raised and **every
+  one of the four tools failed to register**. An installer honouring that metadata — `uvx
+  groundhog-mcp` on a machine whose default interpreter is 3.11 — got a server that could
+  do nothing. The floor is now 3.12, which is the version CI has always tested; the
+  metadata claimed a range nothing verified.
+
+### Added
+
+- `mcp/Dockerfile`: an image that runs the MCP server *and* the browser it drives, for
+  registries that build a repository and then expect an MCP handshake on stdio. The
+  repository root `Dockerfile` builds the browser alone — it exposes CDP and never speaks
+  MCP — so such a build produced a container that looked broken. The entrypoint starts the
+  browser, waits for CDP, and only then hands stdio to the server, with the browser's
+  logging kept on stderr because stdout is the transport. A build step asks the server for
+  its tools, so an image whose tools cannot register fails the build instead of shipping.
+
 ## [0.9.2] - 2026-08-01
 
 ### Fixed
