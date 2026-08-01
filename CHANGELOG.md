@@ -36,6 +36,11 @@ All notable changes to this project are documented here. The format is based on
   `<table>` is foster-parented out. Each shifts every later sibling, so the recorded node
   positions addressed the wrong nodes: the strip deleted visible text and left the hidden
   payload in place. Covered by `test_node_indices_still_address_the_right_node_after_a_shift`.
+- An element with `display: contents` is no longer reported as hidden. It generates no box
+  of its own while its children render normally, so every box-shaped test read it as
+  invisible — which made a web component's `<slot>` fallback copy a finding on sight, since
+  `<slot>` is `display: contents` by default. Its children are still walked in their own
+  right, so nothing goes unexamined.
 - `content-visibility: hidden` is detected, closing a bypass that delivered a payload
   straight into the Markdown with **no threat reported at all**. It skips the subtree from
   layout while the element keeps an ordinary `display`, a real box and a normal font, so
@@ -51,6 +56,27 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Content rendered inside an **open shadow root** is read. `importNode` does not carry
+  shadow roots and neither `outerHTML` nor `innerText` crosses one, so a page built from web
+  components previously came back with that content missing from `markdown`, `text` and the
+  extraction alike — silently, since nothing reported the omission. The shadow tree is now
+  scanned for hidden text in its own scope and composed into the result as the flat tree a
+  reader sees: `<slot>` is replaced by the nodes assigned to it, so light children appear
+  once and in the position they render, and an unfilled slot contributes its fallback.
+  Nested roots compose recursively. Scanning comes first by construction — a node flagged
+  anywhere, in a shadow tree or already removed from the light DOM, is skipped during
+  composition, so this adds content to the output without adding a route into it that the
+  detector never examined. A `<slot>` is examined in its own right, since a filled one has
+  no text of its own and the nodes it projects inherit their style through it. Verified in
+  Chrome 150 to queue no custom-element reaction and to leave the live tree untouched.
+
+  Reading a page this way means its text is rebuilt from markup rather than from layout,
+  which is a weaker source, so such a page reports `strip_incomplete` — a page can attach
+  an open shadow root at will, and that choice should not be silent. Threat locations name
+  the host and the boundary they crossed, e.g. `div#widget::shadow>section>div`.
+
+  **Closed** shadow roots remain unreadable from the isolated world; their content is
+  therefore neither scanned nor composed in, and stays out of the result as before.
 - A `strip_incomplete` threat, reported when the strip could not remove a flagged node
   outright: the node won the cascade against the hiding stylesheet, the page hid its own
   root so nothing rendered, or a recorded node position did not resolve in the copy. Each

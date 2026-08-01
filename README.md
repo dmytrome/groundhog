@@ -318,11 +318,11 @@ gets no synchronous hook to react to the strip. What that does *not* cover:
   above the rendered text is taken from the stripped markup, which has no layout — so an
   element the page styled `display:inline` still gets a break, and a block-level tag outside
   the list gets none. Word boundaries are preserved; exact line structure is not.
-- **Shadow DOM is invisible to both the detector and the output.** `outerHTML` omits shadow
-  roots and `innerText` does not cross them, so content a web component renders inside a
-  shadow tree is neither scanned for hidden text nor returned — it is missing from the
-  Markdown rather than silently trusted. Serializing it without also extending detection
-  into it would be worse than leaving it out, so that is deliberate until both land.
+- **Closed shadow roots are not read.** Open ones are: their content is scanned for hidden
+  text and composed into the output as the flat tree a reader sees, slots included. A
+  closed root is unreachable from the isolated world, so it cannot be scanned — and what
+  cannot be scanned is not composed in. Its content stays out of the result entirely rather
+  than arriving unexamined.
 - **A page can win the cascade against the hiding sheet, or hide its own `<body>`.** An
   inline `!important` beats an author stylesheet, and `innerText` returns raw text when
   nothing renders at all. In either case the rendered text is abandoned for the stripped

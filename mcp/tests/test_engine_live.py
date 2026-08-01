@@ -543,3 +543,204 @@ async def test_content_visibility_auto_is_not_flagged():
     page = await _fetch_local(html)
     assert page.hidden_spans == []
     assert "Deferred but genuinely readable copy." in page.html
+
+
+# `importNode` does not carry shadow roots, and neither `outerHTML` nor `innerText`
+# crosses one, so a page rendering through web components used to come back with that
+# content missing entirely. It is composed into the copy as the flat tree — which means
+# it must be scanned first, or composing it would be a way into the output that the
+# detector never looked at.
+SHADOW_HTML = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="host"><span>SLOTTED_CHILD</span></div>
+<script>
+  const r = document.getElementById('host').attachShadow({mode: 'open'});
+  r.innerHTML = '<style>b{color:red}</style><b>SHADOW_VISIBLE</b>'
+    + '<div style="display:none">SHADOW_HIDDEN_PAYLOAD</div><slot></slot>';
+</script>
+</body></html>"""
+
+
+async def test_open_shadow_content_reaches_the_output():
+    page = await _fetch_local(SHADOW_HTML)
+    assert "SHADOW_VISIBLE" in page.html
+    assert "SHADOW_VISIBLE" in page.text
+    assert "dividend of forty cents" in page.text
+
+
+async def test_hidden_text_inside_a_shadow_root_is_detected_and_stripped():
+    page = await _fetch_local(SHADOW_HTML)
+    assert any("SHADOW_HIDDEN_PAYLOAD" in h["text"] for h in page.hidden_spans)
+    assert "SHADOW_HIDDEN_PAYLOAD" not in page.html
+    assert "SHADOW_HIDDEN_PAYLOAD" not in page.text
+
+
+async def test_slotted_light_children_appear_once():
+    # They are children of the host in the node tree *and* rendered through the slot, so
+    # composing the shadow tree naively yields them twice — or drops them.
+    page = await _fetch_local(SHADOW_HTML)
+    assert page.text.count("SLOTTED_CHILD") == 1
+    assert page.html.count("SLOTTED_CHILD") == 1
+
+
+NESTED_SHADOW_HTML = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="outer"></div>
+<script>
+  const o = document.getElementById('outer').attachShadow({mode: 'open'});
+  o.innerHTML = '<p>OUTER_SHADOW</p><div id="inner"></div>';
+  const i = o.getElementById('inner').attachShadow({mode: 'open'});
+  i.innerHTML = '<p>INNER_SHADOW</p><div style="opacity:0.01">NESTED_PAYLOAD</div>';
+</script>
+</body></html>"""
+
+
+async def test_nested_shadow_roots_are_composed_and_scanned():
+    page = await _fetch_local(NESTED_SHADOW_HTML)
+    assert "OUTER_SHADOW" in page.text
+    assert "INNER_SHADOW" in page.text
+    assert any("NESTED_PAYLOAD" in h["text"] for h in page.hidden_spans)
+    assert "NESTED_PAYLOAD" not in page.html
+
+
+async def test_closed_shadow_content_stays_out_of_the_output():
+    # A closed root is unreachable from the isolated world, so it cannot be scanned —
+    # and what cannot be scanned is not composed in. It reaches the model either way.
+    html = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p><div id="c"></div>
+<script>
+  document.getElementById('c').attachShadow({mode: 'closed'}).innerHTML =
+    '<p>CLOSED_CONTENT</p>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    assert "CLOSED_CONTENT" not in page.html
+    assert "CLOSED_CONTENT" not in page.text
+    assert "dividend of forty cents" in page.text
+
+
+async def test_a_slot_fallback_is_not_reported_as_hidden():
+    # `<slot>` is `display: contents`, so it generates no box and every box-shaped test
+    # read it as hidden — reporting a component's own fallback copy as a finding.
+    html = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p><div id="h"></div>
+<script>
+  document.getElementById('h').attachShadow({mode: 'open'}).innerHTML =
+    '<slot>FALLBACK_TEXT</slot>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    assert not any("FALLBACK_TEXT" in h["text"] for h in page.hidden_spans)
+    assert "FALLBACK_TEXT" in page.text
+
+
+# `display: contents` generates no box, so the box-shaped tests are meaningless for it —
+# but `font-size` and `color` inherit through it and still hide the text. Skipping every
+# check for such an element (the first attempt at not flagging `<slot>` fallbacks) let
+# these three walk straight into the output unreported.
+@pytest.mark.parametrize(
+    ("style", "marker", "reason"),
+    [
+        ("display:contents;font-size:1px", "CONTENTS_FONT", "font-size<4px"),
+        ("display:contents;color:transparent", "CONTENTS_COLOR", "text-color-transparent"),
+        ("display:contents;color:#fff", "CONTENTS_CONTRAST", "color-contrast<1.15"),
+    ],
+)
+async def test_display_contents_still_hides_by_inherited_properties(style, marker, reason):
+    html = (
+        f'<html lang="en"><head><title>T</title></head><body style="background:#fff">'
+        f"<p>The board approved a dividend of forty cents per share.</p>"
+        f'<div style="{style}">{marker}_PAYLOAD</div></body></html>'
+    )
+    page = await _fetch_local(html)
+    assert any(h["reason"] == reason for h in page.hidden_spans)
+    assert f"{marker}_PAYLOAD" not in page.html
+    assert f"{marker}_PAYLOAD" not in page.text
+
+
+async def test_a_plain_display_contents_wrapper_is_not_flagged():
+    html = (
+        '<html lang="en"><head><title>T</title></head><body>'
+        "<p>The board approved a dividend of forty cents per share.</p>"
+        '<div style="display:contents"><span>CONTENTS_LEGIT_TEXT</span></div></body></html>'
+    )
+    page = await _fetch_local(html)
+    assert page.hidden_spans == []
+    assert "CONTENTS_LEGIT_TEXT" in page.html
+
+
+# Slot assignment is by name and indifferent to whether a node renders, so a light-DOM
+# node already flagged and removed from the copy by position was handed straight back by
+# `assignedNodes` when the host composed — detected, reported, and then returned anyway.
+SLOT_REINSERT_HTML = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="host"><span style="display:none">SLOT_REINSERT_PAYLOAD</span></div>
+<script>
+  document.getElementById('host').attachShadow({mode: 'open'})
+    .innerHTML = '<b>WRAP</b><slot></slot>';
+</script>
+</body></html>"""
+
+
+async def test_a_flagged_light_node_is_not_re_admitted_through_a_slot():
+    page = await _fetch_local(SLOT_REINSERT_HTML)
+    assert any("SLOT_REINSERT_PAYLOAD" in h["text"] for h in page.hidden_spans)
+    assert "SLOT_REINSERT_PAYLOAD" not in page.html
+    assert "SLOT_REINSERT_PAYLOAD" not in page.text
+
+
+async def test_a_flagged_node_nested_under_a_slotted_child_is_not_re_admitted():
+    html = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="host"><span><i style="opacity:0">NESTED_SLOT_PAYLOAD</i></span></div>
+<script>
+  document.getElementById('host').attachShadow({mode: 'open'})
+    .innerHTML = '<b>WRAP</b><slot></slot>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    assert "NESTED_SLOT_PAYLOAD" not in page.html
+    assert "NESTED_SLOT_PAYLOAD" not in page.text
+
+
+async def test_a_slot_can_hide_the_text_it_projects():
+    # A filled `<slot>` has no text of its own, so the element walk skipped it — while a
+    # bare slotted *text* node has no element of its own to be reached either. Styling
+    # the slot therefore hid the text with nothing examining it.
+    html = """<html lang="en"><head><title>T</title></head><body style="background:#fff">
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="h">SLOT_STYLED_PAYLOAD</div>
+<script>
+  document.getElementById('h').attachShadow({mode: 'open'})
+    .innerHTML = '<slot style="color:#fff"></slot>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    assert any("SLOT_STYLED_PAYLOAD" in h["text"] for h in page.hidden_spans)
+    assert "SLOT_STYLED_PAYLOAD" not in page.html
+    assert "SLOT_STYLED_PAYLOAD" not in page.text
+
+
+async def test_an_ordinary_slot_still_projects_its_content():
+    html = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="h"><span>GOOD_SLOTTED_TEXT</span></div>
+<script>
+  document.getElementById('h').attachShadow({mode: 'open'})
+    .innerHTML = '<b>WRAP</b><slot></slot>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    assert page.text.count("GOOD_SLOTTED_TEXT") == 1
+    assert "WRAP" in page.text
+
+
+async def test_a_shadow_finding_reports_the_host_in_its_location():
+    # `parentElement` is null at a shadow boundary, so the path walk stopped there and
+    # every finding inside a component looked like it came from the top level.
+    html = """<html lang="en"><head><title>T</title></head><body>
+<p>The board approved a dividend of forty cents per share.</p>
+<div id="widget"></div>
+<script>
+  document.getElementById('widget').attachShadow({mode: 'open'}).innerHTML =
+    '<section><div style="display:none">LOCATED_PAYLOAD</div></section>';
+</script></body></html>"""
+    page = await _fetch_local(html)
+    span = next(h for h in page.hidden_spans if "LOCATED_PAYLOAD" in h["text"])
+    assert "widget" in span["path"]
+    assert "::shadow" in span["path"]
