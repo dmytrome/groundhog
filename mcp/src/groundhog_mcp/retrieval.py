@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass
 from typing import NamedTuple, TypedDict
 
+from . import sanitize
+
 _CHARS_PER_TOKEN = 4
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
@@ -62,7 +64,11 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
             flush()
         elif _HEADING_RE.match(line):
             flush()
-            heading = _HEADING_RE.sub("", line).strip()
+            # Repeated once per match/passage and never passed through the token
+            # budget, so it is bounded here. Only bounded: the text was already
+            # sanitized upstream, and re-stripping would quietly undo the caller's
+            # `include_hidden=True`.
+            heading = _HEADING_RE.sub("", line).strip()[: sanitize.MAX_HEADING_CHARS]
         else:
             if not lines:
                 offset = start

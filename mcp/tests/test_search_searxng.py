@@ -75,3 +75,17 @@ async def test_build_url_encodes_query_and_requests_json():
 def test_real_fixture_carries_the_unresponsive_engines_field():
     # Guards the assumption the error path above depends on.
     assert "unresponsive_engines" in _FIXTURE
+
+
+def test_a_non_numeric_score_does_not_raise():
+    # `score` is a third party's JSON: a string, null or an overflowing literal must
+    # not become an unbounded ValueError rendered verbatim to the caller.
+    payload = {
+        "results": [
+            {"url": "https://ex.com/a", "title": "T", "content": "c", "score": "not-a-number"},
+            {"url": "https://ex.com/b", "title": "T", "content": "c", "score": None},
+            {"url": "https://ex.com/c", "title": "T", "content": "c", "score": "1e400"},
+            {"url": "https://ex.com/d", "title": "T", "content": "c", "score": 2.5},
+        ]
+    }
+    assert [hit["score"] for hit in searxng.parse(payload)] == [0.0, 0.0, 0.0, 2.5]

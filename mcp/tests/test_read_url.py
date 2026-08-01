@@ -65,3 +65,13 @@ async def test_nonpositive_max_tokens_falls_back_to_the_configured_budget(
     default = await read_url("https://ex.com/p")
     assert result["markdown"] == default["markdown"]
     assert result["truncated"] is False
+
+
+async def test_a_blocked_url_does_not_leak_the_resolved_address():
+    # The SSRF guard's own message names the host and the address it resolved to.
+    # `research` refuses to echo that; the single-page tool must not either.
+    with pytest.raises(Exception) as excinfo:
+        await read_url("http://localhost:1/")
+    message = str(excinfo.value)
+    assert "blocked by SSRF policy" in message
+    assert "127.0.0.1" not in message and "::1" not in message

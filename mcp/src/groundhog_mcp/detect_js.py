@@ -92,6 +92,12 @@ DETECT_AND_COLLECT = r"""
       toRemove.push(el);
     }
   }
+  // `remove()` is [CEReactions]: a custom element's disconnectedCallback runs
+  // synchronously as this returns, so a page can mutate the document mid-strip. That
+  // is a real and open limitation — see "Limits of hidden-text detection" in the
+  // README. It is deliberately not chased here: an identity census over elements
+  // closes one primitive of several while turning an ordinary `innerHTML = innerHTML`
+  // re-render into a total content wipe, which is worse than the leak.
   if (strip) for (const el of toRemove) el.remove();
   // HTML comments are never part of an element's textContent, so they were never
   // reaching the extracted markdown either way — this is a diagnostic-only signal
@@ -114,6 +120,19 @@ DETECT_AND_COLLECT = r"""
   }
   const canonEl = document.querySelector('link[rel="canonical"]');
   const langAttr = document.documentElement.getAttribute('lang');
-  return { hidden, meta, lang: langAttr || null, canonical: canonEl ? canonEl.href : null };
+  // Read the content here, in the same synchronous task that removed the hidden
+  // nodes. Reading it in a later round trip let the page put them back: `remove()`
+  // mutates the shared DOM, so a MutationObserver in the page's own world fires and
+  // re-appends the node before the next evaluate arrives. A microtask cannot
+  // interleave inside this function, so what is read here is what was stripped.
+  return {
+    hidden,
+    meta,
+    lang: langAttr || null,
+    canonical: canonEl ? canonEl.href : null,
+    html: document.documentElement.outerHTML,
+    text: document.body ? document.body.innerText : '',
+    title: document.title,
+  };
 }
 """

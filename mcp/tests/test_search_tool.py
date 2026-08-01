@@ -1,6 +1,6 @@
 import pytest
 
-from groundhog_mcp import search as search_module
+from groundhog_mcp import engine, search as search_module
 from groundhog_mcp.tools.search import search
 
 
@@ -43,3 +43,18 @@ async def test_limit_caps_the_hits(fake_backend):
 async def test_rejects_an_empty_query():
     with pytest.raises(ValueError, match="query"):
         await search("   ")
+
+
+async def test_browser_remediation_reaches_the_caller_intact(monkeypatch):
+    # The SERP backend runs through the browser, so a browser-down message arrives
+    # here. It is our own text and the caller copy-pastes the command out of it —
+    # truncating it to 200 chars cuts the docker image name mid-token.
+    hint = "Cannot reach the stealth browser at http://127.0.0.1:9222. " + "x" * 400
+
+    async def _boom(query, cfg, limit):
+        raise engine.BrowserUnavailableError(hint)
+
+    monkeypatch.setattr(search_module, "search", _boom)
+    with pytest.raises(engine.BrowserUnavailableError) as excinfo:
+        await search("cats")
+    assert str(excinfo.value) == hint

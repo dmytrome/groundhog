@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from groundhog_mcp import engine
@@ -156,3 +158,26 @@ async def test_remote_cdp_url_is_not_auto_started(monkeypatch):
 )
 def test_registrable_domain(url, expected):
     assert engine.registrable_domain(url) == expected
+
+
+async def test_an_unfired_event_waiter_does_not_accumulate():
+    # A navigation that times out, or fails before the load event, would otherwise
+    # retain its waiter for the life of the connection — once per such fetch.
+    client = engine.CDPClient("ws://unused")
+    for _ in range(5):
+        waiter = client.expect_event("Page.domContentEventFired", session_id="s1")
+        waiter.cancel()
+        await asyncio.sleep(0)
+    assert client._event_waiters == {}
+
+
+@pytest.mark.parametrize("value", [None, 5, {"a": 1}, ["x"], b"bytes"])
+def test_a_non_string_eval_result_becomes_empty_text(value):
+    # Every expression the engine evaluates reads a DOM property a page can shadow
+    # with `Object.defineProperty`, and a CDP reply carrying no `value` arrives as
+    # None — both would otherwise raise inside `urlparse` or the sanitizer.
+    assert engine._as_text(value) == ""
+
+
+def test_a_string_eval_result_passes_through():
+    assert engine._as_text("https://ex.com/") == "https://ex.com/"

@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from .. import search as search_backend
+from .. import engine, safety, search as search_backend
 from ..config import load_config
 from ..search import SearchHit
 
@@ -25,5 +25,12 @@ async def search(query: str, limit: int = _DEFAULT_LIMIT) -> SearchResult:
     if not query.strip():
         raise ValueError("query must not be empty")
     capped = max(1, min(limit, _MAX_LIMIT))
-    hits, backend = await search_backend.search(query, load_config(), capped)
+    try:
+        hits, backend = await search_backend.search(query, load_config(), capped)
+    except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
+        raise  # our own text: it tells the operator how to fix the backend, verbatim
+    except Exception as exc:
+        # Same boundary the other two tools have: a third party's payload must not
+        # decide the text, or the length, of what the caller's model reads.
+        raise RuntimeError(safety.safe_detail(exc)) from exc
     return {"query": query, "backend": backend, "hits": hits}
