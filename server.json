@@ -1,17 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.dmytrome/groundhog-mcp",
-  "description": "Safe, self-hosted web grounding for AI agents and crawlers over a stealth browser",
+  "title": "Groundhog",
+  "description": "Search, read and research the web, with hidden text stripped by default and sources hashed",
   "repository": {
     "url": "https://github.com/dmytrome/groundhog",
     "source": "github"
   },
-  "version": "0.9.0",
+  "version": "0.9.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "groundhog-mcp",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
