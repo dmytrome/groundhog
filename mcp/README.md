@@ -1,5 +1,7 @@
 # groundhog-mcp
 
+[![Glama](https://glama.ai/mcp/servers/dmytrome/groundhog/badges/score.svg)](https://glama.ai/mcp/servers/dmytrome/groundhog)
+
 **Web search, read and research for AI agents — through a real, stealth-patched Chrome.**
 
 Groundhog is an [MCP](https://modelcontextprotocol.io) server that finds pages, reads them,
