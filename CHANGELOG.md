@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-08-01
+
+### Changed
+
+- Every tool parameter now carries a description in the input schema, taking schema
+  description coverage from 0% to 100%. A schema states a parameter's type and default but
+  not what it means, so `limit`, `max_sources` and `max_tokens` were values an agent had to
+  guess at. Each now says what it controls, what the default is, and — for the two capped
+  ones — that out-of-range values are clamped rather than rejected, which is what the code
+  has always done.
+- Each tool's description now says when *not* to reach for it, naming the sibling that fits
+  instead: `search` returns links and never content, `read_url` is for a URL you already
+  have, `research` reads several pages and is the slowest. `read_url` and `research` also
+  disclose the per-domain rate limit (5s by default), which is the main reason a call is
+  slower than an agent might expect.
+- `read_url`'s description no longer enumerates its parameters, since each parameter now
+  documents itself.
+
+  Tool names are deliberately unchanged. `search`/`read_url`/`research`/`status` mix naming
+  styles, but renaming them would break every existing client configuration for a
+  consistency that costs real users something.
+
 ## [0.9.4] - 2026-08-01
 
 ### Fixed
@@ -555,6 +577,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.5]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.4
 [0.9.3]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.3
 [0.9.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.2

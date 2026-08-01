@@ -1,4 +1,6 @@
-from typing import TypedDict
+from typing import Annotated, TypedDict
+
+from pydantic import Field
 
 from .. import config, document, engine, extract, provenance, retrieval, safety, sanitize
 
@@ -16,19 +18,55 @@ class ReadResult(TypedDict):
 
 
 async def read_url(
-    url: str,
-    format: document.Format = "markdown",
-    max_tokens: int | None = None,
-    query: str | None = None,
-    include_hidden: bool = False,
+    url: Annotated[
+        str, Field(description="Absolute http(s) URL. Private and loopback addresses are refused.")
+    ],
+    format: Annotated[
+        document.Format,
+        Field(
+            description=(
+                "'markdown' extracts the article; 'text' returns the page's rendered text."
+            )
+        ),
+    ] = "markdown",
+    max_tokens: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Token budget for the content. Omit to use the server's "
+                "GROUNDHOG_MAX_TOKENS (20000 by default). Must be positive."
+            )
+        ),
+    ] = None,
+    query: Annotated[
+        str | None,
+        Field(
+            description=(
+                "When set, `matches` carries the passages most relevant to it, each with "
+                "its heading and offset for citation."
+            )
+        ),
+    ] = None,
+    include_hidden: Annotated[
+        bool,
+        Field(
+            description=(
+                "Keep text that is invisible to a human reader. It is reported in "
+                "`threats` either way; this only controls whether it stays in the content."
+            )
+        ),
+    ] = False,
 ) -> ReadResult:
-    """Fetch a web page through the stealth browser and return clean, grounded
-    content with provenance. Hidden text injected for models but invisible to
-    humans is stripped by default and reported in `threats`. Pass `query` to get
-    only the passages relevant to it (with `matches` provenance) instead of the
-    whole page. `format` may be "markdown" (default) or "text"; set
-    `include_hidden=true` to keep hidden text. Use this to ground answers in live
-    web content, including sites that block plain fetchers."""
+    """Fetch one web page through the stealth browser and return clean, grounded
+    content with provenance.
+
+    Hidden text injected for models but invisible to humans is stripped by default
+    and reported in `threats`. Use this to ground answers in live web content,
+    including sites that block plain fetchers.
+
+    Reads a URL you already have: use `search` to find URLs, or `research` to
+    search and read in one call. Fetches are rate limited per domain (5s apart by
+    default), so several pages from one site are not instant."""
     try:
         doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
     except engine.BrowserUnavailableError:
