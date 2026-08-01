@@ -4,6 +4,180 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-08-01
+
+### Fixed
+
+- Page-authored strings are now sanitized at the boundary where they enter the process,
+  rather than at each place that reads them. `RenderedPage` — the browser's output — strips
+  invisible characters and bounds every metadata field on construction (`html` and `text`
+  carry the content itself and are stripped downstream, with threat collection), and search
+  hits get the same treatment where they arrive. Sanitization used to be applied per call site, so
+  each field added later silently opted out; these were reaching the model unsanitized,
+  unbounded, or both, and a zero-width, bidi or Unicode-Tag payload in any of them arrived
+  intact:
+  - `threats[].excerpt` and `.location` — the payload survived inside the report about the
+    stripping that removed it. `.reason` is cleaned too, as a precaution.
+  - `provenance.language`, which is the page's own `<html lang>` attribute verbatim whenever
+    the extracted text is too short to classify or classification fails.
+  - a search hit's `published` and `engine`; `title` and `snippet` were stripped but
+    unbounded, and are now capped.
+  - URLs, which are never rewritten, because a rewritten URL is a citation that points
+    somewhere else. A search hit whose `url` does not survive cleaning unchanged is dropped
+    (reachable on the DuckDuckGo path, which percent-decodes the redirect wrapper), and a
+    `final_url` that does not survive falls back to the URL actually requested. Filtering
+    now happens before the result limit is applied, so a dropped hit does not cost a slot a
+    clean result would have filled.
+  - `matches[].heading` / `passages[].heading`, which are repeated per passage and sit
+    outside `max_tokens` entirely.
+  - the text of errors a page can provoke — a failed page evaluation, a navigation failure,
+    and the detail SearXNG reports for a dead engine.
+
+  Two tests assert the property over whole tool results rather than field by field, so a
+  field added later that reaches the model is caught without a new case being written for it.
+- Invisible-character findings (`zero_width`, `bidi`, `tag`) were never reported on the
+  default `markdown` path. The extractor removes those characters on its way to Markdown, so
+  scanning its output found nothing: the payload was dropped but the caller was never told
+  the page had carried one — the disclosure this field exists for. Detection now runs on the
+  text the page actually served.
+- `read_url` returned raw exception text to the caller, including the SSRF guard's
+  `blocked address: <host> -> <resolved ip>`, publishing internal addresses into model
+  context. It now returns the same opaque message `research` already used; both share one
+  rule. `BrowserUnavailableError` still passes through, since its remediation text is ours
+  and the caller needs it.
+- The boundary trusted the *shape* of the collector's payload, which is built in the page's
+  own JS world: a malformed entry raised an unhandled error instead of being rejected.
+  Malformed spans and metadata are now dropped.
+- A page's final URL is never rewritten. When it is unusable, the requested URL is reported
+  and a `final_url_suppressed` threat discloses the substitution rather than implying no
+  redirect occurred.
+- Bounded three unbounded resources: the CDP websocket had no frame-size limit (a page
+  choosing its own `outerHTML` size could exhaust memory), page evaluations had no timeout
+  (a page that wedges its renderer after load held a concurrency slot indefinitely), and the
+  rate limiter never evicted per-domain entries.
+- The two threat classes are capped independently. A single cap over both let the page pick
+  which findings survived: flooding the report with decoys of one kind pushed every finding
+  of the other past the limit — including the hidden-node entries carrying the injection
+  excerpt.
+- Search hits are now checked against the `http`/`https` allowlist at the shared boundary.
+  One backend enforced it and the other did not, so a `javascript:` or `file:` URL could be
+  returned to the model as a citation.
+- `search` gained the error boundary the other two tools had, and a SearXNG result's `score`
+  is validated where the payload is parsed — a non-numeric value raised an unbounded,
+  unsanitized error straight to the caller.
+- `canonical` is dropped rather than truncated when cleaning would change it. It is a URL in
+  a provenance receipt, so a rewritten one is a citation pointing somewhere else — the rule
+  already applied to `final_url` and to search hits, now shared as `safety.safe_url`.
+- `clean_field` rejects non-strings. Values like `document.title` come from the page's own JS
+  world and can be shadowed to return anything, which previously raised on the boundary.
+- The SSRF guard runs before the browser is acquired, so a URL it will reject no longer
+  triggers a container start and image pull.
+- `status` and the remediation hint report the CDP endpoint as scheme, host and port only. A
+  hosted browser commonly carries its credential in the URL, and both values reach the model
+  — the treatment `SEARXNG_URL` already had.
+- Every URL Groundhog *reports* — from a page, a search engine or a redirect — now passes
+  one rule (`safety.safe_url`): characters, length, the `http`/`https` allowlist and no
+  embedded credentials. (`read_url`'s `url` field is the caller's own argument, echoed back
+  as received.) Previously a `javascript:` or `data:`
+  `canonical` reached `provenance` intact, and a hit URL carrying `user:pass@` was returned
+  as a citation.
+- Page metadata is bounded at URL length rather than metadata length, because `canonical` is
+  read back out of that map: truncating it first left the URL check comparing against an
+  already-shortened string and accepting a rewritten URL as unchanged.
+- `research`'s own search leg gained the error boundary `search` has. Without it a blocked
+  SERP fetch returned `blocked address: <host> -> <internal ip>` to the model.
+- A cancelled CDP command no longer leaves its pending entry behind, and a page that returns
+  a non-string for `outerHTML`/`innerText` no longer raises at the boundary.
+- The browser is no longer started when the provider is first requested, only when a fetch
+  actually needs it — so a URL the SSRF guard rejects never triggers a container start.
+- `threats` is now bounded: at most 50 findings per page, and 10 per source in `research`
+  where the fan-out multiplies it (notices are appended after the cap, so a disclosure is
+  never itself dropped). It was unbounded and outside `max_tokens`, so a page with
+  many hidden nodes could flood the caller's context. A dropped tail is disclosed by a
+  `report_truncated` entry — its own type, so it cannot be miscounted as a finding.
+- The documented `docker run` command omitted `--shm-size 512m`, which auto-start always
+  passes; following the docs produced a browser more likely to crash on heavy pages. The
+  "browser not reachable" remediation message omitted it too.
+- Invisible-character coverage extended to the variation-selector supplement (U+E0100–E01EF,
+  immediately above the Tag block), the space-like fillers (U+3164, U+2800, U+180E) and the
+  line/paragraph separators (U+2028/U+2029). The base variation-selector block is
+  deliberately excluded: U+FE0F is the emoji presentation selector, so flagging it would
+  fill `threats` with false positives and strip the selector out of every emoji on a page.
+  Characters that occupy width are replaced by a space rather than deleted, so sanitizing
+  cannot join two words a human reads as separate.
+- Control characters are removed from single-line fields. A newline in a title, error detail
+  or URL is a free line break in model context, and `urlparse` discards tab/CR/LF silently —
+  so a URL could pass the never-rewritten check as one string and be returned as another.
+- `search` now passes a "browser not reachable" error through verbatim, as the other two
+  tools do. It was being sanitized like a third party's text and truncated to 200
+  characters, cutting the suggested `docker run` command mid-image-name.
+- Control characters are replaced by a space rather than deleted, for the same reason as
+  the width-occupying invisibles: a newline separates words, so dropping it joined two the
+  reader sees apart. A URL containing one is still rejected outright.
+- Results of in-page evaluations are narrowed to text at the boundary. Each reads a DOM
+  property a page can shadow, and a CDP reply carrying no value arrives as `None` — both
+  previously raised inside the SSRF guard or the collector's own indexing.
+- A misconfigured `CDP_URL` no longer breaks the tool that reports it: a scheme-less value
+  is shown rather than erased (`urlparse` reads its host as a scheme), and a non-numeric
+  port no longer raises out of `status` or the remediation hint.
+- The threat cap divides its budget so neither class can take the last slot from the other;
+  below two slots the hidden-node findings keep theirs, since those carry the excerpt.
+- A CDP command registers and sends inside the block that cleans it up, so a dropped socket
+  or a cancellation during the send no longer strands a pending entry.
+- A CDP event waiter now deregisters itself when its future settles. A navigation that timed
+  out, or failed before the load event fired, previously retained one for the life of the
+  connection.
+
+### Added
+
+- The hidden-text collector now runs in an isolated JavaScript world
+  (`Page.createIsolatedWorld`), as does every other read of the page. It previously ran in
+  the page's own world, where the DOM APIs it depends on — `Array.prototype.push`,
+  `document.createTreeWalker`, `getComputedStyle` — are replaceable, so a page could
+  suppress its own hidden-text report entirely: nothing detected, nothing stripped, and the
+  payload delivered to the model with an empty `threats` list.
+  `tests/test_engine_live.py::test_detection_survives_a_page_that_patches_the_collectors_builtins`
+  serves exactly such a page and asserts the injection is reported and kept out of the
+  content; a companion test asserts every live fetch actually obtains an isolated world, so
+  the mechanism cannot silently switch off. The `Runtime` domain is still never enabled, so
+  the `isAutomatedWithCDP` signal remains absent. If a browser declines to provide a world,
+  the result carries a `detection_degraded` threat rather than silently weaker detection.
+- Stripped nodes can no longer be put back before the content is read. `remove()` mutates
+  the DOM the isolated world shares with the page, so a page observing its own subtree could
+  re-append a hidden node in the gap before `outerHTML`/`innerText` were fetched — the
+  payload was reported in `threats` and *still* delivered in the content. Those reads now
+  happen inside the collector's own evaluation, where a MutationObserver callback cannot
+  interleave. Covered by
+  `tests/test_engine_live.py::test_a_page_cannot_reinsert_a_stripped_node_before_the_content_is_read`.
+- The readiness poll runs in an isolated world too. It was the last read left in the page's
+  own world, so a page instrumenting `querySelectorAll` could count the probes and learn
+  that extraction was underway.
+- The README documents the limits of hidden-text detection, alongside the existing limits of
+  the SSRF guard: the style signals are evadable thresholds and the invisible-character
+  coverage is a denylist, so **an empty `threats` list is still not proof that a page is
+  clean**.
+
+### Changed
+
+- The PyPI project page and the MCP registry description now describe the current server.
+  The PyPI page still described the 0.1.x product — two tools, no `search`, no `research` —
+  and still said a running browser was required, untrue since 0.5.0 made auto-start the
+  default.
+- Documentation now states what the code does, in place of claims that outran it:
+  hidden-text stripping is a nine-signal heuristic over rendered styles with fixed,
+  evadable thresholds rather than a guarantee; `provenance` carries no fetch timestamp
+  (`read_url` returns `fetched_at` separately, `research` sources carry none); the SSRF
+  guard withholds content from a URL redirecting into a private address, but the request is
+  still issued by Chrome; and ranking runs on sanitized content only when `include_hidden`
+  is false.
+- Caveats now documented: the limits of the SSRF guard (blind SSRF via redirect,
+  un-intercepted sub-resource requests, the DNS-rebinding window between Groundhog's
+  resolver and Chrome's, and the browser profile shared across fetches); that `threats`
+  excerpts are attacker-chosen text reaching the model; that the CDP endpoint is
+  unauthenticated; and that auto-start pulls a mutable `:latest` tag and removes a stale
+  `groundhog-browser` container. The `research` cap of 10 sources is documented, as is the
+  fact that a failed source carries `provenance: null`.
+
 ## [0.9.0] - 2026-07-26
 
 ### Added
@@ -240,6 +414,11 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.1
+[0.9.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.0
+[0.8.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.8.0
+[0.7.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.7.0
+[0.6.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.2
 [0.6.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.1
 [0.6.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.5.0
