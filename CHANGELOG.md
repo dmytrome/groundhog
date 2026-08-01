@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-08-01
+
+### Fixed
+
+- A page can no longer write into the result by reacting to the strip. `Element.remove()`
+  is `[CEReactions]`, so removing a hidden node ran a custom element's
+  `disconnectedCallback` *synchronously*, and that callback could add content the reader
+  never saw — as a bare text node, by writing into an element that already existed, by
+  moving a node into view, or through `document.title` and `<meta>`. None of it was
+  reported. A single hidden decoy element was enough.
+
+  Nothing is removed from the live document now, so the callback never runs at all and all
+  five routes close together. The markup is stripped inside a separate inert document; the
+  rendered text still comes from the live page, with the flagged nodes hidden by one
+  adopted stylesheet — which disconnects nothing and rewrites no existing attribute, so it
+  queues no reaction. Covered by
+  `tests/test_engine_live.py::test_a_removal_reaction_cannot_write_into_the_result`,
+  parametrized over all five, plus a page that re-renders on disconnect to prove ordinary
+  content still comes through.
+- The copy taken to build that markup no longer runs the page's code either. `cloneNode` is
+  itself `[CEReactions]`: it re-creates every custom element with the synchronous flag
+  unset, which enqueues an upgrade reaction drained as it returns — so a clone would have
+  run the page's `constructor` and `attributeChangedCallback` inside the strip, moving the
+  hook rather than closing it. The tree is now imported into a document from
+  `createHTMLDocument`, which has no browsing context, so no definition is looked up and no
+  reaction is queued. Covered by `test_an_upgrade_reaction_cannot_write_into_the_result`.
+- Imported rather than serialized and reparsed, so the strip removes the node it meant to.
+  Reparsing is not structure-preserving — measured in Chrome 150, adjacent text nodes merge
+  into one, `<noscript>` parses as markup with scripting off, and a script-inserted child of
+  `<table>` is foster-parented out. Each shifts every later sibling, so the recorded node
+  positions addressed the wrong nodes: the strip deleted visible text and left the hidden
+  payload in place. Covered by `test_node_indices_still_address_the_right_node_after_a_shift`.
+- Hidden text no longer reaches `format="text"` and the extraction fallback when the page
+  defends it with an inline `!important`, which beats the author stylesheet that hides
+  flagged nodes, or when the page hides its own `<body>`/`<html>` — in that case nothing is
+  flagged at all (the walk starts at `<body>` and never visits it) and `innerText` falls
+  back to raw text, handing back everything the page hid. Both are detected and the text is
+  taken from the already-stripped markup instead of from layout.
+
+### Added
+
+- A `strip_incomplete` threat, reported when the strip could not remove a flagged node
+  outright: the node won the cascade against the hiding stylesheet, the page hid its own
+  root so nothing rendered, or a recorded node position did not resolve in the copy. Each
+  leaves a weaker guarantee than a structural removal, so the caller is told rather than
+  being handed a result that looks fully stripped.
+
 ## [0.9.1] - 2026-08-01
 
 ### Fixed
@@ -414,6 +461,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.9.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.2
 [0.9.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.1
 [0.9.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.0
 [0.8.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.8.0
