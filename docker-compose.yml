@@ -22,6 +22,10 @@ services:
     # trusted private network, change to "0.0.0.0:9222:9222" deliberately.
     ports:
       - "127.0.0.1:9222:9222"
+    # Docker Desktop resolves host.docker.internal on its own; Linux does not, and the
+    # live tests serve their fixtures from the host and fetch them through this browser.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:9222/json/version"]
       interval: 20s
