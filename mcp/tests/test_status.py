@@ -41,3 +41,21 @@ async def test_no_container_runtime_message(monkeypatch):
             await provider.start()
     finally:
         await provider.aclose()
+
+
+@pytest.mark.parametrize("value", ["127.0.0.1:9222", "http://host:abc"])
+async def test_a_misconfigured_cdp_url_is_still_shown(monkeypatch, value):
+    # `urlparse` reads a scheme-less `host:port` as a scheme, so naive redaction
+    # erased the very value the operator has to fix. A bad port must not raise either.
+    monkeypatch.setenv("CDP_URL", value)
+    monkeypatch.setenv("GROUNDHOG_AUTO_START_BROWSER", "false")
+    result = await status()
+    assert result["cdp_url"], f"redaction erased {value!r}"
+
+
+async def test_a_credential_bearing_cdp_url_is_redacted(monkeypatch):
+    monkeypatch.setenv("CDP_URL", "wss://user:secret@hosted.example/cdp?token=SECRET")
+    monkeypatch.setenv("GROUNDHOG_AUTO_START_BROWSER", "false")
+    result = await status()
+    assert "secret" not in result["cdp_url"].lower()
+    assert "hosted.example" in result["cdp_url"]

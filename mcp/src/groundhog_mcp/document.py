@@ -5,11 +5,10 @@ from typing import Literal
 from . import engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
-_EXCERPT_CHARS = 80
-_MAX_TITLE_CHARS = 300
+_MAX_THREATS = 50
 
 
-@dataclass
+@dataclass(frozen=True)
 class Document:
     """One fetched page, sanitized and attributed — before any ranking or budgeting."""
 
@@ -23,45 +22,140 @@ class Document:
 
 
 def _hidden_threats(spans: list[engine.HiddenSpan]) -> list[sanitize.Threat]:
+    """Shape hidden spans into threat records.
+
+    The strings arrive sanitized and already cut to report size — `RenderedPage`
+    cleans every page-authored field at the boundary — so this only re-labels them.
+    """
     return [
         {
             "type": "hidden_css",
-            "reason": s["reason"],
-            "location": s.get("path"),
-            "excerpt": s["text"][:_EXCERPT_CHARS],
+            "reason": span["reason"],
+            "location": span.get("path"),
+            "excerpt": span["text"],
         }
-        for s in spans
+        for span in spans
+    ]
+
+
+def _merged(
+    scans: list[dict[str, tuple[sanitize.ThreatType, int]]],
+) -> dict[str, tuple[sanitize.ThreatType, int]]:
+    """Union character scans, keeping the highest count seen for each character.
+
+    The same character appears in both the served text and the extracted string;
+    summing would double-count it, and taking the lower would understate it.
+    """
+    best: dict[str, tuple[sanitize.ThreatType, int]] = {}
+    for scan in scans:
+        for ch, (category, n) in scan.items():
+            if ch not in best or n > best[ch][1]:
+                best[ch] = (category, n)
+    return best
+
+
+def _capped(
+    char_threats: list[sanitize.Threat], hidden: list[sanitize.Threat], limit: int
+) -> list[sanitize.Threat]:
+    """Bound the reported threats, disclosing the drop.
+
+    Silent truncation would read as "that was everything", which is the opposite
+    of what this field is for. The notice carries its own `type` so it cannot be
+    mistaken for — or forged as — a hidden-node finding.
+
+    It rides inside the list rather than as a sibling flag so the disclosure
+    travels with the data: `threats` is forwarded on its own into each `research`
+    source, where a flag on the enclosing result would be left behind. The cost is
+    that `len(threats)` counts the notice, which is why it has a distinct type.
+    """
+    # Each class gets its own share, so a page cannot bury the findings that carry
+    # its injection excerpt by flooding the other class with decoys.
+    # Each class is guaranteed half the budget; whatever the other does not use is
+    # free. Below two slots one class must yield, and it is the hidden-node findings
+    # that keep theirs — those carry the injection excerpt.
+    kept_char = char_threats[: min(len(char_threats), max(limit // 2, limit - len(hidden)))]
+    kept_hidden = hidden[: max(0, limit - len(kept_char))]
+    dropped = (len(char_threats) - len(kept_char)) + (len(hidden) - len(kept_hidden))
+    kept = kept_char + kept_hidden
+    if not dropped:
+        return kept
+    return kept + [
+        {
+            "type": "report_truncated",
+            "reason": f"{dropped} further threats not reported (cap {limit})",
+            "location": None,
+            "excerpt": "",
+        }
     ]
 
 
 async def fetch_document(
-    url: str, *, format: Format = "markdown", include_hidden: bool = False
+    url: str,
+    *,
+    format: Format = "markdown",
+    include_hidden: bool = False,
+    max_threats: int = _MAX_THREATS,
 ) -> Document:
     """Fetch one page and return it sanitized, with threats and provenance.
 
     Everything up to but excluding relevance ranking and token budgeting, which
-    callers do differently.
+    callers do differently. `max_threats` bounds the report: a caller fanning out
+    over several pages pays this cost once per page, so it lowers it.
     """
     provider = await engine.get_provider()
     page = await provider.fetch(url, strip_hidden=not include_hidden)
+    final_url = page.final_url or url
 
     if format == "text":
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
-        markdown, meta = extract.to_document(page.html, page.final_url)
+        markdown, meta = extract.to_document(page.html, final_url)
         if not markdown:
             markdown = page.text
 
-    markdown, char_threats = sanitize.strip_invisible(markdown, strip=not include_hidden)
-    # The title is page-authored too, and on a search-chosen URL that means
-    # attacker-authored — strip and cap it like the body.
-    title, _ = sanitize.strip_invisible(page.title)
+    # Scan what the page served as well as what was extracted. The extractor drops
+    # invisible characters on its way to Markdown, so scanning only its output
+    # reports none of them; scanning only the rendered text misses anything that
+    # exists solely in the extracted string (a link target, or a hidden node kept by
+    # `include_hidden`). Neither source alone describes what the caller receives.
+    scans = [sanitize.counts(markdown)]
+    if markdown is not page.text:  # `format="text"` returns the served text itself
+        scans.append(sanitize.counts(page.text))
+    found = _merged(scans)
+    char_threats = sanitize.threats(found)
+    if not include_hidden:
+        markdown = sanitize.strip_invisible(markdown, scans[0])
+    threats = _capped(char_threats, _hidden_threats(page.hidden_spans), max_threats)
+    if not page.isolated:
+        # The collector had to run in the page's own JavaScript world, where the page
+        # can replace the DOM APIs it uses. Say so: a short `threats` list would
+        # otherwise read as "little was hidden here".
+        threats.append(
+            {
+                "type": "detection_degraded",
+                "reason": "hidden-text detection ran in the page's own JavaScript world",
+                "location": None,
+                "excerpt": "",
+            }
+        )
+    if not page.final_url:
+        # Appended after the cap: a disclosure the cap could drop would be no
+        # disclosure. Substituting the requested URL silently would tell the caller
+        # no redirect happened.
+        threats.append(
+            {
+                "type": "final_url_suppressed",
+                "reason": "the page's final URL was unusable; the requested URL is reported",
+                "location": None,
+                "excerpt": "",
+            }
+        )
     return Document(
         markdown=markdown,
-        title=title.strip()[:_MAX_TITLE_CHARS],
+        title=page.title,
         url=url,
-        final_url=page.final_url,
+        final_url=final_url,
         fetched_at=datetime.now(UTC).isoformat(),
-        threats=_hidden_threats(page.hidden_spans) + char_threats,
+        threats=threats,
         provenance=provenance.build(markdown, meta, page.meta),
     )

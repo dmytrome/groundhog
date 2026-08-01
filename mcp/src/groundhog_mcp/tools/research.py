@@ -22,8 +22,9 @@ _MAX_SOURCES = 10
 _OVERFETCH = 3  # headroom for the same-domain hits that dedupe discards
 _DEADLINE_S = 90.0
 _CANCEL_DRAIN_S = 5.0
-_MAX_ERROR_CHARS = 200
-_BLOCKED_MESSAGE = "blocked by SSRF policy"
+# Per source, not per page: the fan-out multiplies the report by `max_sources`,
+# and `threats` sits outside the caller's token budget.
+_MAX_THREATS_PER_SOURCE = 10
 
 SourceStatus = Literal["ok", "blocked", "timeout", "error"]
 
@@ -75,11 +76,12 @@ def _status_of(exc: BaseException) -> tuple[SourceStatus, str]:
     address, and strip/cap everything else.
     """
     if isinstance(exc, safety.BlockedURLError):
-        return "blocked", _BLOCKED_MESSAGE  # the host is already in Source.url
-    if isinstance(exc, TimeoutError):
-        return "timeout", "fetch timed out"
-    detail, _ = sanitize.strip_invisible(f"{type(exc).__name__}: {exc}")
-    return "error", detail.strip()[:_MAX_ERROR_CHARS]
+        status: SourceStatus = "blocked"
+    elif isinstance(exc, TimeoutError):
+        status = "timeout"
+    else:
+        status = "error"
+    return status, safety.safe_detail(exc)
 
 
 async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]:
@@ -89,7 +91,10 @@ async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]
     kept; the rest are cancelled so one slow source cannot cost the caller the
     others.
     """
-    tasks = [asyncio.create_task(document.fetch_document(url)) for url in urls]
+    tasks = [
+        asyncio.create_task(document.fetch_document(url, max_threats=_MAX_THREATS_PER_SOURCE))
+        for url in urls
+    ]
     _, pending = await asyncio.wait(tasks, timeout=_DEADLINE_S)
     for task in pending:
         task.cancel()
@@ -121,7 +126,14 @@ async def research(
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
 
-    hits, backend = await search_backend.search(query, cfg, capped * _OVERFETCH)
+    try:
+        hits, backend = await search_backend.search(query, cfg, capped * _OVERFETCH)
+    except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
+        raise  # our own text, and the caller needs it to fix the backend
+    except Exception as exc:
+        # The same boundary `search` has: the SERP leg runs through the browser, so
+        # its failures can name internal addresses or carry page-chosen text.
+        raise RuntimeError(safety.safe_detail(exc)) from exc
     chosen = _diverse(hits, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
 
@@ -155,21 +167,16 @@ async def research(
                 "error": None,
             }
         )
-        # `final_url` comes from an in-page eval and could in principle be empty;
-        # the requested URL is always a valid citation, so every chunk gets one.
-        chunks.extend(
-            retrieval.chunk_document(outcome.markdown, source=outcome.final_url or hit["url"])
-        )
+        chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the
     # last source is directly comparable to one from the first.
     ranked, truncated = retrieval.rank(chunks, query, limit)
     passages: list[Passage] = []
     for scored in ranked:
-        source_url = scored.chunk.source
-        if not source_url:
-            # Unattributable: never hand the model a passage it would present as
-            # grounded without a citation. Cannot happen by construction below.
+        if not scored.chunk.source:
+            # Never hand the model a passage it would present as grounded without a
+            # citation. Unreachable today; kept so the invariant fails closed.
             continue
         # rank() admits its top passage unconditionally, so a single huge block
         # can still exceed the budget — clamp it and keep `truncated` honest.
@@ -178,7 +185,7 @@ async def research(
         passages.append(
             {
                 "text": text,
-                "source_url": source_url,
+                "source_url": scored.chunk.source,
                 "heading": scored.chunk.heading,
                 "score": round(scored.score, retrieval.SCORE_DIGITS),
             }

@@ -1,7 +1,7 @@
 import pytest
 
 from groundhog_mcp import engine
-from groundhog_mcp.engine import HiddenSpan, RenderedPage
+from groundhog_mcp.engine import HiddenSpan, PageMeta, RenderedPage
 
 # No <meta name="author"> here — the engine's JS collector provides it via engine_meta,
 # not via the HTML. trafilatura does not surface it reliably for short articles.
@@ -13,7 +13,14 @@ _PAGE_HTML = """
 </article></body></html>
 """
 
-_DEFAULT_META = {"meta": {"author": "A. Writer"}, "lang": "en", "canonical": None}
+_DEFAULT_META: PageMeta = {"meta": {"author": "A. Writer"}, "lang": "en", "canonical": None}
+
+# Written as escapes, not literals: these are invisible in an editor and in a diff,
+# so a stray normalization would otherwise gut a test without anyone noticing.
+ZERO_WIDTH = "\u200b"
+RTL_OVERRIDE = "\u202e"
+TAG_I = "\U000e0049"  # Unicode Tag block: an invisible ASCII mirror
+INVISIBLES = (ZERO_WIDTH, RTL_OVERRIDE, TAG_I)
 
 
 class _FakeProvider:
@@ -26,14 +33,23 @@ class _FakeProvider:
 
 @pytest.fixture
 def make_page():
-    def _make(hidden: list[HiddenSpan] | None = None) -> RenderedPage:
+    def _make(
+        hidden: list[HiddenSpan] | None = None,
+        *,
+        title: str = "Doc",
+        text: str = "unused",
+        final_url: str = "https://ex.com/p",
+        meta: PageMeta | None = None,
+        isolated: bool = True,
+    ) -> RenderedPage:
         return RenderedPage(
             html=_PAGE_HTML,
-            text="unused",
-            final_url="https://ex.com/p",
-            title="Doc",
+            text=text,
+            final_url=final_url,
+            title=title,
             hidden_spans=hidden or [],
-            meta=_DEFAULT_META,
+            meta=meta or _DEFAULT_META,
+            isolated=isolated,
         )
 
     return _make

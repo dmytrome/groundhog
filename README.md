@@ -2,11 +2,12 @@
 
 [![Conformance](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml/badge.svg)](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml)
 
-**Safe, self-hosted web grounding for AI agents and crawlers.** Groundhog is an
-[MCP](https://modelcontextprotocol.io) server that fetches live web pages through a
-**real, stealth-patched Chrome** (over CDP) and returns clean Markdown with provenance —
-without the SSRF holes of plain fetchers and without getting blocked like plain HTTP
-clients.
+**Web search, read and research for AI agents — through a real, stealth-patched Chrome.**
+Groundhog is an [MCP](https://modelcontextprotocol.io) server that finds pages, reads them,
+and researches across them, returning clean Markdown a model can trust: text no human could
+see is **stripped by default before the model reads it**, every source comes back with a
+**provenance receipt**, and a real browser reads pages that block plain fetchers — without
+the SSRF holes of naive fetch tools.
 
 ```text
 agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ──CDP──▶  stealth Chrome  ──▶  the web
@@ -14,9 +15,16 @@ agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ─
 
 ## Quick start
 
-Add Groundhog to your MCP client — that's it. On the first `read_url`, Groundhog pulls and
+Add Groundhog to your MCP client — that's it. On the first fetch, Groundhog pulls and
 starts the stealth-browser container for you (Docker or Podman required); no repo checkout,
-no manual steps.
+no manual steps. When the default (non-compose) auto-start path has to run, any stale
+container named `groundhog-browser` is removed first; a reachable browser is never touched.
+
+Claude Code:
+
+```bash
+claude mcp add groundhog -- uvx groundhog-mcp
+```
 
 Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 
@@ -39,13 +47,39 @@ zero-install use.
 **Prefer to manage the browser yourself?** Start it and Groundhog will just use it:
 
 ```bash
-docker run -d --rm -p 127.0.0.1:9222:9222 ghcr.io/dmytrome/groundhog:latest
+docker run -d --rm --name groundhog-browser --shm-size 512m \
+  -p 127.0.0.1:9222:9222 -- ghcr.io/dmytrome/groundhog:latest
 # or, from a repo checkout: docker compose up --build -d
 curl -s http://localhost:9222/json/version    # CDP is live
 ```
 
 Set `GROUNDHOG_AUTO_START_BROWSER=false` to disable auto-start. To run the MCP server from
 source: `cd mcp && uv sync && uv run groundhog-mcp`.
+
+## What makes it different
+
+- **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it
+  can judge what a *human* would actually see and strip what they could not, reporting each
+  occurrence in `threats`. A strong heuristic, not a proof — see
+  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The nine signals,
+  the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
+- **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
+  language, word count, and author/date when the page declares them — so a downstream claim
+  traces back to exactly what was read. `read_url` returns the fetch time alongside it as
+  `fetched_at`.
+- **Safe by default.** The SSRF guard resolves each host before navigating and refuses to
+  return content from a URL that redirects into a private address. Read-only, with per-domain
+  rate limiting. This matters most in `research`, where a *third party* chooses the URLs.
+  See [Security](#security) for the full blocklist and the guard's limits.
+- **No automation tell.** Puppeteer/Playwright/Selenium enable the CDP `Runtime` domain,
+  which anti-bots detect (`isAutomatedWithCDP`). Groundhog drives the browser over raw CDP
+  and never enables `Runtime`/`Console`, so that signal is absent — a clean session that
+  full automation libraries can't produce over `connect_over_cdp`.
+- **A real fingerprint.** It's real Chrome, run headful under Xvfb (no `HeadlessChrome`
+  token) — authentic TLS/HTTP2 fingerprint, real WebGL/canvas — not a Python HTTP client,
+  so fingerprint-driven blocks go away and cheap proxies work where they otherwise wouldn't.
+- **No model, no API key.** `research` returns extracts, not summaries; your agent does the
+  synthesis. Self-hosted and MIT — the pages you fetch never leave your infrastructure.
 
 ## Tools
 
@@ -58,10 +92,10 @@ Fetches a page and returns clean content plus provenance.
 | `markdown`   | Extracted content (article-first, falls back to full text); `format` may be `markdown` or `text` |
 | `title`      | Page title                                                                                       |
 | `url`        | The URL you asked for                                                                            |
-| `final_url`  | The URL after redirects (re-checked against the SSRF guard)                                      |
+| `final_url`  | The URL after redirects (re-checked against the SSRF guard). Never rewritten: if the page's own final URL is unusable, the requested URL is reported and a `final_url_suppressed` threat says so |
 | `fetched_at` | UTC ISO-8601 timestamp                                                                           |
 | `truncated`  | Whether the content was cut to fit the token budget                                              |
-| `threats`    | Hidden-text signals detected (signal type + excerpt per node); empty list when none found        |
+| `threats`    | Signals detected: hidden-CSS nodes and invisible-character classes; empty when none found |
 | `matches`    | When `query` is set: ranked passages with `heading`, `offset`, and `score` for citation          |
 | `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present         |
 
@@ -70,17 +104,41 @@ humans is **stripped by default** and each occurrence reported in `threats` with
 type and a short excerpt: `display:none`/`visibility:hidden`, `opacity ≤ 0.05`,
 `font-size < 4 px`, zero-size elements, the sub-pixel box used by `.sr-only`/
 `.visually-hidden` accessibility utility classes (a pattern attackers now mimic), the legacy
-`clip: rect(...)` hiding technique, text-color transparency or matching the background color
-(near-1:1 contrast), and elements positioned entirely outside the rendered page (e.g.
-`left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
+`clip: rect(...)` hiding technique, fully transparent text color, text color matching the
+background color (near-1:1 contrast), and elements positioned entirely outside the rendered
+page (e.g. `left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
 extracted content either way, but a page embedding instructions this way is worth knowing
-about. Pass `include_hidden=True` to keep the stripped text in the output; `threats` is
-still populated so you know it was there. Pass `query` to
-replace blunt head-truncation with relevance-ranked passage selection: content is chunked
-on markdown structure, ranked by lexical (BM25) relevance, and the top passages within the
-token budget are returned; `matches` gives each passage's heading, character offset, and
-score for downstream citation. Ranking runs on sanitized content, so hidden-text injection
-payloads cannot influence which passages surface.
+about. A second, character-level class is stripped and reported alongside these: zero-width
+characters, bidi marks and RTL overrides, and the Unicode Tag block — an invisible ASCII
+mirror that is the canonical prompt-injection smuggling channel. Pass `include_hidden=True`
+to keep the stripped text in the output; `threats` is still populated so you know it was
+there.
+
+**Treat `threats` as untrusted.** Entries come in four shapes:
+
+| `type` | Carries |
+| ------ | ------- |
+| `hidden_css` | The hiding `reason`, an 80-char `excerpt` of the removed text, and the DOM `location`. All three are page-authored, so all three are stripped of invisible characters and length-capped — but they remain attacker-*chosen* text |
+| `zero_width` / `bidi` / `tag` | A codepoint and count in `reason`, no excerpt. Detected on the text the page actually served — the extractor removes these characters on its way to Markdown, so scanning the extracted output would report none of them |
+| `report_truncated` | How many entries were dropped when the cap was hit. Its own type, so it cannot be miscounted as a finding |
+| `final_url_suppressed` | The page's own final URL was unusable (over-long, or carrying invisible characters) and was not returned; `final_url` reports the URL you requested instead |
+
+The value of stripping is that the payload is out of the content being reasoned over, not
+that it is invisible to the model. At most **50 findings per page** are returned (**10 per
+source** in `research`, since the fan-out multiplies the report); beyond that a
+`report_truncated` entry is appended stating how many were dropped, rather than truncating
+silently. The two classes are capped independently, so a page cannot bury the findings that
+carry its injection excerpt by flooding the report with decoys of the other kind. Notices are
+appended after the cap — so they can never themselves be dropped, and a capped list is up to
+50 findings plus at most two notices.
+
+Pass `query` to replace blunt head-truncation with relevance-ranked passage selection:
+content is chunked on markdown structure, ranked by lexical (BM25) relevance, and the top
+passages within the token budget are returned; `matches` gives each passage's heading,
+character offset, and score for downstream citation. Ranking runs on the sanitized content,
+so hidden-text injection payloads cannot influence which passages surface — with the one
+exception of `include_hidden=True`, which leaves the hidden text in the document and ranks it
+along with everything else.
 
 ### `search(query, limit=10)`
 
@@ -95,9 +153,13 @@ Groundhog renders a search page through the stealth browser instead — no extra
 infrastructure, at the cost of depending on that page's layout. Force one with
 `GROUNDHOG_SEARCH_BACKEND=searxng|serp`.
 
-Hit titles and snippets are attacker-influenceable — a poisoned page controls how it
-describes itself — so they pass through the same invisible-character stripping as page
-content. A backend that is unreachable, has JSON disabled, or whose every upstream engine
+Every text field of a hit is attacker-influenceable — a poisoned page controls how it describes
+itself — so each passes through the same invisible-character stripping as page content, and
+each is length-capped. The URL is treated differently: it is what a model cites, so it is
+never rewritten. A hit is dropped outright if cleaning would change its URL at all, if that
+URL is not `http`/`https`, if it carries credentials, or if it exceeds 2048 characters. Both matter on the DuckDuckGo path, which percent-decodes
+the redirect wrapper and can therefore turn `%E2%80%8B` back into a real zero-width
+character inside the link. A backend that is unreachable, has JSON disabled, or whose every upstream engine
 is rate-limited raises an actionable error rather than reporting an empty web.
 
 ### `research(query, max_sources=5, max_tokens=None)`
@@ -117,7 +179,10 @@ A source that fails doesn't fail the call: it appears in `sources` with a status
 can see what was missed. Because search results are chosen by a third party — and
 SEO-poisoned results are a documented in-the-wild attack — every fetched URL goes through
 the same SSRF guard and hidden-text stripping as `read_url`, and each source reports what
-was stripped from it.
+was stripped from it. A source that failed carries `provenance: null` — only sources that
+were actually read are hashed. `threats` is per-source here and capped at 10 entries per
+source, lower than `read_url`'s 50, because the fan-out multiplies it. `max_sources` is
+capped at 10.
 
 It's slower than an API-backed research tool: a real browser renders every source. That's
 the trade for reading pages that block plain fetchers, and for being able to tell you what
@@ -126,7 +191,9 @@ was hidden in them.
 ### `status()`
 
 Reports whether Groundhog can reach the stealth browser. Returns `browser_reachable`,
-`cdp_url`, and a `hint` with remediation steps when it isn't reachable.
+`cdp_url` and a `hint` with remediation steps when it isn't reachable. The endpoint is
+reported as scheme, host and port only — a hosted browser often carries a credential in
+its URL, and this value reaches the model.
 
 ## Configuration
 
@@ -158,22 +225,6 @@ container.
 | `TZ`          | `UTC`                         | Fallback timezone; auto-derived from the exit IP when `PROXY` is set     |
 | `WINDOW_SIZE` | `1920,1080`                   | Initial Chrome window size                                               |
 | `XVFB_WHD`    | `1920x1080x24`                | Virtual display geometry                                                 |
-
-## Why Groundhog
-
-- **Safe by default.** The SSRF guard resolves the host and blocks loopback, RFC-1918
-  private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,
-  CGNAT `100.64.0.0/10`, and IPv4-mapped IPv6 — and re-checks the URL after redirects.
-  Only `http`/`https`, no credentials in URLs. Read-only, per-domain rate limiting.
-- **No automation tell.** Puppeteer/Playwright/Selenium enable the CDP `Runtime` domain,
-  which anti-bots detect (`isAutomatedWithCDP`). Groundhog drives the browser over raw CDP
-  and never enables `Runtime`/`Console`, so that signal is absent — a clean session that
-  full automation libraries can't produce over `connect_over_cdp`.
-- **A real fingerprint.** It's real Chrome, run headful under Xvfb (no `HeadlessChrome`
-  token) — authentic TLS/HTTP2 fingerprint, real WebGL/canvas — not a Python HTTP client,
-  so fingerprint-driven blocks go away and cheap proxies work where they otherwise wouldn't.
-- **Self-hosted.** You run the container; the pages you fetch and the content extracted
-  from them never leave your own infrastructure.
 
 ## Under the hood: the stealth Chrome container
 
@@ -241,6 +292,55 @@ of the browser. Bind it to localhost or a trusted private network; never expose 
 public internet. `--no-sandbox` is used because Chrome's sandbox does not work in an
 unprivileged container; keep the container isolated. To report a vulnerability, see
 [`SECURITY.md`](SECURITY.md).
+
+### Limits of hidden-text detection
+
+Worth knowing before treating an empty `threats` list as a clean bill of health:
+
+- **The style signals are thresholds, and the character set is a denylist.** Those are the
+  real limits — see below. The detector itself runs in an isolated world
+  (`Page.createIsolatedWorld`), so a page cannot suppress it by replacing the DOM APIs it
+  uses; if the browser ever declines to provide one, the result carries a
+  `detection_degraded` threat rather than quietly weaker detection.
+- **A page can react to the strip itself.** `Element.remove()` is `[CEReactions]`, so a
+  custom element's `disconnectedCallback` runs *synchronously* while hidden nodes are being
+  removed. A page can use that to write content the reader never saw — as a text node, into
+  an element that already existed, by moving a node, or into `document.title` or a `<meta>`
+  tag. Such content is extracted and is **not** reported in `threats`. A hidden decoy
+  element is enough to trigger it. Closing this needs the pre-strip document to be captured
+  and compared, not a list of which nodes are new; it is tracked and not fixed here.
+- **Thresholds can be sat just inside.** `opacity: 0.06`, `font-size: 4px`, a contrast ratio
+  just above 1.15 — all pass, as do hiding techniques the nine signals don't model
+  (`clip-path`, `text-indent`, `transform: scale(0)`).
+- **Invisible-character coverage is a set, not a rule.** Zero-width, bidi and the Unicode Tag
+  block are stripped and reported; codepoints outside that set are not.
+
+**What the SSRF guard blocks.** Each host is resolved and rejected if it lands in loopback,
+RFC-1918 private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,
+CGNAT `100.64.0.0/10`, or IPv4-mapped IPv6 ranges. Only `http` and `https` are allowed, and
+credentials in URLs are rejected. The check runs again immediately before navigation, and
+once more against `final_url` after redirects.
+
+**Limits of the SSRF guard.** It is a strong default, not a sandbox. Know these before
+pointing it at untrusted URLs:
+
+- The guard resolves and checks the host *before* navigation and re-checks `final_url`
+  *after* the page loads. A redirect into a private address is therefore still requested by
+  Chrome — its content is never returned, but a blind SSRF or a state-changing internal `GET`
+  has already landed. Intermediate hops in a longer redirect chain are not individually
+  checked.
+- Sub-resource requests the page itself issues (`img`, `script`, `iframe`, `fetch`) are not
+  intercepted; only the top-level navigation is checked.
+- Groundhog resolves DNS in its own process while Chrome resolves independently at navigate
+  time, so a short-TTL rebinding window remains open. Closing these properly needs
+  request-level interception (CDP `Fetch`).
+- Fetches share the browser's default profile — targets are created without a separate
+  browser context — so cookies and storage set by one page persist into later fetches.
+  "Read-only" describes Groundhog's own API, not the JavaScript on a fetched page, which can
+  issue requests of its own from that shared profile.
+
+Set `GROUNDHOG_BLOCK_PRIVATE_IPS=false` only on a network where reaching internal addresses
+is intended.
 
 ## A note on "stealth"
 

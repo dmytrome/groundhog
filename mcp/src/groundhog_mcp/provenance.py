@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 import py3langid
 
-from . import sanitize
+from . import safety, sanitize
 from .extract import ExtractMeta
 
 if TYPE_CHECKING:  # keeps this module free of the browser engine at runtime
@@ -19,7 +19,6 @@ _DETECTION_SAMPLE_CHARS = 2000
 # too long to be one — misattributing an author is worse than reporting none.
 _MAX_AUTHOR_CHARS = 80
 _MAX_AUTHOR_WORDS = 8
-_MAX_META_CHARS = 300
 
 
 def _plausible_author(value: str | None) -> str | None:
@@ -60,29 +59,25 @@ def _detect_language(text: str, hint: str | None) -> str | None:
         return hint or None
 
 
-def _clean(value: str | None) -> str | None:
-    """Sanitize and cap a metadata string.
-
-    These come from the page's own `<meta>` tags, so on a search-chosen URL they
-    are attacker-authored: without this they would be an unsanitized channel into
-    the model, bypassing the stripping applied to the page body.
-    """
-    if not value:
-        return None
-    stripped, _ = sanitize.strip_invisible(value)
-    return stripped.strip()[:_MAX_META_CHARS] or None
-
-
 def build(markdown: str, extract_meta: ExtractMeta, engine_meta: "PageMeta") -> Provenance:
-    raw = {k.lower(): v for k, v in engine_meta.get("meta", {}).items()}
+    raw = {k.lower(): v for k, v in engine_meta["meta"].items()}
     return {
         "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
         "word_count": len(markdown.split()),
-        "author": _clean(_plausible_author(extract_meta.author) or _first(raw, _AUTHOR_KEYS)),
-        "published": _clean(extract_meta.published or _first(raw, _PUBLISHED_KEYS)),
-        "modified": _clean(_first(raw, _MODIFIED_KEYS)),
-        "canonical": _clean(
-            extract_meta.canonical or engine_meta.get("canonical") or _first(raw, ("canonical",))
+        # trafilatura reads these off the page body, so they arrive from outside the
+        # `RenderedPage` boundary and are cleaned here; `engine_meta` is already clean.
+        "author": sanitize.clean_field(
+            _plausible_author(extract_meta.author) or _first(raw, _AUTHOR_KEYS),
+            sanitize.MAX_META_CHARS,
         ),
-        "language": _detect_language(markdown, engine_meta.get("lang")),
+        "published": sanitize.clean_field(
+            extract_meta.published or _first(raw, _PUBLISHED_KEYS), sanitize.MAX_PUBLISHED_CHARS
+        ),
+        "modified": sanitize.clean_field(_first(raw, _MODIFIED_KEYS), sanitize.MAX_META_CHARS),
+        "canonical": (
+            safety.safe_url(extract_meta.canonical)
+            or engine_meta["canonical"]
+            or safety.safe_url(_first(raw, ("canonical",)))
+        ),
+        "language": _detect_language(markdown, engine_meta["lang"]),
     }

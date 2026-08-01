@@ -1,12 +1,24 @@
 [project]
 name = "groundhog-mcp"
-version = "0.9.0"
-description = "Stealth-browser grounding tools for AI agents, over MCP"
+version = "0.9.1"
+description = "Web search, read and research for AI agents, through a real stealth browser"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "dmytrome" }]
-keywords = ["mcp", "stealth", "browser", "cdp", "scraping", "ssrf", "agents"]
+keywords = [
+    "mcp",
+    "agents",
+    "search",
+    "research",
+    "scraping",
+    "browser",
+    "cdp",
+    "stealth",
+    "prompt-injection",
+    "provenance",
+    "ssrf",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

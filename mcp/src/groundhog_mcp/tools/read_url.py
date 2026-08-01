@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from .. import config, document, engine, extract, provenance, retrieval, sanitize
+from .. import config, document, engine, extract, provenance, retrieval, safety, sanitize
 
 
 class ReadResult(TypedDict):
@@ -29,7 +29,15 @@ async def read_url(
     whole page. `format` may be "markdown" (default) or "text"; set
     `include_hidden=true` to keep hidden text. Use this to ground answers in live
     web content, including sites that block plain fetchers."""
-    doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
+    try:
+        doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
+    except engine.BrowserUnavailableError:
+        raise  # our own text, and the caller needs the remediation steps verbatim
+    except Exception as exc:
+        # Without this the SSRF guard's "blocked address: host -> 169.254.x.x" and any
+        # page-chosen exception text reach the model unchanged. `research` already
+        # refuses to echo those; this is the same rule for the single-page tool.
+        raise RuntimeError(safety.safe_detail(exc)) from exc
     limit = config.token_budget(max_tokens, engine.load_config().max_tokens)
 
     matches: list[retrieval.Match] = []

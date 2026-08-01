@@ -7,7 +7,7 @@ _DEFAULT_BROWSER_IMAGE = "ghcr.io/dmytrome/groundhog:latest"
 
 SearchBackend = Literal["auto", "searxng", "serp"]
 _SEARCH_BACKENDS = get_args(SearchBackend)
-_ALLOWED_SEARXNG_SCHEMES = ("http", "https")
+ALLOWED_SCHEMES = ("http", "https")
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ def _searxng_url() -> str | None:
     if value is None:
         return None
     scheme = urlparse(value).scheme
-    if scheme not in _ALLOWED_SEARXNG_SCHEMES:
+    if scheme not in ALLOWED_SCHEMES:
         # Report the scheme only: the full value is an internal address that
         # would otherwise land in model context and transcripts.
         raise ValueError(f"SEARXNG_URL must be http(s), got scheme {scheme!r}")
