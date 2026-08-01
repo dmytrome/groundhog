@@ -1,0 +1,49 @@
+# Public "try it" playground, as an override on top of docker-compose.yml:
+#
+#   DEMO_DOMAIN=groundhog.example docker compose \
+#     -f docker-compose.yml -f docker-compose.demo.yml up --build -d
+#
+# It lives in its own file rather than behind a compose profile because compose
+# interpolates every `${...}` in a file before it applies profiles — caddy's
+# required DEMO_DOMAIN would fail plain `docker compose up` for everyone.
+#
+# GO-LIVE GATE (public exposure only): the SSRF guard validates the navigation
+# URL and final_url, but a rendered hostile page's own JS/subresource requests
+# are NOT checked and can reach link-local/metadata/RFC1918 addresses. Fine for
+# a private operator MCP; for a public demo where hostile input is expected,
+# drop RFC1918 + link-local egress from the `chrome` container at the host
+# firewall (nftables/iptables) or via an egress-proxy sidecar before exposing
+# this. Full in-app fix is tracked in ROADMAP (CDP Fetch-domain interception).
+services:
+  demo:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    environment:
+      - CDP_URL=http://chrome:9222
+      - GROUNDHOG_AUTO_START_BROWSER=false
+      # Passed through only when the operator sets them; demo/app.py owns the defaults.
+      - DEMO_RATE_LIMIT_PER_HOUR
+      - DEMO_GLOBAL_RATE_LIMIT_PER_MINUTE
+    depends_on:
+      chrome:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Reverse proxy + automatic Let's Encrypt TLS.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DEMO_DOMAIN=${DEMO_DOMAIN:?set DEMO_DOMAIN to your demo's hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - demo
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

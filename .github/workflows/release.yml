@@ -65,4 +65,14 @@ jobs:
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
       - name: Publish to MCP Registry
-        run: ./mcp-publisher publish
+        # A re-pushed tag or a re-run replays this job, and the registry rejects a
+        # version it already has. Already-published is the state we wanted, not a
+        # failure; anything else still fails the release.
+        run: |
+          if out=$(./mcp-publisher publish 2>&1); then
+            echo "$out"
+          else
+            echo "$out"
+            echo "$out" | grep -q 'cannot publish duplicate version' || exit 1
+            echo "this version is already in the registry; nothing to do"
+          fi
