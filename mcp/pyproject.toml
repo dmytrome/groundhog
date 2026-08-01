@@ -1,9 +1,9 @@
 [project]
 name = "groundhog-mcp"
-version = "0.9.2"
+version = "0.9.3"
 description = "Web search, read and research for AI agents, through a real stealth browser"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "dmytrome" }]
 keywords = [
