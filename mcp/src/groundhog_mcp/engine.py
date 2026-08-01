@@ -227,8 +227,8 @@ class RenderedPage:
     added there too — the result walk in `tests/test_boundary.py` is what catches the
     omission. Two carve-outs: `html` and `text` are only type-checked, because they
     carry the content itself and are stripped downstream *with* threat collection so
-    the caller learns what was hidden in it; and `isolated` is ours, not the page's —
-    it records how the reads above were performed.
+    the caller learns what was hidden in it; and the boolean flags are ours, not the
+    page's — they record how the reads above were performed, not what they returned.
     """
 
     html: str
@@ -242,6 +242,10 @@ class RenderedPage:
     # default: a construction site that forgets it must say which it means, rather
     # than silently asserting the reassuring answer.
     isolated: bool
+    # Whether the strip fell short of removing a flagged node outright — the cases are
+    # enumerated in `detect_js.py`, which is where they are detected. Same no-default
+    # rule as `isolated`.
+    strip_incomplete: bool
 
     def __post_init__(self) -> None:
         # A URL is a citation, so it is never rewritten: if cleaning would change
@@ -463,6 +467,9 @@ class EngineProvider:
                 final_url=final_url,
                 title=_as_text(found.get("title")),
                 isolated=ctx is not None,
+                # Any non-false reply degrades to "say the strip was partial", so a
+                # page cannot quiet the disclosure by returning a surprising shape.
+                strip_incomplete=bool(found.get("stripIncomplete")),
                 hidden_spans=found.get("hidden") or [],
                 meta={
                     "meta": found.get("meta") or {},

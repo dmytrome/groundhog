@@ -42,6 +42,7 @@ ThreatType = Literal[
     "report_truncated",
     "final_url_suppressed",
     "detection_degraded",
+    "strip_incomplete",
     "zero_width",
     "bidi",
     "tag",
@@ -124,13 +125,19 @@ def strip_invisible(text: str, found: dict[str, tuple[ThreatType, int]] | None =
     return text.translate({ord(ch): (" " if ch in _SPACE_LIKE else None) for ch in found})
 
 
+def notice(threat_type: ThreatType, reason: str) -> Threat:
+    """A finding about the report itself rather than about page content.
+
+    Carries no excerpt or location because no element on the page produced it — and
+    keeping that shape in one place is what stops a caller inventing a fifth variant.
+    """
+    return {"type": threat_type, "reason": reason, "location": None, "excerpt": ""}
+
+
 def threats(found: dict[str, tuple[ThreatType, int]]) -> list[Threat]:
     """Report a scan as threats.
 
     Counts stay data until here, so no caller has to recover them by parsing the
     text this function formats.
     """
-    return [
-        {"type": category, "reason": f"U+{ord(ch):04X} x{n}", "location": None, "excerpt": ""}
-        for ch, (category, n) in found.items()
-    ]
+    return [notice(category, f"U+{ord(ch):04X} x{n}") for ch, (category, n) in found.items()]

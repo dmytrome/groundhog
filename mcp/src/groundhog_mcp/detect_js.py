@@ -13,6 +13,26 @@ DETECT_AND_COLLECT = r"""
   // deeply-nested page can't turn this into an O(elements x depth) style-recalc cost.
   const MAX_BG_ANCESTORS = 16;
   const hidden = [];
+  // Position among *all* child nodes, from documentElement down. `importNode(el, true)`
+  // copies the tree node-for-node, so the same walk locates the node in the copy.
+  const indexPathOf = (el) => {
+    const parts = [];
+    for (let n = el; n && n !== document.documentElement; n = n.parentNode) {
+      parts.unshift(Array.prototype.indexOf.call(n.parentNode.childNodes, n));
+    }
+    return parts;
+  };
+  const atIndexPath = (rootNode, parts) =>
+    parts.reduce((n, i) => (n ? n.childNodes[i] : null), rootNode);
+  // The same position as a selector, for the stylesheet that hides it.
+  const selectorOf = (el) => {
+    const parts = [];
+    for (let n = el; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
+      const at = Array.prototype.indexOf.call(n.parentElement.children, n) + 1;
+      parts.unshift(':nth-child(' + at + ')');
+    }
+    return ':root > ' + parts.join(' > ');
+  };
   const pathOf = (el) => {
     const parts = [];
     for (let n = el; n && n.nodeType === 1 && parts.length < 5; n = n.parentElement) {
@@ -92,17 +112,21 @@ DETECT_AND_COLLECT = r"""
       toRemove.push(el);
     }
   }
-  // `remove()` is [CEReactions]: a custom element's disconnectedCallback runs
-  // synchronously as this returns, so a page can mutate the document mid-strip. That
-  // is a real and open limitation — see "Limits of hidden-text detection" in the
-  // README. It is deliberately not chased here: an identity census over elements
-  // closes one primitive of several while turning an ordinary `innerHTML = innerHTML`
-  // re-render into a total content wipe, which is worse than the leak.
-  if (strip) for (const el of toRemove) el.remove();
+  // Nothing below is removed from the live document. `remove()` is [CEReactions]: a
+  // custom element's disconnectedCallback would run synchronously as it returned,
+  // letting the page write content the reader never saw — as a text node, into an
+  // element that already existed, by moving a node, or into `document.title`. Where
+  // each half gets its content instead is explained at its own step.
+  //
+  // Positions are recorded only when they will be used; both walks cost O(siblings)
+  // per level, and an `include_hidden` fetch strips nothing.
+  const hiddenPaths = strip ? toRemove.map(indexPathOf) : [];
+  const hiddenSelectors = strip ? toRemove.map(selectorOf) : [];
   // HTML comments are never part of an element's textContent, so they were never
   // reaching the extracted markdown either way — this is a diagnostic-only signal
   // (a page embedding instructions this way is still worth reporting in threats[]).
   const commentWalker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
+  const commentPaths = [];
   while (commentWalker.nextNode()) {
     const c = commentWalker.currentNode;
     const text = (c.textContent || '').trim();
@@ -110,7 +134,7 @@ DETECT_AND_COLLECT = r"""
     hidden.push({
       text: text.slice(0, MAX_TEXT), reason: 'html-comment', path: pathOf(c.parentElement),
     });
-    if (strip) c.remove();
+    if (strip) commentPaths.push(indexPathOf(c));
   }
   const meta = {};
   for (const m of document.querySelectorAll('meta[name], meta[property]')) {
@@ -120,19 +144,94 @@ DETECT_AND_COLLECT = r"""
   }
   const canonEl = document.querySelector('link[rel="canonical"]');
   const langAttr = document.documentElement.getAttribute('lang');
-  // Read the content here, in the same synchronous task that removed the hidden
-  // nodes. Reading it in a later round trip let the page put them back: `remove()`
-  // mutates the shared DOM, so a MutationObserver in the page's own world fires and
-  // re-appends the node before the next evaluate arrives. A microtask cannot
-  // interleave inside this function, so what is read here is what was stripped.
+  // Markup: imported into an inert document, not cloned. `cloneNode` is [CEReactions]:
+  // it re-creates every custom element with the synchronous flag unset, which enqueues
+  // an upgrade reaction drained as it returns — running the page's constructor and
+  // attributeChangedCallback inside the strip. A document from `createHTMLDocument` has
+  // no browsing context, so definition lookup returns null there and nothing is queued.
+  //
+  // Imported rather than serialized-and-reparsed: reparsing is not structure-preserving,
+  // so the index paths below would address the wrong nodes. Measured in Chrome 150 —
+  // adjacent text nodes merge into one, `<noscript>` parses as markup with scripting
+  // off, and a script-inserted child of `<table>` is foster-parented out; each shifts
+  // every later sibling, and the strip then deleted visible text while leaving the
+  // hidden payload in place. `importNode` copies the tree node-for-node.
+  const title = document.title;
+  // Set by either half when it could not fully carry out the strip, so a partial
+  // result is never returned as if it were complete.
+  let stripIncomplete = false;
+  let html;
+  let copy = null;
+  if (strip) {
+    const inert = document.implementation.createHTMLDocument('');
+    copy = inert.importNode(document.documentElement, true);
+    // Resolve every path before removing any: removing renumbers later siblings.
+    const doomed = hiddenPaths.concat(commentPaths).map((parts) => atIndexPath(copy, parts));
+    for (const node of doomed) {
+      // A path that does not resolve means this markup still contains a node that was
+      // flagged; say so rather than returning it as fully stripped.
+      if (!node) { stripIncomplete = true; continue; }
+      node.remove();
+    }
+    html = copy.outerHTML;
+  } else {
+    html = document.documentElement.outerHTML;
+  }
+
+  // Rendered text needs live layout, so the flagged nodes are hidden rather than
+  // removed. Adopting a constructed stylesheet is not a tree mutation, so — unlike
+  // appending <style> — a MutationObserver sees nothing and the page is never handed
+  // the position of every node the detector flagged.
+  let adopted = null;
+  if (strip && hiddenSelectors.length && 'adoptedStyleSheets' in Document.prototype) {
+    adopted = new CSSStyleSheet();
+    adopted.replaceSync(hiddenSelectors.join(',') + '{display:none !important}');
+    const sheets = Array.prototype.slice.call(document.adoptedStyleSheets);
+    sheets.push(adopted);
+    document.adoptedStyleSheets = sheets;
+  }
+  let text = document.body ? document.body.innerText : '';
+  // `innerText` is only trustworthy while the sheet above is actually deciding what
+  // renders. Two ways it stops being:
+  //   * a flagged node wins the cascade — an inline `!important` beats an author sheet,
+  //     as do a transition origin and `::slotted` from an inner tree; and
+  //   * nothing renders at all, because the page hid its own <body> or <html>. Then
+  //     `innerText` falls back to raw text and hands back everything it hid, which the
+  //     sheet cannot suppress because the node was never flagged in the first place.
+  // Either way the live text is abandoned for the copy the markup was stripped from,
+  // where the flagged nodes are gone structurally and no cascade can bring them back.
+  // Subtracting the node's text from the string instead was wrong: when its text was a
+  // substring of earlier visible text, the visible copy was cut and the payload stayed.
+  if (strip && document.body) {
+    let untrusted = document.body.getClientRects().length === 0;
+    if (!untrusted) {
+      for (const el of toRemove) {
+        if (getComputedStyle(el).display !== 'none') { untrusted = true; break; }
+      }
+    }
+    if (untrusted) {
+      stripIncomplete = true;
+      // Never rendered, so it is not part of the text a reader would have seen.
+      const noise = copy.querySelectorAll('script,style,noscript,template');
+      for (const el of Array.prototype.slice.call(noise)) el.remove();
+      const body = copy.querySelector('body');
+      text = (body || copy).textContent;
+    }
+  }
+  if (adopted) {
+    document.adoptedStyleSheets = Array.prototype.filter.call(
+      document.adoptedStyleSheets, (s) => s !== adopted);
+  }
+
   return {
     hidden,
     meta,
     lang: langAttr || null,
     canonical: canonEl ? canonEl.href : null,
-    html: document.documentElement.outerHTML,
-    text: document.body ? document.body.innerText : '',
-    title: document.title,
+    html,
+    text,
+    title,
+    stripIncomplete,
   };
 }
 """

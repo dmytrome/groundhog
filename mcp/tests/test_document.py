@@ -183,6 +183,23 @@ async def test_the_cap_favours_hidden_findings_when_only_one_slot_exists(fake_pr
     assert [t["type"] for t in doc.threats] == ["hidden_css", "report_truncated"]
 
 
+async def test_an_incomplete_strip_is_disclosed(fake_provider, make_page):
+    # An inline `!important` beats the hiding sheet, so the flagged text is still in
+    # the extracted content. Returning it as if it had been removed is the one thing
+    # this must not do.
+    page = make_page()
+    page.strip_incomplete = True
+    fake_provider(page)
+    doc = await fetch_document("https://ex.com/p")
+    assert any(t["type"] == "strip_incomplete" for t in doc.threats)
+
+
+async def test_a_complete_strip_says_nothing(fake_provider, make_page):
+    fake_provider(make_page())
+    doc = await fetch_document("https://ex.com/p")
+    assert not any(t["type"] == "strip_incomplete" for t in doc.threats)
+
+
 async def test_degraded_detection_is_disclosed(fake_provider, make_page):
     # Without an isolated world the page can replace the DOM APIs the collector uses,
     # so a short `threats` list proves nothing — say so rather than imply a clean page.
