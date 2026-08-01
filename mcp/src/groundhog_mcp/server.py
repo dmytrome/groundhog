@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 
 from . import engine
+from .prompts import audit_hidden_text
 from .tools.read_url import read_url
 from .tools.research import research
 from .tools.search import search
@@ -24,4 +25,5 @@ def build_server() -> FastMCP:
     mcp.tool()(research)
     mcp.tool()(search)
     mcp.tool()(status)
+    mcp.prompt()(audit_hidden_text)
     return mcp
