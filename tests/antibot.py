@@ -12,7 +12,9 @@ and writes a self-contained HTML report (screenshots embedded) to
     python tests/antibot.py                     # writes tests/report.html
     CDP_URL=http://127.0.0.1:9222 python tests/antibot.py
 
-Exit code is non-zero if any pass/fail detector fails, so it works in CI.
+Exit code is non-zero if any pass/fail detector fails, so it works in CI. A detector we
+could not reach is left ungraded rather than counted against us — but if none of them
+returned a verdict, that exits non-zero too, since nothing was actually verified.
 """
 
 import asyncio
@@ -35,7 +37,11 @@ _INTRO = "Driven over raw CDP (no Runtime.enable) against"
 
 
 def _verdict(ok):
-    """Tri-state classifier each renderer decorates: None -> info, else pass/fail."""
+    """Tri-state classifier each renderer decorates: None -> info, else pass/fail.
+
+    None covers both "diagnostic detector, no verdict by design" and "a pass/fail
+    detector was unreachable", since neither says anything about how automated we look.
+    """
     return "info" if ok is None else ("pass" if ok else "fail")
 
 
@@ -107,8 +113,14 @@ def _isbot_pass(text):
 def _match_pass(pattern, good):
     def check(text):
         m = re.search(pattern, text or "", re.I)
-        v = m.group(0).strip() if m else "(not found)"
-        return (bool(m) and bool(re.search(good, v, re.I))), v
+        # No match at all means the page never rendered a verdict — the site was down,
+        # blocked us at the edge, or reworded its answer. That is not the same claim as
+        # "this detector identified us as a bot", so it is left ungraded rather than
+        # counted as a stealth failure; an outage upstream used to fail the whole run.
+        if not m:
+            return None, "(no verdict rendered)"
+        v = m.group(0).strip()
+        return bool(re.search(good, v, re.I)), v
 
     return check
 
@@ -221,8 +233,10 @@ async def main():
                 ok, detail = interpret(raw)
                 shot = await s.screenshot(sid)
                 await s.send("Target.closeTarget", {"targetId": tid})
-            except Exception as exc:  # a detector erroring is a data point, not a crash
-                ok, detail, shot = False, f"error: {exc}", ""
+            except Exception as exc:
+                # Reaching the detector is infrastructure, not stealth: a timeout or a
+                # dead host says nothing about whether we look automated.
+                ok, detail, shot = None, f"unavailable: {exc}", ""
             if ok is False:
                 failures += 1
             detector_rows.append((name, url, ok, detail, shot))
@@ -237,6 +251,11 @@ async def main():
     graded = sum(1 for _, _, ok, _, _ in detector_rows if ok is not None)
     print(f"\nreport: {REPORT}\nresults: {RESULTS_MD}")
     print(f"{graded - failures}/{graded} pass/fail detectors passed")
+    if not graded:
+        # Every detector was unreachable, so nothing was actually verified. Exiting 0
+        # here would publish a green run that proves nothing.
+        print("no detector returned a verdict; nothing was verified")
+        return 1
     return 1 if failures else 0
 
 

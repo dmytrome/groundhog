@@ -23,3 +23,36 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run pytest -q
+
+  # The suite above skips every test that needs a browser — which is all of the
+  # hidden-text and injection-containment coverage, the part most worth gating. Those
+  # ran only on a maintainer's machine, so a regression in the strip reached `main`
+  # green. This job runs them against the real browser.
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Start the stealth browser
+        run: docker compose up --build -d
+      - name: Wait for CDP
+        run: |
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:9222/json/version >/dev/null && exit 0
+            sleep 2
+          done
+          echo "CDP never became ready" >&2
+          docker compose logs --no-color chrome | tail -50
+          exit 1
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8
+        with:
+          python-version: "3.12"
+      - name: Run the browser-backed tests
+        working-directory: mcp
+        env:
+          RUN_LIVE: "1"
+          CDP_URL: http://127.0.0.1:9222
+          GROUNDHOG_AUTO_START_BROWSER: "false"
+        run: uv run pytest -q --durations=10
+      - name: Browser logs on failure
+        if: failure()
+        run: docker compose logs --no-color chrome | tail -100
