@@ -11,7 +11,11 @@ async def test_every_tool_is_annotated_read_only():
     for tool in tools.values():
         assert tool.annotations is not None, f"{tool.name} has no annotations"
         assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.title
+        # Both title forms: a client following 2025-06-18 reads `Tool.title` first and
+        # only falls back to the annotation, so one alone leaves some clients showing
+        # the bare function name.
+        assert tool.title, f"{tool.name} has no top-level title"
+        assert tool.annotations.title == tool.title
 
 
 async def test_fetching_tools_are_open_world_and_status_is_not():

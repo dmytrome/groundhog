@@ -41,27 +41,37 @@ _CHALLENGE_HEADER = "cf-mitigated"
 # Curated to be distinctive to anti-bot interstitials, so ordinary prose that happens
 # to mention these words does not trip the verdict. Title matches are the strongest:
 # an interstitial's <title> is purpose-built and short.
-_TITLE_SIGNS = (
-    "just a moment",
-    "attention required",  # "Attention Required! | Cloudflare"
+# Cloudflare's current interstitial puts the human-check wording in the body where an
+# older one put it in the title, and some skins do both — so these belong to neither
+# list exclusively. Keeping them shared is what stops a rewrite of one page moving the
+# only phrase we match out of the only place we look.
+_HUMAN_CHECK_SIGNS = (
     "verify you are human",
     "verifying you are human",
     "are you a robot",
+)
+_TITLE_SIGNS = _HUMAN_CHECK_SIGNS + (
+    "just a moment",
+    "attention required",  # "Attention Required! | Cloudflare"
     "checking if the site connection is secure",
 )
-# An interstitial's <title> is purpose-built: the phrase is essentially the whole title
-# ("Just a moment...", "Attention Required! | Cloudflare"), whereas an article that
-# merely contains one carries far more besides ("Just a Moment (2024) — a review of…").
-# Requiring the phrase to be at least half the title separates the two, where a plain
-# length cap does not. A false positive costs that source every one of its passages in
-# `research`, so precision here is worth more than reach.
-_MIN_TITLE_SIGN_RATIO = 0.5
+# An interstitial's <title> is purpose-built: the phrase is essentially the whole title,
+# whereas an article that merely contains one carries substantive words besides ("Just a
+# Moment (2024) — a review of…"). Requiring the phrase to dominate separates the two.
+#
+# It is compared against the title *segment* it sits in, not the whole string: titles are
+# routinely "<phrase> | <site>", and measuring against the whole would let a site suffix
+# dilute a real interstitial below the threshold — a false negative, which is the worse
+# error here. A missed challenge is silently ranked as content; a false positive only
+# costs that source its passages, and says so in `page_status`.
+_TITLE_SEPARATORS = ("|", "—", "–", "·", "::", " - ")
+_MIN_TITLE_SIGN_RATIO = 0.75
 
 # Matched against the rendered text, so every phrase here must be one a *reader* sees.
 # Cloudflare's "enable javascript and cookies to continue" is deliberately absent: it
 # lives in a <noscript>, which `innerText` never returns with scripting on, so including
 # it would look like coverage while never once matching.
-_BODY_SIGNS = (
+_BODY_SIGNS = _HUMAN_CHECK_SIGNS + (
     "checking your browser before accessing",
     "ddos protection by cloudflare",
     "performance & security by cloudflare",
@@ -113,14 +123,23 @@ def _is_challenge(headers: object, title: object, text: object) -> bool:
         for name in headers:
             if isinstance(name, str) and name.lower() == _CHALLENGE_HEADER:
                 return True
-    title_l = title.lower().strip() if isinstance(title, str) else ""
+    title_l = title.lower() if isinstance(title, str) else ""
     if any(
-        sign in title_l and len(sign) >= _MIN_TITLE_SIGN_RATIO * len(title_l)
+        sign in segment and len(sign) >= _MIN_TITLE_SIGN_RATIO * len(segment)
+        for segment in _title_segments(title_l)
         for sign in _TITLE_SIGNS
     ):
         return True
     text_l = text[:_SCAN_CHARS].lower() if isinstance(text, str) else ""
     return any(sign in text_l for sign in _BODY_SIGNS)
+
+
+def _title_segments(title: str) -> list[str]:
+    """A title split on the separators sites use to append their own name."""
+    segments = [title]
+    for separator in _TITLE_SEPARATORS:
+        segments = [part for segment in segments for part in segment.split(separator)]
+    return [stripped for segment in segments if (stripped := segment.strip())]
 
 
 def _is_unsupported(mime_type: object) -> bool:

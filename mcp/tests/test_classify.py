@@ -65,6 +65,18 @@ def _response(status: int = 200, mime: str = _HTML, headers: dict | None = None)
             "The film opens on a wide shot of an empty road.",
             "ok",
         ),
+        # …but a site suffix must not dilute a real interstitial below the threshold.
+        # Measuring the phrase against the whole title made this read as content.
+        (_response(), "Just a moment... | example.com", "", "challenge"),
+        (_response(), "example.com — Attention Required! | Cloudflare", "", "challenge"),
+        # The current Cloudflare wording lives in the body, where an older skin put it
+        # in the title. Neither list alone covers it.
+        (
+            _response(),
+            "example.com",
+            "Verifying you are human. This may take a few seconds.",
+            "challenge",
+        ),
     ],
 )
 def test_classify(response, title, text, expected):

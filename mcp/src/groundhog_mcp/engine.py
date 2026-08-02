@@ -284,8 +284,12 @@ class RenderedPage:
             "canonical": safety.safe_url(raw_meta.get("canonical")),
         }
         # A CDP status is already an int, but a construction site (or a test) can pass
-        # anything; fail closed to None rather than surface a non-numeric status.
-        self.http_status = self.http_status if isinstance(self.http_status, int) else None
+        # anything; fail closed to None rather than surface a non-numeric status. `0` is
+        # normalized away too — it is what a service-worker-synthesized or client-blocked
+        # request reports, and returning it would hand a caller a value that is not a
+        # status while `retrieval_status` already says `unknown`.
+        status = self.http_status
+        self.http_status = status if isinstance(status, int) and status > 0 else None
 
 
 def _as_text(value: object) -> str:
