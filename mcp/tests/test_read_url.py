@@ -18,6 +18,23 @@ async def test_maps_document_fields_onto_the_result(fake_provider, make_page):
     assert result["fetched_at"].endswith("+00:00")
 
 
+async def test_result_carries_the_retrieval_status(fake_provider, make_page):
+    fake_provider(make_page())
+    result = await read_url("https://ex.com/p")
+    assert result["status"] == "ok"
+    assert result["http_status"] == 200
+
+
+async def test_a_challenge_page_is_surfaced_not_returned_as_ok(fake_provider, make_page):
+    # The whole point: a block/interstitial must reach the caller labelled, not as if
+    # it were the page. The classification is computed in the engine; this guards that
+    # it survives the Document -> ReadResult mapping.
+    fake_provider(make_page(retrieval_status="challenge", http_status=403))
+    result = await read_url("https://ex.com/p")
+    assert result["status"] == "challenge"
+    assert result["http_status"] == 403
+
+
 async def test_mcp_boundary_rejects_unknown_format():
     # Validation moved from a runtime check to the Literal on the tool signature,
     # so the schema — not Python — is what rejects a bad format. Assert the real

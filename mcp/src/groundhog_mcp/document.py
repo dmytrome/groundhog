@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from . import engine, extract, provenance, sanitize
+from . import classify, engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
@@ -17,6 +17,8 @@ class Document:
     url: str
     final_url: str
     fetched_at: str
+    status: classify.RetrievalStatus
+    http_status: int | None
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance
 
@@ -157,6 +159,8 @@ async def fetch_document(
         url=url,
         final_url=final_url,
         fetched_at=datetime.now(UTC).isoformat(),
+        status=page.retrieval_status,
+        http_status=page.http_status,
         threats=threats,
         provenance=provenance.build(markdown, meta, page.meta),
     )

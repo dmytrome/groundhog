@@ -21,13 +21,15 @@ def _hit(url: str) -> SearchHit:
     }
 
 
-def _doc(url: str, markdown: str) -> document.Document:
+def _doc(url: str, markdown: str, status: str = "ok") -> document.Document:
     return document.Document(
         markdown=markdown,
         title=f"T {url}",
         url=url,
         final_url=url,
         fetched_at="2026-07-26T00:00:00+00:00",
+        status=status,
+        http_status=200,
         threats=[],
         provenance={
             "content_hash": "h" * 64,
@@ -92,6 +94,73 @@ async def test_reports_every_source_with_its_provenance(fake_web):
     assert source["url"] == "https://a.example/x"
     assert source["status"] == "ok"
     assert len(source["provenance"]["content_hash"]) == 64
+
+
+async def test_a_source_carries_its_page_status(fake_web):
+    fake_web(
+        [_hit("https://ok.example/x"), _hit("https://gate.example/y")],
+        {
+            "https://ok.example/x": _doc("https://ok.example/x", "# Cats\n\nCats nap all day."),
+            "https://gate.example/y": _doc(
+                "https://gate.example/y", "# Cats\n\nCats nap.", status="challenge"
+            ),
+        },
+    )
+    result = await research("cats")
+    page_status = {s["url"]: s["page_status"] for s in result["sources"]}
+    assert page_status["https://ok.example/x"] == "ok"
+    assert page_status["https://gate.example/y"] == "challenge"
+
+
+async def test_a_challenge_pages_body_is_not_ranked_into_passages(fake_web):
+    # An interstitial body would otherwise be chunked and compete for the caller's
+    # token budget against real content — and `Passage` carries no status, so a
+    # caller reading passages could not tell it apart.
+    fake_web(
+        [_hit("https://gate.example/y"), _hit("https://ok.example/x")],
+        {
+            "https://gate.example/y": _doc(
+                "https://gate.example/y",
+                "# Just a moment\n\nChecking your browser before accessing tapetum lucidum.",
+                status="challenge",
+            ),
+            "https://ok.example/x": _doc(
+                "https://ok.example/x",
+                "# Tapetum\n\nThe tapetum lucidum grants cats their night vision.",
+            ),
+        },
+    )
+    result = await research("tapetum lucidum")
+    assert all(p["source_url"] == "https://ok.example/x" for p in result["passages"])
+    assert result["passages"], "the healthy source still contributes passages"
+    # The blocked source is still disclosed, with the reason it contributed nothing.
+    gate = next(s for s in result["sources"] if s["url"] == "https://gate.example/y")
+    assert gate["page_status"] == "challenge"
+
+
+async def test_an_unknown_page_status_still_contributes_passages(fake_web):
+    # `unknown` means the response was never observed, not that the body is junk —
+    # excluding it would silently drop legitimate sources.
+    fake_web(
+        [_hit("https://a.example/x")],
+        {
+            "https://a.example/x": _doc(
+                "https://a.example/x", "# Cats\n\nCats nap all day.", status="unknown"
+            )
+        },
+    )
+    result = await research("cats")
+    assert result["passages"]
+
+
+async def test_a_failed_source_has_no_page_status(fake_web):
+    fake_web(
+        [_hit("https://bad.example/y")],
+        {},
+        failures={"https://bad.example/y": RuntimeError("boom")},
+    )
+    result = await research("cats")
+    assert result["sources"][0]["page_status"] is None
 
 
 async def test_a_failed_source_does_not_fail_the_call(fake_web):

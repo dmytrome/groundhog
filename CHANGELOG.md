@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `read_url` now reports what actually came back, not only the extracted text: a `status`
+  (`ok`, `challenge`, `blocked`, `rate_limited`, `not_found`, `server_error`,
+  `unsupported_content`, `unknown`) plus the raw `http_status`. A Cloudflare interstitial, a
+  403, or a PDF is no longer returned as if it were the page — the caller can branch on it
+  instead. The top-level response is read from CDP's `Network.responseReceived` (status, MIME
+  type, and the `cf-mitigated` challenge header); classification is a pure function with its
+  own unit suite, and the real capture is covered by the browser-backed tests.
+
+  The verdict describes the document the text was actually read from. A page that redirects
+  client-side — meta-refresh, or `location.href` from a script — replaces the document after
+  the navigation returns, so the response is looked up by the *current* main frame's loader
+  rather than the one `Page.navigate` reported. Keying on the navigation would have described
+  the page that was left behind: a 200 redirecting to a 404 would have handed back the 404's
+  body while claiming `ok`, and a 403 interstitial redirecting to the real article would have
+  thrown that article away as `blocked`. Anti-bot flows redirect this way routinely. Both
+  directions are pinned by browser-backed tests.
+
+  A response that was never observed is reported as `unknown`, not `ok` — the distinction
+  between "verified fine" and "not verified" is the caller's to make.
+- Non-HTML responses (PDFs, images, binaries) are reported as `unsupported_content` rather
+  than returning an empty or junk render.
+- `research` carries the same verdict per source as `page_status`, alongside the existing
+  fetch-outcome `status`, so a source that loaded but was a challenge or a non-HTML body is
+  visible rather than passing as `ok`. Such a source now contributes **no passages**: an
+  interstitial's body would otherwise be ranked against the query and compete for the caller's
+  token budget with real content, and a `Passage` carries no status of its own to notice it by.
+
 ## [0.9.6] - 2026-08-01
 
 ### Added

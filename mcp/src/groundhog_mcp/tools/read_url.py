@@ -2,7 +2,7 @@ from typing import Annotated, TypedDict
 
 from pydantic import Field
 
-from .. import config, document, engine, extract, provenance, retrieval, safety, sanitize
+from .. import classify, config, document, engine, extract, provenance, retrieval, safety, sanitize
 
 
 class ReadResult(TypedDict):
@@ -11,6 +11,10 @@ class ReadResult(TypedDict):
     url: str
     final_url: str
     fetched_at: str
+    # What actually came back: `ok`, or `challenge`/`blocked`/`rate_limited`/`not_found`/
+    # `server_error`/`unsupported_content` when the content is not the page a caller wants.
+    status: classify.RetrievalStatus
+    http_status: int | None
     truncated: bool
     threats: list[sanitize.Threat]
     matches: list[retrieval.Match]
@@ -97,6 +101,8 @@ async def read_url(
         "url": doc.url,
         "final_url": doc.final_url,
         "fetched_at": doc.fetched_at,
+        "status": doc.status,
+        "http_status": doc.http_status,
         "truncated": truncated,
         "threats": doc.threats,
         "matches": matches,

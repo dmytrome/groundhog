@@ -1,3 +1,4 @@
+import base64
 import dataclasses
 import os
 import threading
@@ -47,14 +48,22 @@ HIDDEN_HTML = (
 )
 
 
-def _serve(body: str, content_type: str = "text/html") -> ThreadingHTTPServer:
-    payload = body.encode()
+def _serve(
+    body: str | bytes,
+    content_type: str = "text/html",
+    *,
+    status: int = 200,
+    extra_headers: dict[str, str] | None = None,
+) -> ThreadingHTTPServer:
+    payload = body.encode() if isinstance(body, str) else body
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(payload)
 
@@ -69,10 +78,15 @@ def _serve(body: str, content_type: str = "text/html") -> ThreadingHTTPServer:
 
 
 async def _fetch_local(
-    html: str, content_type: str = "text/html", *, strip_hidden: bool = True
+    html: str | bytes,
+    content_type: str = "text/html",
+    *,
+    strip_hidden: bool = True,
+    status: int = 200,
+    extra_headers: dict[str, str] | None = None,
 ) -> engine.RenderedPage:
     """Serve `html` from the host and fetch it through the containerized browser."""
-    srv = _serve(html, content_type)
+    srv = _serve(html, content_type, status=status, extra_headers=extra_headers)
     cfg = dataclasses.replace(load_config(), block_private_ips=False)
     provider = EngineProvider(cfg)
     await provider.start()
@@ -83,6 +97,123 @@ async def _fetch_local(
     finally:
         await provider.aclose()
         srv.shutdown()
+
+
+# A 1x1 transparent PNG — a top-level non-text body Chrome renders in a viewer, so its
+# extracted text is empty; the point is that the response's MIME type is reported.
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+async def test_the_main_response_status_is_captured():
+    page = await _fetch_local("<html lang='en'><body><p>Ordinary page.</p></body></html>")
+    assert page.http_status == 200
+    assert page.retrieval_status == "ok"
+
+
+async def test_a_cloudflare_style_interstitial_is_classified_as_a_challenge():
+    interstitial = (
+        "<html lang='en'><head><title>Just a moment...</title></head>"
+        "<body><p>Checking your browser before accessing the site.</p></body></html>"
+    )
+    page = await _fetch_local(interstitial)
+    assert page.retrieval_status == "challenge"
+
+
+async def test_a_403_is_classified_as_blocked_not_returned_as_content():
+    page = await _fetch_local("<html><body><p>Forbidden.</p></body></html>", status=403)
+    assert page.http_status == 403
+    assert page.retrieval_status == "blocked"
+
+
+async def test_a_challenge_response_header_is_honored_over_ordinary_content():
+    page = await _fetch_local(
+        "<html lang='en'><body><p>Ordinary looking content here.</p></body></html>",
+        extra_headers={"cf-mitigated": "challenge"},
+    )
+    assert page.retrieval_status == "challenge"
+
+
+async def test_a_non_text_body_is_classified_as_unsupported_content():
+    page = await _fetch_local(_PNG, content_type="image/png")
+    assert page.retrieval_status == "unsupported_content"
+
+
+def _serve_paths(routes: dict[str, tuple[int, str]]) -> ThreadingHTTPServer:
+    """Serve `{path: (status, html)}`, for navigations that end on a second document."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            status, body = routes.get(self.path, (404, "<html><body>nothing</body></html>"))
+            payload = body.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+async def _fetch_path(srv: ThreadingHTTPServer, path: str) -> engine.RenderedPage:
+    cfg = dataclasses.replace(load_config(), block_private_ips=False)
+    provider = EngineProvider(cfg)
+    await provider.start()
+    try:
+        return await provider.fetch(f"http://host.docker.internal:{srv.server_address[1]}{path}")
+    finally:
+        await provider.aclose()
+
+
+async def test_a_client_side_redirect_reports_the_document_that_was_landed_on():
+    # The status must describe the document the text was read from. Keying on the
+    # navigation's own loaderId reported the page left behind, handing back a 404
+    # body while claiming `ok`.
+    srv = _serve_paths(
+        {
+            "/a": (200, "<html><head><meta http-equiv='refresh' content='0;url=/b'></head></html>"),
+            "/b": (404, "<html lang='en'><body><p>This page does not exist.</p></body></html>"),
+        }
+    )
+    try:
+        page = await _fetch_path(srv, "/a")
+    finally:
+        srv.shutdown()
+    assert page.final_url.endswith("/b")
+    assert page.http_status == 404
+    assert page.retrieval_status == "not_found"
+
+
+async def test_a_challenge_that_redirects_to_real_content_reports_the_content():
+    # The mirror image: a 403 interstitial that hands off to the real article must not
+    # discard that article as `blocked`.
+    srv = _serve_paths(
+        {
+            "/a": (
+                403,
+                "<html><head><title>Just a moment...</title></head>"
+                "<body><script>location.href='/b';</script></body></html>",
+            ),
+            "/b": (
+                200,
+                "<html lang='en'><body><p>The real article content is here.</p></body></html>",
+            ),
+        }
+    )
+    try:
+        page = await _fetch_path(srv, "/a")
+    finally:
+        srv.shutdown()
+    assert page.final_url.endswith("/b")
+    assert page.http_status == 200
+    assert page.retrieval_status == "ok"
+    assert "real article content" in page.text
 
 
 async def test_detect_and_collect_finds_and_removes_hidden_text():
