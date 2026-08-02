@@ -57,6 +57,13 @@ curl -s http://localhost:9222/json/version    # CDP is live
 Set `GROUNDHOG_AUTO_START_BROWSER=false` to disable auto-start. To run the MCP server from
 source: `cd mcp && uv sync && uv run groundhog-mcp`.
 
+All four tools are annotated `readOnlyHint`, which is what lets a client run them without a
+per-call confirmation. That describes what they do to *your data*: nothing is written, and no
+remote state is changed. Worth knowing, because it is the one exception: with auto-start on,
+the first call may pull and run the browser container, and remove an **unreachable** container
+named `groundhog-browser` first. A reachable one is never touched, and
+`GROUNDHOG_AUTO_START_BROWSER=false` turns the whole path off.
+
 ## What makes it different
 
 - **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it

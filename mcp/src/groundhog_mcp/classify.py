@@ -12,6 +12,8 @@ so a hostile page can at worst mislabel *itself* — it cannot smuggle text thro
 
 from typing import Literal
 
+from . import sanitize
+
 RetrievalStatus = Literal[
     "ok",
     "challenge",
@@ -82,15 +84,22 @@ _BODY_SIGNS = _HUMAN_CHECK_SIGNS + (
 # MIME essences that carry text a reader (and the extractor) can work with. Anything
 # else present — application/pdf, images, octet-stream, archives — renders to an empty
 # or junk body, so it is reported as unsupported rather than returned as if it were text.
+# The `+json`/`+xml` families are matched by suffix below, so listing members of them
+# here would be dead weight that drifts out of step with that rule. These are the types
+# Chrome renders in its plain-text viewer without a suffix to recognize them by.
 _TEXTUAL_TYPES = frozenset(
     {
-        "application/xhtml+xml",
         "application/xml",
         "application/json",
-        "application/ld+json",
-        "application/rss+xml",
-        "application/atom+xml",
-        "image/svg+xml",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "application/ndjson",
+        "application/x-ndjson",
+        "application/yaml",
+        "application/x-yaml",
+        "application/toml",
+        "application/graphql",
     }
 )
 
@@ -123,7 +132,12 @@ def _is_challenge(headers: object, title: object, text: object) -> bool:
         for name in headers:
             if isinstance(name, str) and name.lower() == _CHALLENGE_HEADER:
                 return True
-    title_l = title.lower() if isinstance(title, str) else ""
+    # Bounded before it is lowercased and split, for the same reason the body scan is:
+    # this runs on the collector's *raw* title, before `RenderedPage` caps it, and a page
+    # chooses that string. Splitting megabytes of separators here would stall the whole
+    # server synchronously, not just this fetch. The cap is the one the caller will see
+    # anyway, so nothing matchable is lost.
+    title_l = title[: sanitize.MAX_TITLE_CHARS].lower() if isinstance(title, str) else ""
     if any(
         sign in segment and len(sign) >= _MIN_TITLE_SIGN_RATIO * len(segment)
         for segment in _title_segments(title_l)

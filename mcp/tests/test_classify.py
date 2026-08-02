@@ -49,8 +49,16 @@ def _response(status: int = 200, mime: str = _HTML, headers: dict | None = None)
         (_response(mime="text/plain"), "", "notes", "ok"),
         (_response(mime="application/json"), "", "{}", "ok"),
         (_response(mime="image/svg+xml"), "", "", "ok"),
+        # Types Chrome renders in its plain-text viewer: readable, and dropping them
+        # would silently cost a source its passages in `research`.
+        (_response(mime="application/javascript"), "", "export const x = 1;", "ok"),
+        (_response(mime="application/x-ndjson"), "", '{"a":1}', "ok"),
+        (_response(mime="application/x-yaml"), "", "a: 1", "ok"),
+        (_response(mime="application/toml"), "", "a = 1", "ok"),
         # Structured suffixes (RFC 6839) are readable text, not binary.
         (_response(mime="application/problem+json"), "", "{}", "ok"),
+        (_response(mime="application/xhtml+xml"), "", "<p/>", "ok"),
+        (_response(mime="application/ld+json"), "", "{}", "ok"),
         (_response(mime="application/vnd.api+json"), "", "{}", "ok"),
         (_response(mime="application/vnd.github+json"), "", "{}", "ok"),
         (_response(mime="application/atom+xml"), "", "<feed/>", "ok"),
@@ -107,6 +115,19 @@ def test_inputs_are_hostile_shapes_not_trusted_types():
     # title, or a non-dict headers value must degrade rather than raise on the boundary.
     assert classify.classify("not-a-dict", None, 42) == "unknown"
     assert classify.classify({"status": 200, "mimeType": 12345, "headers": []}, None, 42) == "ok"
+
+
+def test_a_pathological_title_is_bounded_before_it_is_lowercased_and_split():
+    # `classify` runs on the collector's raw title, before `RenderedPage` caps it, and a
+    # page chooses that string. Unbounded, splitting megabytes of separators took seconds
+    # and hundreds of MB *synchronously* inside the fetch — stalling every concurrent
+    # call, not just this one. Timed, because the verdict alone would not catch a regression.
+    import time
+
+    started = time.perf_counter()
+    assert classify.classify(_response(), "|" * 2_000_000, "") == "ok"
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.5, f"pathological title took {elapsed:.2f}s — the bound is gone"
 
 
 def test_a_body_challenge_phrase_past_the_scan_window_is_not_matched():
