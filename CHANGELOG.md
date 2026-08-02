@@ -34,6 +34,9 @@ All notable changes to this project are documented here. The format is based on
   visible rather than passing as `ok`. Such a source now contributes **no passages**: an
   interstitial's body would otherwise be ranked against the query and compete for the caller's
   token budget with real content, and a `Passage` carries no status of its own to notice it by.
+- MCP tool annotations on all four tools: `readOnlyHint` — so a client can auto-approve reads
+  without a per-call confirmation — and `openWorldHint`, plus a human-readable title. These
+  are also a prerequisite for listing in the Claude Connectors Directory and the MCPB bundle.
 
 ## [0.9.6] - 2026-08-01
 
