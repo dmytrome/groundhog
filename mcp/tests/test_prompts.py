@@ -15,6 +15,18 @@ async def test_the_audit_prompt_is_advertised_with_its_argument():
     assert [(a.name, a.required) for a in prompt.arguments or []] == [("url", True)]
 
 
+async def test_the_audit_prompt_points_at_threats_rather_than_a_text_diff():
+    # The extractor reflows prose, so a word-level diff of the two fetches reports
+    # rewrapping as though it were a finding. `threats` is the authoritative record.
+    body = (
+        (await build_server().get_prompt("audit_hidden_text", {"url": "https://ex.com/p"}))
+        .messages[0]
+        .content.text.lower()
+    )
+    assert "authoritative" in body
+    assert "not from a text comparison" in body
+
+
 async def test_the_audit_prompt_composes_both_halves_of_the_comparison():
     # The whole point is the diff: a prompt that only asked for one fetch would tell the
     # caller nothing they could not get from `read_url` on its own.
