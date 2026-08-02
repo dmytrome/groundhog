@@ -49,9 +49,20 @@ _TITLE_SIGNS = (
     "are you a robot",
     "checking if the site connection is secure",
 )
+# An interstitial's <title> is purpose-built: the phrase is essentially the whole title
+# ("Just a moment...", "Attention Required! | Cloudflare"), whereas an article that
+# merely contains one carries far more besides ("Just a Moment (2024) — a review of…").
+# Requiring the phrase to be at least half the title separates the two, where a plain
+# length cap does not. A false positive costs that source every one of its passages in
+# `research`, so precision here is worth more than reach.
+_MIN_TITLE_SIGN_RATIO = 0.5
+
+# Matched against the rendered text, so every phrase here must be one a *reader* sees.
+# Cloudflare's "enable javascript and cookies to continue" is deliberately absent: it
+# lives in a <noscript>, which `innerText` never returns with scripting on, so including
+# it would look like coverage while never once matching.
 _BODY_SIGNS = (
     "checking your browser before accessing",
-    "enable javascript and cookies to continue",
     "ddos protection by cloudflare",
     "performance & security by cloudflare",
     "please stand by, while we are checking your browser",
@@ -102,8 +113,11 @@ def _is_challenge(headers: object, title: object, text: object) -> bool:
         for name in headers:
             if isinstance(name, str) and name.lower() == _CHALLENGE_HEADER:
                 return True
-    title_l = title.lower() if isinstance(title, str) else ""
-    if any(sign in title_l for sign in _TITLE_SIGNS):
+    title_l = title.lower().strip() if isinstance(title, str) else ""
+    if any(
+        sign in title_l and len(sign) >= _MIN_TITLE_SIGN_RATIO * len(title_l)
+        for sign in _TITLE_SIGNS
+    ):
         return True
     text_l = text[:_SCAN_CHARS].lower() if isinstance(text, str) else ""
     return any(sign in text_l for sign in _BODY_SIGNS)
@@ -115,18 +129,27 @@ def _is_unsupported(mime_type: object) -> bool:
     essence = mime_type.split(";", 1)[0].strip().lower()
     if not essence or essence.startswith("text/"):
         return False
-    return essence not in _TEXTUAL_TYPES
+    # The structured-suffix convention (RFC 6839): `application/problem+json` and
+    # `application/vnd.api+json` are as readable as `application/json`, and treating
+    # them as binary would drop the source's passages in `research`.
+    return essence not in _TEXTUAL_TYPES and not essence.endswith(("+json", "+xml"))
 
 
 def _from_status(http_status: object) -> RetrievalStatus:
-    if not isinstance(http_status, int):
-        return "ok"
+    if not isinstance(http_status, int) or http_status <= 0:
+        # Fail closed for the same reason a missing response does. `0` is what a
+        # request answered by a service worker, or blocked by the client, reports —
+        # not a verified 200.
+        return "unknown"
     if http_status == 429:
         return "rate_limited"
-    if http_status in (401, 403):
-        return "blocked"
     if http_status in (404, 410):
         return "not_found"
     if 500 <= http_status <= 599:
         return "server_error"
+    if 400 <= http_status <= 499:
+        # 401/403 are the common ones, but 451, 400, 402 and 405 serve error pages
+        # too. Falling through to `ok` would hand that page back as content and, in
+        # `research`, rank its body against the query. `http_status` carries the code.
+        return "blocked"
     return "ok"

@@ -23,6 +23,12 @@ def _response(status: int = 200, mime: str = _HTML, headers: dict | None = None)
         (_response(410), "Gone", "", "not_found"),
         (_response(500), "Error", "", "server_error"),
         (_response(503), "Service Unavailable", "", "server_error"),
+        # Every other 4xx serves an error page too — falling through to `ok` would hand
+        # that page back as content and rank its body in `research`.
+        (_response(451), "Unavailable For Legal Reasons", "blocked in your region", "blocked"),
+        (_response(400), "Bad Request", "", "blocked"),
+        (_response(402), "Payment Required", "", "blocked"),
+        (_response(405), "Method Not Allowed", "", "blocked"),
         # Challenge via a Cloudflare interstitial title, even on a 200.
         (_response(), "Just a moment...", "", "challenge"),
         (_response(), "Attention Required! | Cloudflare", "", "challenge"),
@@ -43,8 +49,22 @@ def _response(status: int = 200, mime: str = _HTML, headers: dict | None = None)
         (_response(mime="text/plain"), "", "notes", "ok"),
         (_response(mime="application/json"), "", "{}", "ok"),
         (_response(mime="image/svg+xml"), "", "", "ok"),
+        # Structured suffixes (RFC 6839) are readable text, not binary.
+        (_response(mime="application/problem+json"), "", "{}", "ok"),
+        (_response(mime="application/vnd.api+json"), "", "{}", "ok"),
+        (_response(mime="application/vnd.github+json"), "", "{}", "ok"),
+        (_response(mime="application/atom+xml"), "", "<feed/>", "ok"),
+        (_response(mime="application/vnd.custom+xml"), "", "<x/>", "ok"),
         # Precision: ordinary prose that merely mentions these words is not a challenge.
         (_response(), "How CAPTCHA works", "An article explaining robot detection.", "ok"),
+        # A real article whose title happens to contain a sign phrase. A false positive
+        # here costs the source every one of its passages in `research`.
+        (
+            _response(),
+            "Just a Moment (2024) — a review of the year's quietest drama",
+            "The film opens on a wide shot of an empty road.",
+            "ok",
+        ),
     ],
 )
 def test_classify(response, title, text, expected):
@@ -61,11 +81,20 @@ def test_a_challenge_is_recognized_even_without_a_response():
     assert classify.classify(None, "Just a moment...", "") == "challenge"
 
 
+def test_a_status_that_was_never_really_reported_is_unknown_not_ok():
+    # `0` is what a service-worker-synthesized or client-blocked request reports, and a
+    # missing/non-numeric status is no status at all. Neither is a verified 200.
+    assert classify.classify({"status": 0, "mimeType": _HTML, "headers": {}}, "", "") == "unknown"
+    assert classify.classify({"mimeType": _HTML, "headers": {}}, "", "") == "unknown"
+    bad_type = {"status": "200", "mimeType": _HTML, "headers": {}}
+    assert classify.classify(bad_type, "", "") == "unknown"
+
+
 def test_inputs_are_hostile_shapes_not_trusted_types():
     # Every field is page/server-influenceable, so a non-dict response, a non-string
-    # title, or a numeric status must degrade rather than raise on the boundary.
+    # title, or a non-dict headers value must degrade rather than raise on the boundary.
     assert classify.classify("not-a-dict", None, 42) == "unknown"
-    assert classify.classify({"status": "200", "mimeType": 12345, "headers": []}, None, 42) == "ok"
+    assert classify.classify({"status": 200, "mimeType": 12345, "headers": []}, None, 42) == "ok"
 
 
 def test_a_body_challenge_phrase_past_the_scan_window_is_not_matched():

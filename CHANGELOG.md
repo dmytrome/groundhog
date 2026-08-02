@@ -25,8 +25,11 @@ All notable changes to this project are documented here. The format is based on
   thrown that article away as `blocked`. Anti-bot flows redirect this way routinely. Both
   directions are pinned by browser-backed tests.
 
-  A response that was never observed is reported as `unknown`, not `ok` — the distinction
-  between "verified fine" and "not verified" is the caller's to make.
+  A response that was never observed — or that never reported a usable status, which is
+  what a service-worker-synthesized or client-blocked request gives — is reported as
+  `unknown`, not `ok`. The distinction between "verified fine" and "not verified" is the
+  caller's to make. Every 4xx that is not already mapped reports `blocked` rather than
+  falling through to `ok`, so a `451` or a `400` error page is not handed back as content.
 - Non-HTML responses (PDFs, images, binaries) are reported as `unsupported_content` rather
   than returning an empty or junk render.
 - `research` carries the same verdict per source as `page_status`, alongside the existing

@@ -387,7 +387,7 @@ class _MainResponse:
     """
 
     def __init__(self) -> None:
-        self._by_request: dict[str, dict] = {}
+        self._by_loader: dict[str, dict] = {}
         self._loader_id: str | None = None
 
     def _on_response(self, params: dict) -> None:
@@ -395,11 +395,16 @@ class _MainResponse:
         if not isinstance(response, dict):
             return
         request_id = params.get("requestId")
-        if isinstance(request_id, str):
-            # Server-side redirect hops arrive as `requestWillBeSent.redirectResponse`,
-            # so exactly one responseReceived fires per requestId — for the final hop.
-            # setdefault only guards a repeat that should not happen.
-            self._by_request.setdefault(request_id, response)
+        # A document's main resource is the request whose id *is* its loaderId; every
+        # subresource it pulls in has a different one. Keeping only the former is both
+        # the lookup key below and the reason this holds one entry per navigation
+        # rather than a header dict for every image and script on an ad-heavy page.
+        if not isinstance(request_id, str) or request_id != params.get("loaderId"):
+            return
+        # Server-side redirect hops arrive as `requestWillBeSent.redirectResponse`, so
+        # exactly one responseReceived fires per requestId — for the final hop.
+        # setdefault only guards a repeat that should not happen.
+        self._by_loader.setdefault(request_id, response)
 
     def _on_frame_navigated(self, params: dict) -> None:
         frame = params.get("frame")
@@ -423,7 +428,7 @@ class _MainResponse:
         """
         loader_id = self._loader_id if self._loader_id is not None else navigated_loader_id
         if isinstance(loader_id, str):
-            return self._by_request.get(loader_id)
+            return self._by_loader.get(loader_id)
         return None
 
 

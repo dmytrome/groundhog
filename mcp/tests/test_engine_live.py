@@ -121,6 +121,21 @@ async def test_a_cloudflare_style_interstitial_is_classified_as_a_challenge():
     assert page.retrieval_status == "challenge"
 
 
+async def test_a_challenge_is_detected_from_the_rendered_body_alone():
+    # The body signals are matched against `innerText` read from the live page after the
+    # hidden-node strip, so a phrase that never reaches innerText is a dead signal that
+    # unit tests — which feed classify() synthetic text — cannot catch. A <noscript>
+    # line is exactly that case, and is deliberately not among the signals.
+    interstitial = (
+        "<html lang='en'><head><title>example.com</title></head><body>"
+        "<noscript>Enable JavaScript and cookies to continue</noscript>"
+        "<p>Checking your browser before accessing example.com</p>"
+        "</body></html>"
+    )
+    page = await _fetch_local(interstitial)
+    assert page.retrieval_status == "challenge"
+
+
 async def test_a_403_is_classified_as_blocked_not_returned_as_content():
     page = await _fetch_local("<html><body><p>Forbidden.</p></body></html>", status=403)
     assert page.http_status == 403
