@@ -102,7 +102,7 @@ Fetches a page and returns clean content plus provenance.
 | `url`        | The URL you asked for                                                                            |
 | `final_url`  | The URL after redirects (re-checked against the SSRF guard). Never rewritten: if the page's own final URL is unusable, the requested URL is reported and a `final_url_suppressed` threat says so |
 | `fetched_at` | UTC ISO-8601 timestamp                                                                           |
-| `status`     | What actually came back: `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when the content is not the page you asked for — so a Cloudflare interstitial, a 403, or a PDF is not read as if it were the real page. `blocked` covers `401`/`403` and every other 4xx that serves an error page (`451`, `400`, `405`…), with the exact code in `http_status`. `unknown` means no response — or no usable status — was observed for the document that was read: it is reported rather than assumed to be fine. The verdict describes the document the text came from, so a page that redirects client-side (meta-refresh, `location.href`) is judged on where it landed, not where it started |
+| `status`     | What actually came back: `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when the content is not the page you asked for — so a Cloudflare interstitial, a 403, or a PDF is not read as if it were the real page. `blocked` covers `401`/`403` and every other 4xx that serves an error page (`451`, `400`, `405`…), with the exact code in `http_status`. `unknown` means no response — or no usable status — was observed for the document that was read: it is reported rather than assumed to be fine. A `challenge` is recognised from vendor **mitigation markers** — a header that exists only to announce it, or a request for an asset only a challenge loads — so it works whatever language the page is in; page wording is a last resort and only counts on a page too empty to be content. See [the limits of block detection](#limits-of-block-detection) The verdict describes the document the text came from, so a page that redirects client-side (meta-refresh, `location.href`) is judged on where it landed, not where it started |
 | `http_status`| The top-level response's HTTP status code, or `null` when it could not be observed              |
 | `truncated`  | Whether the content was cut to fit the token budget                                              |
 | `threats`    | Signals detected: hidden-CSS nodes and invisible-character classes; empty when none found |
@@ -345,6 +345,31 @@ gets no synchronous hook to react to the strip. What that does *not* cover:
   nothing renders at all. In either case the rendered text is abandoned for the stripped
   markup, which is a weaker guarantee than reading real layout — reported as
   `strip_incomplete` rather than left to look like a clean strip.
+
+### Limits of block detection
+
+`status` tells you a fetch returned a challenge or an error page rather than the content
+you asked for. Worth knowing what it does and does not cover.
+
+- **Mitigation markers are a list, and the list is not exhaustive.** A challenge is called
+  with certainty when the response carries a header that exists only to announce it
+  (`cf-mitigated`, `x-vercel-mitigated`, `x-amzn-waf-action`, `x-dd-b`, `x-datadome-cid`) or
+  when the page requests an asset only a challenge loads (Cloudflare's orchestrator,
+  DataDome, PerimeterX, Imperva). A vendor absent from that list, or one that changes its
+  endpoint, falls through to the weaker signals below.
+- **The wording fallback is English, and only fires on an empty page.** A challenge with no
+  recognised marker is caught only if it renders almost no text *and* matches a known
+  phrase. A localized interstitial from an unlisted vendor is the gap — it is why the
+  markers exist, and why they are preferred over any amount of phrase tuning.
+- **A soft block is undetectable here.** A page that returns 200 with a plausible body but
+  the data quietly withheld looks exactly like content. Nothing in this classification sees
+  it; only comparing against what the page *should* contain would.
+- **`unknown` is not `ok`.** It means no response, or no usable status, was observed for the
+  document that was read. It is reported rather than assumed fine, and it is not treated as
+  a block — a source carrying it still contributes passages in `research`.
+- **Vendor *presence* is not a block.** `server: cloudflare`, `cf-ray` and `__cf_bm` are on
+  a large share of the web on every page it serves normally, so they are deliberately not
+  used; nor is `cf_clearance`, which is issued when a challenge is *passed*.
 
 **What the SSRF guard blocks.** Each host is resolved and rejected if it lands in loopback,
 RFC-1918 private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,

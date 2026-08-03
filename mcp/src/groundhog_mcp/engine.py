@@ -436,6 +436,33 @@ class _MainResponse:
         return None
 
 
+class _ChallengeAssets:
+    """Watches for assets only an anti-bot challenge loads.
+
+    A challenge's orchestrator is a request the page makes, so it is visible here even
+    though the collector strips `<script>` out of the markup it returns — and a URL that
+    was really requested is a fact, where the same string inside HTML could be an article
+    about the vendor.
+
+    Each URL is tested as it arrives and only the verdict is kept, so this holds one
+    boolean rather than every URL an ad-heavy page requested.
+    """
+
+    def __init__(self) -> None:
+        self.seen = False
+
+    def _on(self, params: dict) -> None:
+        if self.seen:
+            return
+        request = params.get("request")
+        url = request.get("url") if isinstance(request, dict) else None
+        if classify.is_challenge_asset(url):
+            self.seen = True
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        return [cdp.on_event("Network.requestWillBeSent", session_id, self._on)]
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -493,7 +520,12 @@ class EngineProvider:
         sid = att["sessionId"]
         inflight = _InflightRequests()
         responses = _MainResponse()
-        unsubscribes = inflight.attach(self._cdp, sid) + responses.attach(self._cdp, sid)
+        challenge_assets = _ChallengeAssets()
+        unsubscribes = (
+            inflight.attach(self._cdp, sid)
+            + responses.attach(self._cdp, sid)
+            + challenge_assets.attach(self._cdp, sid)
+        )
         try:
             # Only Page and Network are enabled — never Runtime/Console, which would
             # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
@@ -545,7 +577,9 @@ class EngineProvider:
             # verdict is a trusted enum even though every input is page-influenceable.
             main = responses.main(nav.get("loaderId"))
             http_status = main.get("status") if main else None
-            retrieval_status = classify.classify(main, found.get("title"), found.get("text"))
+            retrieval_status = classify.classify(
+                main, challenge_assets.seen, found.get("title"), found.get("text")
+            )
             # `html`/`text`/`title` come out of the collector's own evaluation rather
             # than from separate round trips: see the note in `detect_js.py`.
             return RenderedPage(

@@ -25,6 +25,31 @@ All notable changes to this project are documented here. The format is based on
   thrown that article away as `blocked`. Anti-bot flows redirect this way routinely. Both
   directions are pinned by browser-backed tests.
 
+  Challenge detection is keyed on **vendor mitigation markers, not on wording**. A
+  response header that exists only to announce mitigation (`cf-mitigated`, which
+  Cloudflare documents as present on every challenge type, plus `x-vercel-mitigated`,
+  `x-amzn-waf-action`, `x-dd-b`, `x-datadome-cid`), or a request for an asset only a
+  challenge loads (a Cloudflare challenge orchestrator, DataDome's captcha delivery,
+  PerimeterX, Imperva) is decisive on its own. Both are language-independent, so a
+  challenge served in German is caught as readily as one in English — which no list of
+  English phrases can do. The asset check runs against the URLs the page really
+  requested rather than against its markup, because the same string inside HTML could
+  be an article *about* the vendor, and because `<script>` is stripped from the markup
+  that is returned.
+
+  Wording is now the last tier and never decides alone: it must be corroborated by the
+  page rendering too little text to be content. That is what an interstitial always is,
+  in any language, and it is what an article whose *title* happens to read "Just a
+  Moment (2024)" never is — so the false positive that would have cost that source
+  every one of its passages is closed structurally rather than by tuning a threshold.
+
+  Signals deliberately **not** used: `server: cloudflare`, `cf-ray` and `__cf_bm` mean
+  only that a site sits behind a CDN, which is true of much of the web on every page it
+  serves normally — a captured LinkedIn `999` block carries all three while having
+  nothing to do with Cloudflare. `cf_clearance` is excluded because it is issued when a
+  challenge is *passed*. Turnstile and reCAPTCHA widget URLs are excluded because
+  ordinary login and contact forms embed them.
+
   A response that was never observed — or that never reported a usable status, which is
   what a service-worker-synthesized or client-blocked request gives — is reported as
   `unknown`, not `ok`. The distinction between "verified fine" and "not verified" is the

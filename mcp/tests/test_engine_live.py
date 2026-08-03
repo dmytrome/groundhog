@@ -136,6 +136,46 @@ async def test_a_challenge_is_detected_from_the_rendered_body_alone():
     assert page.retrieval_status == "challenge"
 
 
+async def test_a_mitigation_header_is_honored_whatever_language_the_page_is_in():
+    # The reason for keying on headers rather than wording: this page carries no phrase
+    # any list of ours contains, and is not even in English. `cf-mitigated` still calls it.
+    page = await _fetch_local(
+        "<html lang='de'><head><title>Sicherheitsprüfung</title></head><body>"
+        "<p>Wir überprüfen die Sicherheit Ihrer Verbindung.</p></body></html>",
+        extra_headers={"cf-mitigated": "challenge"},
+    )
+    assert page.retrieval_status == "challenge"
+
+
+async def test_a_challenge_asset_request_is_honored_whatever_the_page_says():
+    # The orchestrator is a real subresource request, so it is visible even though the
+    # collector strips <script> out of the markup it returns. The page's own text is
+    # ordinary content here, and carries no challenge wording at all.
+    body = (
+        "<html lang='en'><head><title>example.com</title></head><body>"
+        "<p>The board approved a dividend of forty cents per share this quarter.</p>"
+        "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1'></script>"
+        "</body></html>"
+    )
+    page = await _fetch_local(body)
+    assert page.retrieval_status == "challenge"
+
+
+async def test_an_article_whose_title_mentions_a_challenge_phrase_is_still_content():
+    # The false positive the redesign had to kill: this would have cost the source every
+    # one of its passages in `research`. It has a body; an interstitial does not.
+    article = (
+        "<html lang='en'><head><title>Just a Moment (2024) — a review</title></head>"
+        "<body><article><h1>Just a Moment</h1>"
+        + "<p>The film opens on a wide shot of an empty road at dawn, holding "
+        "the frame long past the point of comfort. It is a patient picture.</p>" * 6
+        + "</article></body></html>"
+    )
+    page = await _fetch_local(article)
+    assert page.retrieval_status == "ok"
+    assert "empty road" in page.text
+
+
 async def test_a_403_is_classified_as_blocked_not_returned_as_content():
     page = await _fetch_local("<html><body><p>Forbidden.</p></body></html>", status=403)
     assert page.http_status == 403
