@@ -8,7 +8,10 @@
 #
 # Built on the published browser image rather than repeating its Chrome/font/Xvfb setup,
 # so stealth conformance stays defined in exactly one place.
-ARG BROWSER_IMAGE=ghcr.io/dmytrome/groundhog:latest
+# Pinned, not `latest`: a registry that builds this file pins the *source* to a commit,
+# so a floating base would make that build unreproducible and could pair a server with a
+# browser it was never tested against. Bumped with the version at release.
+ARG BROWSER_IMAGE=ghcr.io/dmytrome/groundhog:0.10.0
 FROM ${BROWSER_IMAGE}
 
 # uv fetches the interpreter itself, so the image does not inherit whatever Python the
@@ -19,7 +22,7 @@ ARG PYTHON_VERSION=3.12
 # Resolved by uv, the same tool the project is developed and tested with. Debian's pip
 # resolved a tree without `lxml_html_clean`, which trafilatura needs and imports lazily
 # — so the server built, started, and only then died on the first extraction.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 
 ENV VIRTUAL_ENV=/opt/groundhog
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
