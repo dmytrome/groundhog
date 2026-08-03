@@ -4,7 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-08-03
+
+A minor bump rather than a patch: `read_url` and `research` results carry new fields, and
+`research` no longer ranks a challenge or error page's body into its passages — a change in
+what an existing call returns, even though it is the bug being fixed. Still 0.x deliberately:
+`blocked` currently means an SSRF refusal in `research`'s `status` and an HTTP 4xx in
+`page_status`, which wants renaming, and the MCP SDK v2 migration is still ahead. Neither is
+a change worth freezing behind a 1.0 compatibility promise yet.
 
 ### Added
 
