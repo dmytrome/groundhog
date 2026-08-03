@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import tldextract
 
-from . import http, safety, sanitize
+from . import classify, http, safety, sanitize
 from .cdp import CDPClient, CDPError
 from .config import Config, load_config
 from .detect_js import DETECT_AND_COLLECT
@@ -246,6 +246,14 @@ class RenderedPage:
     # enumerated in `detect_js.py`, which is where they are detected. Same no-default
     # rule as `isolated`.
     strip_incomplete: bool
+    # The top-level response's HTTP status, or None if it was not observed. Not
+    # page-authored free text — Chrome parses the status line into an int — so it is
+    # bounds-checked here rather than run through the string sanitizer.
+    http_status: int | None
+    # What the fetch actually returned, per `classify`: real content, an anti-bot
+    # interstitial, a hard block, a non-text body. Computed by our own code from the
+    # response and the render, so it is a trusted enum, never a page-authored string.
+    retrieval_status: classify.RetrievalStatus
 
     def __post_init__(self) -> None:
         # A URL is a citation, so it is never rewritten: if cleaning would change
@@ -275,6 +283,13 @@ class RenderedPage:
             "lang": sanitize.clean_field(raw_meta.get("lang"), sanitize.MAX_LANG_CHARS),
             "canonical": safety.safe_url(raw_meta.get("canonical")),
         }
+        # A CDP status is already an int, but a construction site (or a test) can pass
+        # anything; fail closed to None rather than surface a non-numeric status. `0` is
+        # normalized away too — it is what a service-worker-synthesized or client-blocked
+        # request reports, and returning it would hand a caller a value that is not a
+        # status while `retrieval_status` already says `unknown`.
+        status = self.http_status
+        self.http_status = status if isinstance(status, int) and status > 0 else None
 
 
 def _as_text(value: object) -> str:
@@ -356,6 +371,98 @@ class _InflightRequests:
         ]
 
 
+class _MainResponse:
+    """Captures the top-level response's status, MIME type and headers for `classify`.
+
+    These are what let a caller tell a Cloudflare interstitial, a 403, or a PDF from
+    the real page, instead of a block being returned as if it were content. CDP sets
+    the main resource's requestId equal to its loaderId — for an HTML page, a PDF, or
+    a top-level image alike — so a lookup by loaderId picks the main document out of
+    every request the page made, without depending on its resource type.
+
+    The loaderId tracked is the *current* main frame's, not the one `Page.navigate`
+    returned. A meta-refresh or a JS `location.href` replaces the document after
+    navigate returns, and the text, title and final URL are read from whatever is
+    current at extraction time. Keying on the navigation's own loaderId would describe
+    the page that was left behind: a 200 that redirects to a 404 would report `ok` and
+    hand back the 404 body as content, and a 403 interstitial that redirects to the
+    real article would throw that article away as `blocked`. Anti-bot flows redirect
+    client-side routinely, so this is the common path rather than a corner.
+    """
+
+    def __init__(self) -> None:
+        self._by_loader: dict[str, dict] = {}
+        self._loader_id: str | None = None
+
+    def _on_response(self, params: dict) -> None:
+        response = params.get("response")
+        if not isinstance(response, dict):
+            return
+        request_id = params.get("requestId")
+        # A document's main resource is the request whose id *is* its loaderId; every
+        # subresource it pulls in has a different one. Keeping only the former is both
+        # the lookup key below and the reason this holds one entry per navigation
+        # rather than a header dict for every image and script on an ad-heavy page.
+        if not isinstance(request_id, str) or request_id != params.get("loaderId"):
+            return
+        # Server-side redirect hops arrive as `requestWillBeSent.redirectResponse`, so
+        # exactly one responseReceived fires per requestId — for the final hop.
+        # setdefault only guards a repeat that should not happen.
+        self._by_loader.setdefault(request_id, response)
+
+    def _on_frame_navigated(self, params: dict) -> None:
+        frame = params.get("frame")
+        if not isinstance(frame, dict) or frame.get("parentId"):
+            return  # a sub-frame's document is not the one being read
+        loader_id = frame.get("loaderId")
+        if isinstance(loader_id, str):
+            self._loader_id = loader_id
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        return [
+            cdp.on_event("Network.responseReceived", session_id, self._on_response),
+            cdp.on_event("Page.frameNavigated", session_id, self._on_frame_navigated),
+        ]
+
+    def main(self, navigated_loader_id: object) -> dict | None:
+        """The response for the document current now, or None if it was not observed.
+
+        None rather than a best guess: an unobserved response is reported as `unknown`
+        rather than allowed to read as a verified 200.
+        """
+        loader_id = self._loader_id if self._loader_id is not None else navigated_loader_id
+        if isinstance(loader_id, str):
+            return self._by_loader.get(loader_id)
+        return None
+
+
+class _ChallengeAssets:
+    """Watches for assets only an anti-bot challenge loads.
+
+    A challenge's orchestrator is a request the page makes, so it is visible here even
+    though the collector strips `<script>` out of the markup it returns — and a URL that
+    was really requested is a fact, where the same string inside HTML could be an article
+    about the vendor.
+
+    Each URL is tested as it arrives and only the verdict is kept, so this holds one
+    boolean rather than every URL an ad-heavy page requested.
+    """
+
+    def __init__(self) -> None:
+        self.seen = False
+
+    def _on(self, params: dict) -> None:
+        if self.seen:
+            return
+        request = params.get("request")
+        url = request.get("url") if isinstance(request, dict) else None
+        if classify.is_challenge_asset(url):
+            self.seen = True
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        return [cdp.on_event("Network.requestWillBeSent", session_id, self._on)]
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -412,7 +519,13 @@ class EngineProvider:
         att = await self._cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
         sid = att["sessionId"]
         inflight = _InflightRequests()
-        unsubscribes = inflight.attach(self._cdp, sid)
+        responses = _MainResponse()
+        challenge_assets = _ChallengeAssets()
+        unsubscribes = (
+            inflight.attach(self._cdp, sid)
+            + responses.attach(self._cdp, sid)
+            + challenge_assets.attach(self._cdp, sid)
+        )
         try:
             # Only Page and Network are enabled — never Runtime/Console, which would
             # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
@@ -459,6 +572,14 @@ class EngineProvider:
             # `value` at all arrives as None, so index it defensively rather than
             # letting a TypeError surface as the fetch's error message.
             found = collected if isinstance(collected, dict) else {}
+            # The top-level response tells a block or a non-text body from real content.
+            # Classified from our own code (status/MIME/headers + the render), so the
+            # verdict is a trusted enum even though every input is page-influenceable.
+            main = responses.main(nav.get("loaderId"))
+            http_status = main.get("status") if main else None
+            retrieval_status = classify.classify(
+                main, challenge_assets.seen, found.get("title"), found.get("text")
+            )
             # `html`/`text`/`title` come out of the collector's own evaluation rather
             # than from separate round trips: see the note in `detect_js.py`.
             return RenderedPage(
@@ -470,6 +591,8 @@ class EngineProvider:
                 # Any non-false reply degrades to "say the strip was partial", so a
                 # page cannot quiet the disclosure by returning a surprising shape.
                 strip_incomplete=bool(found.get("stripIncomplete")),
+                http_status=http_status,
+                retrieval_status=retrieval_status,
                 hidden_spans=found.get("hidden") or [],
                 meta={
                     "meta": found.get("meta") or {},

@@ -4,6 +4,75 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-03
+
+A minor bump rather than a patch: `read_url` and `research` results carry new fields, and
+`research` no longer ranks a challenge or error page's body into its passages — a change in
+what an existing call returns, even though it is the bug being fixed. Still 0.x deliberately:
+`blocked` currently means an SSRF refusal in `research`'s `status` and an HTTP 4xx in
+`page_status`, which wants renaming, and the MCP SDK v2 migration is still ahead. Neither is
+a change worth freezing behind a 1.0 compatibility promise yet.
+
+### Added
+
+- `read_url` now reports what actually came back, not only the extracted text: a `status`
+  (`ok`, `challenge`, `blocked`, `rate_limited`, `not_found`, `server_error`,
+  `unsupported_content`, `unknown`) plus the raw `http_status`. A Cloudflare interstitial, a
+  403, or a PDF is no longer returned as if it were the page — the caller can branch on it
+  instead. The top-level response is read from CDP's `Network.responseReceived` (status, MIME
+  type, and the `cf-mitigated` challenge header); classification is a pure function with its
+  own unit suite, and the real capture is covered by the browser-backed tests.
+
+  The verdict describes the document the text was actually read from. A page that redirects
+  client-side — meta-refresh, or `location.href` from a script — replaces the document after
+  the navigation returns, so the response is looked up by the *current* main frame's loader
+  rather than the one `Page.navigate` reported. Keying on the navigation would have described
+  the page that was left behind: a 200 redirecting to a 404 would have handed back the 404's
+  body while claiming `ok`, and a 403 interstitial redirecting to the real article would have
+  thrown that article away as `blocked`. Anti-bot flows redirect this way routinely. Both
+  directions are pinned by browser-backed tests.
+
+  Challenge detection is keyed on **vendor mitigation markers, not on wording**. A
+  response header that exists only to announce mitigation (`cf-mitigated`, which
+  Cloudflare documents as present on every challenge type, plus `x-vercel-mitigated`,
+  `x-amzn-waf-action`, `x-dd-b`, `x-datadome-cid`), or a request for an asset only a
+  challenge loads (a Cloudflare challenge orchestrator, DataDome's captcha delivery,
+  PerimeterX, Imperva) is decisive on its own. Both are language-independent, so a
+  challenge served in German is caught as readily as one in English — which no list of
+  English phrases can do. The asset check runs against the URLs the page really
+  requested rather than against its markup, because the same string inside HTML could
+  be an article *about* the vendor, and because `<script>` is stripped from the markup
+  that is returned.
+
+  Wording is now the last tier and never decides alone: it must be corroborated by the
+  page rendering too little text to be content. That is what an interstitial always is,
+  in any language, and it is what an article whose *title* happens to read "Just a
+  Moment (2024)" never is — so the false positive that would have cost that source
+  every one of its passages is closed structurally rather than by tuning a threshold.
+
+  Signals deliberately **not** used: `server: cloudflare`, `cf-ray` and `__cf_bm` mean
+  only that a site sits behind a CDN, which is true of much of the web on every page it
+  serves normally — a captured LinkedIn `999` block carries all three while having
+  nothing to do with Cloudflare. `cf_clearance` is excluded because it is issued when a
+  challenge is *passed*. Turnstile and reCAPTCHA widget URLs are excluded because
+  ordinary login and contact forms embed them.
+
+  A response that was never observed — or that never reported a usable status, which is
+  what a service-worker-synthesized or client-blocked request gives — is reported as
+  `unknown`, not `ok`. The distinction between "verified fine" and "not verified" is the
+  caller's to make. Every 4xx that is not already mapped reports `blocked` rather than
+  falling through to `ok`, so a `451` or a `400` error page is not handed back as content.
+- Non-HTML responses (PDFs, images, binaries) are reported as `unsupported_content` rather
+  than returning an empty or junk render.
+- `research` carries the same verdict per source as `page_status`, alongside the existing
+  fetch-outcome `status`, so a source that loaded but was a challenge or a non-HTML body is
+  visible rather than passing as `ok`. Such a source now contributes **no passages**: an
+  interstitial's body would otherwise be ranked against the query and compete for the caller's
+  token budget with real content, and a `Passage` carries no status of its own to notice it by.
+- MCP tool annotations on all four tools: `readOnlyHint` — so a client can auto-approve reads
+  without a per-call confirmation — and `openWorldHint`, plus a human-readable title. These
+  are also a prerequisite for listing in the Claude Connectors Directory and the MCPB bundle.
+
 ## [0.9.6] - 2026-08-01
 
 ### Added

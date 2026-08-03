@@ -4,6 +4,7 @@ from typing import Annotated, Literal, TypedDict
 from pydantic import Field
 
 from .. import (
+    classify,
     config,
     document,
     engine,
@@ -41,7 +42,11 @@ class Passage(TypedDict):
 class Source(TypedDict):
     url: str
     title: str
+    # Whether the fetch itself succeeded, failed the SSRF guard, timed out, or errored.
     status: SourceStatus
+    # What that fetch returned when it succeeded (a challenge page, a non-text body, …),
+    # per `classify`; None when the fetch never produced a page.
+    page_status: classify.RetrievalStatus | None
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance | None
     error: str | None
@@ -177,6 +182,7 @@ async def research(
                     "url": hit["url"],
                     "title": hit["title"],
                     "status": status,
+                    "page_status": None,
                     "threats": [],
                     "provenance": None,
                     "error": detail,
@@ -188,11 +194,18 @@ async def research(
                 "url": outcome.final_url,
                 "title": outcome.title,
                 "status": "ok",
+                "page_status": outcome.status,
                 "threats": outcome.threats,
                 "provenance": outcome.provenance,
                 "error": None,
             }
         )
+        if outcome.status in classify.NOT_CONTENT:
+            # A challenge, a 404 or a non-HTML body is not this source's content, and
+            # ranking it would let "Checking your browser before accessing…" compete
+            # for the caller's token budget against real passages. The source still
+            # appears above, carrying the `page_status` that says why it contributed none.
+            continue
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the

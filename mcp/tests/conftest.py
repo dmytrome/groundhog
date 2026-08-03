@@ -1,6 +1,6 @@
 import pytest
 
-from groundhog_mcp import engine
+from groundhog_mcp import classify, engine
 from groundhog_mcp.engine import HiddenSpan, PageMeta, RenderedPage
 
 # No <meta name="author"> here — the engine's JS collector provides it via engine_meta,
@@ -42,6 +42,8 @@ def make_page():
         meta: PageMeta | None = None,
         isolated: bool = True,
         strip_incomplete: bool = False,
+        http_status: int | None = 200,
+        retrieval_status: classify.RetrievalStatus = "ok",
     ) -> RenderedPage:
         return RenderedPage(
             html=_PAGE_HTML,
@@ -52,6 +54,8 @@ def make_page():
             meta=meta or _DEFAULT_META,
             isolated=isolated,
             strip_incomplete=strip_incomplete,
+            http_status=http_status,
+            retrieval_status=retrieval_status,
         )
 
     return _make
