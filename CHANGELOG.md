@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-08-04
+
+### Fixed
+
+- The MCP handshake reported the SDK's version as Groundhog's, so a client asking what it
+  had connected to was told `v1.29.0` — the version of `mcp`. The low-level server falls
+  back to `pkg_version("mcp")` when its own version is unset, and `FastMCP` takes no
+  version argument, so the fallback always won. It is now read from installed package
+  metadata, which cannot drift from what was released.
+
+  Found by watching an agent install the server from `README.md` and `llms-install.md`
+  alone — the shape of bug that reading the code does not surface.
+
 ## [0.10.0] - 2026-08-03
 
 A minor bump rather than a patch: `read_url` and `research` results carry new fields, and
