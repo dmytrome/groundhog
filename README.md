@@ -405,6 +405,42 @@ proxies work on many mid-tier targets, but it does not beat sophisticated commer
 anti-bot systems that gate on IP reputation, TLS/HTTP2 fingerprints, and behavioral
 analysis. Use it for legitimate, authorized automation and testing.
 
+## Privacy Policy
+
+Groundhog is self-hosted software, not a service. It runs on your machine, and the project
+operates no servers that it talks to.
+
+**What is collected: nothing.** There is no telemetry, no analytics, no crash reporting and
+no licence check. The maintainers receive no data about you, the URLs you fetch, or the
+content you read. There is no account to create.
+
+**How data is used and stored.** Pages are fetched by a browser running on your own machine
+and returned to the MCP client that asked for them. The server keeps no database, writes no
+logs to disk, and persists nothing between calls — with one exception worth knowing: fetches
+share the browser container's profile, so cookies and storage set by one fetched page remain
+in that container and are visible to later fetches. Removing the container discards them
+(`docker rm -f groundhog-browser`), and the container is removed automatically if you started
+it with `--rm`.
+
+**Third parties your traffic reaches.** Only those you direct it to, plus two you should know
+about:
+
+- **The sites you fetch**, which see the request as an ordinary browser visit from your IP —
+  or from your proxy's exit IP if `PROXY` is set.
+- **The search backend.** With `SEARXNG_URL` set, your queries go to the SearXNG instance you
+  chose. Without it, `search` renders a public search engine's results page through the
+  browser, so that engine sees the query.
+- **An IP-geolocation lookup, only when `PROXY` is set.** The container asks an external
+  service for the proxy exit IP's country so it can align the browser's timezone and locale.
+  That request carries the exit IP and nothing else. It does not happen without a proxy.
+- **PyPI and GHCR at install time**, to download the package and browser image.
+
+**Retention.** Nothing is retained by the project. On your machine, the browser container
+holds cookies and cache for its lifetime; deleting the container deletes them.
+
+**Contact.** Questions and security reports: [`SECURITY.md`](SECURITY.md), or open an issue at
+<https://github.com/dmytrome/groundhog/issues>.
+
 ## License
 
 [MIT](LICENSE)
