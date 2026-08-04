@@ -1,0 +1,154 @@
+{
+  "author": "dmytrome",
+  "authorUrl": "https://github.com/dmytrome",
+  "category": "search",
+  "description": "Web search, read and research through a real stealth-patched Chrome. Text hidden from human readers is stripped before the model reads it and reported, every source carries a SHA-256 provenance receipt, and the SSRF guard is re-checked after redirects.",
+  "identifier": "dmytrome-groundhog",
+  "name": "Groundhog",
+  "prompts": [
+    {
+      "description": "Show what a page hides from human readers, and what it would have fed a model.",
+      "name": "audit_hidden_text"
+    }
+  ],
+  "tags": [
+    "search",
+    "web-scraping",
+    "browser-automation",
+    "prompt-injection",
+    "security"
+  ],
+  "tools": [
+    {
+      "description": "Fetch one web page through the stealth browser and return clean, grounded content with provenance. Hidden text injected for models but invisible to humans is stripped by default and reported in `threats`. Use this to ground answers in live web content, including sites that block plain fetchers. Reads a URL you already have: use `search` to find URLs, or `research` to search and read in one call. Fetches are rate limited per domain (5s apart by default), so several pages from one site are not instant.",
+      "inputSchema": {
+        "properties": {
+          "format": {
+            "default": "markdown",
+            "description": "'markdown' extracts the article; 'text' returns the page's rendered text.",
+            "enum": [
+              "markdown",
+              "text"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "include_hidden": {
+            "default": false,
+            "description": "Keep text that is invisible to a human reader. It is reported in `threats` either way; this only controls whether it stays in the content.",
+            "title": "Include Hidden",
+            "type": "boolean"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Token budget for the content. Omit to use the server's GROUNDHOG_MAX_TOKENS (20000 by default). Must be positive.",
+            "title": "Max Tokens"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When set, `matches` carries the passages most relevant to it, each with its heading and offset for citation.",
+            "title": "Query"
+          },
+          "url": {
+            "description": "Absolute http(s) URL. Private and loopback addresses are refused.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "read_urlArguments",
+        "type": "object"
+      },
+      "name": "read_url"
+    },
+    {
+      "description": "Search the web and return ranked passages drawn from several sources. One call does what `search` + repeated `read_url` would: finds pages, reads them through the stealth browser, and returns the passages most relevant to `query` \u2014 each attributed to its source, with that source's provenance receipt and any stripped injection payloads. A source that fails is reported in `sources` rather than failing the whole call. Prefer `read_url` when you already have the URL, and `search` when you only want links. This reads `max_sources` pages, rate limited per domain, so it is the slowest of the three and the one to avoid for a single known page.",
+      "inputSchema": {
+        "properties": {
+          "max_sources": {
+            "default": 5,
+            "description": "How many pages to read. Values outside 1-10 are clamped rather than rejected. Each source is a full page fetch, so this is the main cost and latency control.",
+            "title": "Max Sources",
+            "type": "integer"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Token budget for the returned passages. Omit to use the server's GROUNDHOG_MAX_TOKENS (20000 by default). Must be positive.",
+            "title": "Max Tokens"
+          },
+          "query": {
+            "description": "The question to research. Passages are ranked against it.",
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "researchArguments",
+        "type": "object"
+      },
+      "name": "research"
+    },
+    {
+      "description": "Search the web and return ranked hits (title, url, snippet, engine). Not for reading: it returns links, never page content. Use `read_url` for one known URL, or `research` when you want the answer rather than the links. Use this to find pages, then pass the URLs you want to `read_url` for safe, grounded content. Results come from a self-hosted SearXNG instance when `SEARXNG_URL` is set, otherwise from a search page rendered through the stealth browser. Hits are links only \u2014 nothing is fetched until you ask.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "default": 10,
+            "description": "How many hits to return. Values outside 1-25 are clamped rather than rejected.",
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "description": "What to search for. Must not be empty.",
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "searchArguments",
+        "type": "object"
+      },
+      "name": "search"
+    },
+    {
+      "description": "Check whether Groundhog can reach the stealth browser. Call this to diagnose setup before fetching: if `browser_reachable` is false, follow `hint` to start the browser, then retry.",
+      "inputSchema": {
+        "properties": {},
+        "title": "statusArguments",
+        "type": "object"
+      },
+      "name": "status"
+    }
+  ],
+  "version": "0.10.0"
+}
