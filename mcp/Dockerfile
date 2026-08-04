@@ -11,7 +11,7 @@
 # Pinned, not `latest`: a registry that builds this file pins the *source* to a commit,
 # so a floating base would make that build unreproducible and could pair a server with a
 # browser it was never tested against. Bumped with the version at release.
-ARG BROWSER_IMAGE=ghcr.io/dmytrome/groundhog:0.10.0
+ARG BROWSER_IMAGE=ghcr.io/dmytrome/groundhog:0.10.1
 FROM ${BROWSER_IMAGE}
 
 # uv fetches the interpreter itself, so the image does not inherit whatever Python the
