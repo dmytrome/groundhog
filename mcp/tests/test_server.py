@@ -1,4 +1,18 @@
+from importlib.metadata import version
+
 from groundhog_mcp import server
+
+
+async def test_the_handshake_reports_our_version_not_the_sdks():
+    # The low-level server falls back to `pkg_version("mcp")` when its own version is
+    # unset, and FastMCP takes no version argument — so a client asking who it is
+    # connected to was told the SDK's version. Asserted through the initialization
+    # options a client actually receives, not the attribute we set.
+    ours = version("groundhog-mcp")
+    options = server.build_server()._mcp_server.create_initialization_options()
+    assert options.server_name == "groundhog"
+    assert options.server_version == ours
+    assert options.server_version != version("mcp")
 
 
 async def test_every_tool_is_annotated_read_only():

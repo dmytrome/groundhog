@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -37,6 +38,12 @@ def _register_read_only(
 
 def build_server() -> FastMCP:
     mcp = FastMCP("groundhog", lifespan=_lifespan)
+    # Without this the handshake reports the *SDK's* version as ours: the low-level
+    # server falls back to `pkg_version("mcp")` when its own version is unset, and
+    # FastMCP has no constructor argument for it. Clients that show a server version
+    # were displaying the version of `mcp`. Read from installed metadata so it cannot
+    # drift from the released package.
+    mcp._mcp_server.version = version("groundhog-mcp")
     # All four tools are read-only. The three that fetch reach arbitrary external hosts
     # (openWorldHint); `status` only probes the local browser. readOnlyHint is what lets
     # a client auto-approve these without a per-call confirmation, and titles/annotations
