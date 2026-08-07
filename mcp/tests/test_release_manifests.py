@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-# Each of these manifests is consumed by a different registry (MCP Registry, Gemini CLI,
-# LobeHub) and none of them is exercised by anything else in the suite, so a forgotten
-# bump stays invisible until a user is served a stale version. 0.10.1 shipped with
+# Each of these manifests is consumed by a different registry — one entry per listing, so
+# add a line here whenever a new one is added — and none is exercised by anything else in
+# the suite, so a forgotten bump stays invisible until a user is served a stale version.
+# 0.10.1 shipped with
 # gemini-extension.json still on 0.10.0 for exactly that reason. `release.yml` runs
 # pytest before it publishes, which makes this the point where the drift can still be
 # caught.
