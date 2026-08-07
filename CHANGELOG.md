@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-07
+
+A minor bump rather than a patch: what `threats[]` reports changes for every page that
+carries a `<script>` or a `<style>`, which is nearly all of them.
+
+### Changed
+
+- `<script>` and `<style>` source is no longer reported as hidden text. Both compute to
+  `display:none`, so every one of them was flagged and its own source became the excerpt —
+  text that reaches neither `innerText` nor the extracted Markdown. The findings were never
+  a leak, but they spent the 50-threat cap and handed the page one more attacker-chosen
+  string to put in front of the model. Inline SVG icon sprites were the worst case, each
+  reporting its `<style>` block.
+
+  They are still flagged and still stripped; only the report entry is skipped, and only
+  while the element does not render. Two cases measured in Chrome 150 that a bare tag test
+  gets wrong, and which stay reported: `script{display:block}` really does put the source
+  on the page as text, so a page can render it and then hide it like any other text; and
+  SVG-namespaced tags come back `display:inline` with no box, so they are caught as
+  `zero-size` rather than `display:none`.
+
+### Fixed
+
+- `gemini-extension.json` was left on `0.10.0` by the previous release, so the Gemini CLI
+  gallery advertised a version that disagreed with the one the server reports in the
+  handshake. Every manifest version, the lockfile entry, the Dockerfile image pin and the
+  changelog entry are now asserted against `pyproject.toml` by the test suite, which the
+  release job runs before it publishes — so this fails the release instead of reaching a
+  registry.
+
+### Added
+
+- `.cursor-plugin/plugin.json`, for the first-party Cursor Marketplace. That is a separate
+  index from `cursor.directory`, and the in-IDE Plugins panel searches it.
+
 ## [0.10.1] - 2026-08-04
 
 ### Fixed
@@ -676,6 +711,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.11.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.11.0
 [0.10.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.1
 [0.10.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.0
 [0.9.6]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.6
