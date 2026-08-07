@@ -322,6 +322,62 @@ async def test_detect_and_collect_finds_advanced_hiding_techniques():
     assert "COMMENT PAYLOAD" not in page.html
 
 
+MACHINE_TAG_HTML = """<html><body>
+<p>Visible paragraph content here for baseline.</p>
+<script type="application/ld+json">{"@type":"Article","name":"SCRIPT SOURCE MARKER"}</script>
+<style>.x::after{content:"STYLE SOURCE MARKER"}</style>
+<svg><script>var svgPayload = "SVG SCRIPT SOURCE MARKER";</script></svg>
+<div style="display:none">GENUINELY HIDDEN PAYLOAD MARKER</div>
+</body></html>"""
+
+# `script{display:block}` really does render the source as page text — verified against
+# Chrome 150 by fetching this with `strip_hidden=False` and finding the payload in
+# `page.text`. So a page can render script source and then hide it like any other text,
+# which makes it a genuine finding rather than the machine-tag noise above.
+RENDERED_SOURCE_HTML = """<html><body>
+<p>Visible paragraph content here for baseline.</p>
+<style>script{display:block;color:#fff;background:#fff}</style>
+<script>var payload = "RENDERED THEN HIDDEN SCRIPT PAYLOAD";</script>
+</body></html>"""
+
+
+async def test_script_and_style_source_is_not_reported_as_hidden_text():
+    # Their computed style is `display:none`, so the walk flagged every one of them and
+    # made its source an excerpt in the report — text that reaches neither `innerText`
+    # nor the extracted markdown. The findings were noise that spent the 50-threat cap
+    # and handed the page another attacker-chosen string to put in front of the model.
+    page = await _fetch_local(MACHINE_TAG_HTML)
+    reported = " ".join(h["text"] for h in page.hidden_spans)
+    assert "SCRIPT SOURCE MARKER" not in reported
+    assert "STYLE SOURCE MARKER" not in reported
+    # An SVG-namespaced <script> keeps its authored lowercase name, so a `tagName`
+    # comparison would let this one back through as the same noise.
+    assert "SVG SCRIPT SOURCE MARKER" not in reported
+
+    # Dropping them from the report must not stop them being stripped: whatever the
+    # extractor does with a <script>, the contract is that markup we flagged as
+    # non-content never reaches the caller's html.
+    assert "SCRIPT SOURCE MARKER" not in page.html
+    assert "STYLE SOURCE MARKER" not in page.html
+
+    # And the skip must stay narrow — ordinary hidden text on the same page still counts.
+    assert any("GENUINELY HIDDEN PAYLOAD MARKER" in h["text"] for h in page.hidden_spans)
+    assert "GENUINELY HIDDEN PAYLOAD MARKER" not in page.html
+    assert "Visible paragraph content here" in page.html
+
+
+async def test_script_source_the_page_renders_and_then_hides_is_still_reported():
+    # Skipping on the tag alone would drop this: the payload is rendered text that the
+    # page hid white-on-white, which is exactly what the detector exists to catch. The
+    # skip is gated on the element still being display:none so this case survives it.
+    page = await _fetch_local(RENDERED_SOURCE_HTML)
+    reported = {h["text"]: h["reason"] for h in page.hidden_spans}
+    hit = next((r for t, r in reported.items() if "RENDERED THEN HIDDEN" in t), None)
+    assert hit == "color-contrast<1.15", reported
+    assert "RENDERED THEN HIDDEN SCRIPT PAYLOAD" not in page.html
+    assert "RENDERED THEN HIDDEN SCRIPT PAYLOAD" not in page.text
+
+
 SPA_HTML = """<html><body><div id="root"></div>
 <script>
 setTimeout(function () {

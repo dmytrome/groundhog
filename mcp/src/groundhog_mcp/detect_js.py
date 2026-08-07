@@ -12,6 +12,7 @@ DETECT_AND_COLLECT = r"""
   // Ancestors walked to find an effective background color; bounded so an adversarial,
   // deeply-nested page can't turn this into an O(elements x depth) style-recalc cost.
   const MAX_BG_ANCESTORS = 16;
+  const SVG_NS = 'http://www.w3.org/2000/svg';
   const hidden = [];
   // Position among *all* child nodes, from documentElement down. `importNode(el, true)`
   // copies the tree node-for-node, so the same walk locates the node in the copy.
@@ -224,7 +225,29 @@ DETECT_AND_COLLECT = r"""
       if (flagged.some((p) => p.contains(el))) continue;
       const reason = isHidden(el);
       if (reason) {
-        hidden.push({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
+        // `<script>` and `<style>` compute to `display:none` by definition, so the walk
+        // flagged every one of them and made its source an excerpt in the report. That
+        // text reaches neither `innerText` nor the extracted markdown, so the finding was
+        // never a leak — but it spent the threat cap and handed the page one more
+        // attacker-chosen string to put in front of the model. Only the reporting is
+        // skipped: both are still flagged and still removed, because "flagged markup
+        // never reaches the caller" is the contract the composition below relies on.
+        //
+        // Gated on the element still not rendering, rather than on the tag alone.
+        // `script{display:block}` really does put the source on the page as text
+        // (measured in Chrome 150), so a page can render it and then hide it
+        // white-on-white — ordinary hidden text that happens to live in a <script>, and
+        // still a finding. `localName` because an SVG-namespaced <script> keeps its
+        // authored lowercase name and a `tagName` comparison misses it; the namespace
+        // test because those come back `display:inline` with no box (so they are caught
+        // as `zero-size`, not `display:none`) while SVG renders text only from <text>,
+        // which is why inline icon sprites were each reporting their <style> source.
+        const sourceOnly =
+          (el.localName === 'script' || el.localName === 'style') &&
+          (el.namespaceURI === SVG_NS || getComputedStyle(el).display === 'none');
+        if (!sourceOnly) {
+          hidden.push({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
+        }
         flagged.push(el);
         if (inShadow) shadowHidden.add(el); else toRemove.push(el);
       }
