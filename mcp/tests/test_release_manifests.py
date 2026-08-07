@@ -18,6 +18,7 @@ _VERSION_FIELDS: tuple[tuple[str, tuple[str | int, ...]], ...] = (
     ("server.json", ("packages", 0, "version")),
     ("gemini-extension.json", ("version",)),
     ("lhm.plugin.json", ("version",)),
+    (".cursor-plugin/plugin.json", ("version",)),
 )
 
 
