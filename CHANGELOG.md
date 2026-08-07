@@ -676,6 +676,8 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.10.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.1
+[0.10.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.0
 [0.9.6]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.6
 [0.9.5]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.9.4
