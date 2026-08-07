@@ -1,0 +1,37 @@
+{
+  "name": "groundhog",
+  "displayName": "Groundhog",
+  "version": "0.10.1",
+  "description": "Search, read and research the web through a real stealth-patched Chrome. Text hidden from human readers is stripped before the model reads it and reported, every source carries a SHA-256 provenance receipt, and the SSRF guard is re-checked after redirects.",
+  "author": {
+    "name": "dmytrome"
+  },
+  "homepage": "https://github.com/dmytrome/groundhog",
+  "repository": "https://github.com/dmytrome/groundhog",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": [
+    "browser",
+    "web",
+    "search",
+    "research",
+    "scraping",
+    "prompt-injection",
+    "ai-security",
+    "mcp"
+  ],
+  "category": "integrations",
+  "tags": [
+    "browser",
+    "search",
+    "research",
+    "ai-security",
+    "mcp"
+  ],
+  "mcpServers": {
+    "groundhog": {
+      "command": "uvx",
+      "args": ["groundhog-mcp"]
+    }
+  }
+}
