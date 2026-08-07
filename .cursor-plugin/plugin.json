@@ -1,7 +1,7 @@
 {
   "name": "groundhog",
   "displayName": "Groundhog",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Search, read and research the web through a real stealth-patched Chrome. Text hidden from human readers is stripped before the model reads it and reported, every source carries a SHA-256 provenance receipt, and the SSRF guard is re-checked after redirects.",
   "author": {
     "name": "dmytrome"
