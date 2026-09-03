@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-03
+
+### Added
+
+- `hidden_attribute` and `hidden_template` threat types.
+- Text in `alt`, `aria-label`, `aria-description` and `title`: reported above 125
+  characters, removed from the returned markup at any length.
+- `<template>` content: reported above 20 characters, emptied from the returned markup.
+  Content fragments are scanned as their own scope, covering nested templates and
+  attribute carriers inside them.
+
+### Fixed
+
+- Attribute carriers projected through a `<slot>`, or held inside a shadow tree, are
+  stripped from the returned markup.
+- Attribute carriers on `<html>`, on `<body>`, and inside `<head>` are scanned.
+- A hidden scan root suppresses the findings inside its subtree, including shadow scopes
+  and slot projections.
+- Findings are bounded at 400 per page and 100 for attribute and template carriers; the
+  overflow is counted into the `report_truncated` notice.
+- Threat ranking is not applied when detection is degraded.
+- `spans_dropped` rejects a boolean and is clamped.
+
+### Changed
+
+- Conformance results regenerated against Chrome 151.
+
 ## [0.11.0] - 2026-08-07
 
 A minor bump rather than a patch: what `threats[]` reports changes for every page that
@@ -711,6 +738,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.12.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.12.0
 [0.11.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.11.0
 [0.10.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.1
 [0.10.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.0
