@@ -95,7 +95,7 @@ def _capped(
     char_threats: list[sanitize.Threat],
     hidden: list[sanitize.Threat],
     limit: int,
-    already_dropped: int = 0,
+    already_dropped: int,
 ) -> list[sanitize.Threat]:
     """Bound the reported threats, disclosing the drop.
 

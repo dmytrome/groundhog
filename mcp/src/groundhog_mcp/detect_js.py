@@ -32,11 +32,10 @@ DETECT_AND_COLLECT = r"""
   const MAX_SPANS = 400;
   // Carriers a page fills with ordinary content — a described image, a component's
   // template — get a slice of that rather than the run of it. They are emitted early (the
-  // whole light DOM at once, before any shadow scope, the root check or the comment walk)
-  // and there can be thousands, so first-come-first-served would leave nothing for the
-  // findings where the page actually concealed something. Dropping one here is final:
-  // the ranking in `_capped` can only order what the collector returned. The same
-  // distinction is drawn there, under the same reasoning.
+  // whole light DOM at once, before any shadow scope or the comment walk) and there can
+  // be thousands, so first-come-first-served would leave nothing for the findings that
+  // follow. Dropping one here is final: `_capped` can only order what it was given, and
+  // the same distinction is drawn there under the same reasoning.
   const MAX_LOW_SIGNAL_SPANS = 100;
   let spansDropped = 0;
   let lowSignalSpans = 0;
@@ -237,7 +236,7 @@ DETECT_AND_COLLECT = r"""
     // a subtree already accounted for. Every scan in this scope asks through here rather
     // than repeating the test, because a carrier scan that forgets it is silently noisy
     // — which is how the template scan shipped without it.
-    const insideFlagged = (el) => flagged.some((p) => p.contains(el));
+    const insideFlagged = (el) => rootFlagged !== null || flagged.some((p) => p.contains(el));
     const nested = [];
     while (walker.nextNode()) {
       const el = walker.currentNode;
@@ -251,7 +250,7 @@ DETECT_AND_COLLECT = r"""
         const slotReason = assigned.length ? isHidden(el) : null;
         if (slotReason) {
           const projected = assigned.map((n) => n.textContent || '').join('').trim();
-          if (projected) {
+          if (projected && !insideFlagged(el)) {
             report({
               text: projected.slice(0, MAX_TEXT), reason: slotReason, path: pathOf(el),
             });
@@ -315,10 +314,29 @@ DETECT_AND_COLLECT = r"""
     // scan it is `<body>`, already a descendant of `<html>`, and in a shadow scan it is a
     // ShadowRoot, which is not an element at all.
     const carrierRoot = inShadow ? scopeRoot : document.documentElement;
-    const carriers = new Set();
-    if (carrierRoot.nodeType === 1) carriers.add(carrierRoot);
-    for (const el of carrierRoot.querySelectorAll(ATTRIBUTE_CARRIER_SELECTOR)) carriers.add(el);
-    for (const el of carriers) {
+    // Every scope whose markup the copy serializes: this one, and the content fragment of
+    // each `<template>` in it, recursively. `querySelectorAll` never descends into a
+    // fragment, so a carrier — or a nested template — inside one is reached by nothing
+    // else, and `contains` cannot see into it either: the guard is the outermost template
+    // in the document tree, which is what an ancestor can actually be tested against.
+    const scopes = [{ node: carrierRoot, owner: null }];
+    const templates = [];
+    for (let i = 0; i < scopes.length; i++) {
+      for (const tpl of scopes[i].node.querySelectorAll('template')) {
+        if (!tpl.content) continue;
+        const guard = scopes[i].owner || tpl;
+        templates.push({ tpl, guard });
+        scopes.push({ node: tpl.content, owner: guard });
+      }
+    }
+    const carriers = new Map();
+    if (carrierRoot.nodeType === 1) carriers.set(carrierRoot, carrierRoot);
+    for (const scope of scopes) {
+      for (const el of scope.node.querySelectorAll(ATTRIBUTE_CARRIER_SELECTOR)) {
+        if (!carriers.has(el)) carriers.set(el, scope.owner || el);
+      }
+    }
+    for (const [el, guard] of carriers) {
       // Hoisted: it does not depend on the attribute name, and an element carrying both
       // `alt` and `title` would otherwise walk every host's ancestors twice.
       const rebuiltFromLive = strip && (inShadow || lightHosts.some((h) => h.contains(el)));
@@ -345,7 +363,7 @@ DETECT_AND_COLLECT = r"""
         // nothing more. It is not a screen-reader limit: none truncates alt text, and the
         // JAWS 6 behaviour that story comes from split the value across graphics.
         if (value.length < MIN_ATTRIBUTE_CHARS) continue;
-        if (insideFlagged(el)) continue;
+        if (insideFlagged(guard)) continue;
         report({
           text: value.slice(0, MAX_TEXT), reason: 'attribute:' + name, path: pathOf(el),
         });
@@ -363,10 +381,12 @@ DETECT_AND_COLLECT = r"""
     // because the content lives in the fragment — but `include_hidden` asks to keep
     // hidden content, and returning neither the content nor a finding tells the caller
     // there was nothing there.
-    for (const tpl of carrierRoot.querySelectorAll('template')) {
-      const text = ((tpl.content && tpl.content.textContent) || '').trim();
+    for (const { tpl, guard } of templates) {
+      // Its own text, not the subtree's: a nested template keeps its content in a
+      // separate fragment, so it is visited on its own and reported on its own.
+      const text = (tpl.content.textContent || '').trim();
       if (text.length < MIN_COMMENT_CHARS) continue;
-      if (insideFlagged(tpl)) continue;
+      if (insideFlagged(guard)) continue;
       report({ text: text.slice(0, MAX_TEXT), reason: 'template', path: pathOf(tpl) });
     }
     // Nested hosts are recorded against their own tree, not the light DOM: composition
