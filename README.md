@@ -120,17 +120,25 @@ mimic), the legacy `clip: rect(...)` hiding technique, fully transparent text co
 color matching the background color (near-1:1 contrast), and elements positioned entirely
 outside the rendered page (e.g. `left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
 extracted content either way, but a page embedding instructions this way is worth knowing
-about. A second, character-level class is stripped and reported alongside these: zero-width
+about. `<template>` content is treated the same and for a sharper reason: it never renders,
+so no reader and no computed style sees it, yet it *is* serialized into the markup the
+extractor reads, and what a component actually shows is the copy it clones into its shadow
+tree — which is read from the live page instead. Text carried in an `alt`, `aria-label`, `aria-description` or `title` attribute is
+cleared from the markup at any length and reported above a length threshold: no computed
+style hides it, so the signals above cannot see it, and every image on a page carries an
+`alt` — reporting each one would spend the cap on captions. A second, character-level class is stripped and reported alongside these: zero-width
 characters, bidi marks and RTL overrides, and the Unicode Tag block — an invisible ASCII
 mirror that is the canonical prompt-injection smuggling channel. Pass `include_hidden=True`
 to keep the stripped text in the output; `threats` is still populated so you know it was
 there.
 
-**Treat `threats` as untrusted.** Entries come in six shapes (the character classes share one):
+**Treat `threats` as untrusted.** Entries come in eight shapes (the character classes share one):
 
 | `type` | Carries |
 | ------ | ------- |
 | `hidden_css` | The hiding `reason`, an 80-char `excerpt` of the removed text, and the DOM `location`. All three are page-authored, so all three are stripped of invisible characters and length-capped — but they remain attacker-*chosen* text |
+| `hidden_attribute` | The same three fields, for text carried in an `alt`, `aria-label`, `aria-description` or `title` attribute rather than hidden by style. Reported above a length threshold, since every image carries an `alt`; cleared from the markup at any length |
+| `hidden_template` | The same three fields, for text inside a `<template>`. Inert markup: it never renders, never reaches `innerText`, and no computed style applies to it — but it is serialized into the markup the extractor reads. Reported above a length threshold; emptied from the markup either way |
 | `zero_width` / `bidi` / `tag` | A codepoint and count in `reason`, no excerpt. Detected on the text the page actually served — the extractor removes these characters on its way to Markdown, so scanning the extracted output would report none of them |
 | `report_truncated` | How many entries were dropped when the cap was hit. Its own type, so it cannot be miscounted as a finding |
 | `final_url_suppressed` | The page's own final URL was unusable (over-long, or carrying invisible characters) and was not returned; `final_url` reports the URL you requested instead |
@@ -270,7 +278,7 @@ DevTools) can drive it — Groundhog is one such client.
 
 ### Verified results
 
-Measured against a freshly built container (Chrome 149, headful under Xvfb, no proxy),
+Measured against a freshly built container (Chrome 151, headful under Xvfb, no proxy),
 driven over raw CDP:
 
 | Detector                                                               | Result                                  |

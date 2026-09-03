@@ -42,6 +42,7 @@ def make_page():
         meta: PageMeta | None = None,
         isolated: bool = True,
         strip_incomplete: bool = False,
+        spans_dropped: int = 0,
         http_status: int | None = 200,
         retrieval_status: classify.RetrievalStatus = "ok",
     ) -> RenderedPage:
@@ -54,6 +55,7 @@ def make_page():
             meta=meta or _DEFAULT_META,
             isolated=isolated,
             strip_incomplete=strip_incomplete,
+            spans_dropped=spans_dropped,
             http_status=http_status,
             retrieval_status=retrieval_status,
         )

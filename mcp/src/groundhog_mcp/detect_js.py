@@ -2,6 +2,15 @@ DETECT_AND_COLLECT = r"""
 (strip) => {
   const MAX_TEXT = 200;
   const MIN_COMMENT_CHARS = 20;
+  const MIN_ATTRIBUTE_CHARS = 125;
+  // `title` belongs here despite rendering a tooltip: it needs a pointing device, so a
+  // touch reader never sees it and a keyboard one usually does not, which is why the W3C
+  // discourages carrying content in it. In the markup a model reads, it is always there.
+  const TEXT_ATTRIBUTES = ['alt', 'aria-label', 'aria-description', 'title'];
+  // Derived, never written twice. Held apart, an attribute added to the list alone is
+  // matched by neither the scan nor the copy sweep: never reported, never stripped, and
+  // no disclosure that anything was missed — the feature half-works in silence.
+  const ATTRIBUTE_CARRIER_SELECTOR = TEXT_ATTRIBUTES.map((n) => '[' + n + ']').join(',');
   // 1.15: near-identical colors (1.0) only — far below WCAG's 4.5:1 readability
   // minimum, since this catches "invisible" and must not flag merely low-contrast text.
   const CONTRAST_THRESHOLD = 1.15;
@@ -14,6 +23,30 @@ DETECT_AND_COLLECT = r"""
   const MAX_BG_ANCESTORS = 16;
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const hidden = [];
+  // Before attribute carriers a span needed an element with text *and* a hiding style, so
+  // an ordinary page produced none. Carriers are ordinary content, so the list would now
+  // grow with page size rather than with adversarial content: a catalogue of described
+  // images returns megabytes through CDP, each entry sanitized three times over, for a
+  // report that keeps fifty. Bounded here, and the overflow is counted rather than
+  // dropped quietly — a short report must never read as a complete one.
+  const MAX_SPANS = 400;
+  // Carriers a page fills with ordinary content — a described image, a component's
+  // template — get a slice of that rather than the run of it. They are emitted early (the
+  // whole light DOM at once, before any shadow scope, the root check or the comment walk)
+  // and there can be thousands, so first-come-first-served would leave nothing for the
+  // findings where the page actually concealed something. Dropping one here is final:
+  // the ranking in `_capped` can only order what the collector returned. The same
+  // distinction is drawn there, under the same reasoning.
+  const MAX_LOW_SIGNAL_SPANS = 100;
+  let spansDropped = 0;
+  let lowSignalSpans = 0;
+  const report = (span) => {
+    const lowSignal = span.reason.indexOf('attribute:') === 0 || span.reason === 'template';
+    if (lowSignal && lowSignalSpans >= MAX_LOW_SIGNAL_SPANS) { spansDropped++; return; }
+    if (hidden.length >= MAX_SPANS) { spansDropped++; return; }
+    if (lowSignal) lowSignalSpans++;
+    hidden.push(span);
+  };
   // Position among *all* child nodes, from documentElement down. `importNode(el, true)`
   // copies the tree node-for-node, so the same walk locates the node in the copy.
   const indexPathOf = (el) => {
@@ -183,8 +216,14 @@ DETECT_AND_COLLECT = r"""
   // removed by position is handed back by `assignedNodes`, since slot assignment is by
   // name and indifferent to whether the node renders.
   const shadowHidden = new Set();
+  // Attributes to clear, held by identity for the same reason: the composition rebuilds
+  // its nodes from the live tree, so an edit applied only to the copy is undone the
+  // moment a carrier is projected through a `<slot>` or lives in a shadow tree at all.
+  const attributeEdits = new Map();
   // Open shadow hosts, outermost first, so composition can mirror the flat tree.
   const lightHosts = [];
+  // The scan root, when it is itself hidden. Seeds each light scope's flagged list.
+  let rootFlagged = null;
   // `createTreeWalker` does not cross a shadow boundary and `contains` does not either,
   // so each tree is walked in its own scope with its own "closest hiding ancestor" set.
   // Without this a shadow tree is never scanned at all — and anything the composition
@@ -192,7 +231,13 @@ DETECT_AND_COLLECT = r"""
   // strip must never do. Closed roots stay unreachable, and so stay out of the output.
   const scan = (scopeRoot, inShadow, hosts) => {
     const walker = document.createTreeWalker(scopeRoot, NodeFilter.SHOW_ELEMENT);
-    const flagged = [];
+    const flagged = !inShadow && rootFlagged ? [rootFlagged] : [];
+    // A flagged ancestor speaks for its whole subtree: it is reported once and removed
+    // whole, so a finding per node inside it adds nothing and spends a bounded report on
+    // a subtree already accounted for. Every scan in this scope asks through here rather
+    // than repeating the test, because a carrier scan that forgets it is silently noisy
+    // — which is how the template scan shipped without it.
+    const insideFlagged = (el) => flagged.some((p) => p.contains(el));
     const nested = [];
     while (walker.nextNode()) {
       const el = walker.currentNode;
@@ -207,7 +252,7 @@ DETECT_AND_COLLECT = r"""
         if (slotReason) {
           const projected = assigned.map((n) => n.textContent || '').join('').trim();
           if (projected) {
-            hidden.push({
+            report({
               text: projected.slice(0, MAX_TEXT), reason: slotReason, path: pathOf(el),
             });
           }
@@ -222,7 +267,7 @@ DETECT_AND_COLLECT = r"""
       const shadowText = el.shadowRoot ? (el.shadowRoot.textContent || '').trim() : '';
       const text = (el.textContent || '').trim() || shadowText;
       if (!text) continue;
-      if (flagged.some((p) => p.contains(el))) continue;
+      if (insideFlagged(el)) continue;
       const reason = isHidden(el);
       if (reason) {
         // `<script>` and `<style>` compute to `display:none` by definition, so the walk
@@ -246,35 +291,112 @@ DETECT_AND_COLLECT = r"""
           (el.localName === 'script' || el.localName === 'style') &&
           (el.namespaceURI === SVG_NS || getComputedStyle(el).display === 'none');
         if (!sourceOnly) {
-          hidden.push({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
+          report({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
         }
         flagged.push(el);
         if (inShadow) shadowHidden.add(el); else toRemove.push(el);
       }
     }
+    // Attribute-borne text: the carrier the computed-style walk cannot see, because it
+    // reasons about elements and their text nodes and this text is in neither. A sighted
+    // reader never sees it; an extractor configured to keep images or labels does.
+    // Scanned per scope for the same reason the walk is — `querySelectorAll` stops at a
+    // shadow boundary, so a carrier inside a shadow tree would reach the composed markup
+    // having been examined by nothing.
+    //
+    // Rooted at `<html>` rather than at the walk's own root, because the walk roots at
+    // `<body>` and `<head>` is neither that root nor a descendant of it, so a `title` on
+    // a script-inserted `<link>` there would survive into the markup unexamined. This
+    // does not reach `<template>` content — a detached fragment `querySelectorAll` never
+    // descends into, which `importNode` still clones and `outerHTML` still serializes.
+    // `querySelectorAll` matches descendants only, so the root is added on its own —
+    // `<html>` in the light scan, which nothing else would reach. A Set because the root
+    // can also match the query. The scan's own root needs no separate entry: in the light
+    // scan it is `<body>`, already a descendant of `<html>`, and in a shadow scan it is a
+    // ShadowRoot, which is not an element at all.
+    const carrierRoot = inShadow ? scopeRoot : document.documentElement;
+    const carriers = new Set();
+    if (carrierRoot.nodeType === 1) carriers.add(carrierRoot);
+    for (const el of carrierRoot.querySelectorAll(ATTRIBUTE_CARRIER_SELECTOR)) carriers.add(el);
+    for (const el of carriers) {
+      // Hoisted: it does not depend on the attribute name, and an element carrying both
+      // `alt` and `title` would otherwise walk every host's ancestors twice.
+      const rebuiltFromLive = strip && (inShadow || lightHosts.some((h) => h.contains(el)));
+      for (const name of TEXT_ATTRIBUTES) {
+        const value = (el.getAttribute(name) || '').trim();
+        if (!value) continue;
+        // Removal is deliberately not gated on the reporting threshold below. `html`
+        // never leaves this process — it feeds trafilatura, which drops images and their
+        // `alt` — so clearing the attribute costs nothing today, and the consumer that
+        // keeps images tomorrow is the entire reason to clear it. A working payload fits
+        // in sixty characters, so a gate chosen for report volume would leave the attack
+        // untouched while reading as protection.
+        // Recorded by identity only when the composition can rebuild this node from the
+        // live tree — inside a shadow scope, or slotted out of a host's light children.
+        // Everything else is cleared by the sweep over the copy, so a page with no web
+        // components builds no map at all rather than one entry per image.
+        if (rebuiltFromLive) {
+          const names = attributeEdits.get(el);
+          if (names) names.push(name); else attributeEdits.set(el, [name]);
+        }
+        // Reporting is gated: every image on a page carries an `alt`, and a finding for
+        // each is noise that spends the threat cap. 125 is the conventional ceiling a CMS
+        // enforces on caption length — it is used here as "longer than a caption" and
+        // nothing more. It is not a screen-reader limit: none truncates alt text, and the
+        // JAWS 6 behaviour that story comes from split the value across graphics.
+        if (value.length < MIN_ATTRIBUTE_CHARS) continue;
+        if (insideFlagged(el)) continue;
+        report({
+          text: value.slice(0, MAX_TEXT), reason: 'attribute:' + name, path: pathOf(el),
+        });
+      }
+    }
+    // `<template>` content is the third carrier of markup that never renders, after
+    // hidden nodes and comments, and it behaves like the comment case: absent from
+    // `innerText`, so no reader and no computed style ever sees it, yet cloned by
+    // `importNode` and serialized by `outerHTML` straight into the extracted article.
+    // It is a detached fragment, so neither the TreeWalker nor `querySelectorAll`
+    // descends into it and every check above steps over it.
+    //
+    // Reported from every scope, not only the light one. A shadow tree's template never
+    // reaches the output — `composed()` rebuilds it from childNodes, which are empty
+    // because the content lives in the fragment — but `include_hidden` asks to keep
+    // hidden content, and returning neither the content nor a finding tells the caller
+    // there was nothing there.
+    for (const tpl of carrierRoot.querySelectorAll('template')) {
+      const text = ((tpl.content && tpl.content.textContent) || '').trim();
+      if (text.length < MIN_COMMENT_CHARS) continue;
+      if (insideFlagged(tpl)) continue;
+      report({ text: text.slice(0, MAX_TEXT), reason: 'template', path: pathOf(tpl) });
+    }
     // Nested hosts are recorded against their own tree, not the light DOM: composition
     // reaches them through their parent's shadow content, not by document position.
     for (const host of nested) scan(host.shadowRoot, true, []);
   };
-  scan(root, false, lightHosts);
-  // A TreeWalker never returns its own root, so `<body>` was the one element in the page
-  // no signal was ever applied to. `content-visibility: hidden` on it kept a principal
-  // box, so the layout-collapse check below did not fire either, and text with no element
-  // of its own — a bare text node child, or one under a `display: contents` wrapper — had
-  // nothing else to catch it. Flagging the root removes the whole subtree, which is the
-  // right answer: a page that hides its own body renders nothing a reader could see.
-  if (root && !toRemove.includes(root)) {
+  // A TreeWalker never returns its own root, so `<body>` is the one element the walk
+  // below applies no signal to. `content-visibility: hidden` on it keeps a principal box,
+  // so the layout-collapse check does not fire either, and text with no element of its
+  // own — a bare text node, or one under a `display: contents` wrapper — has nothing else
+  // to catch it. Flagging the root removes the whole subtree, which is the right answer:
+  // a page that hides its own body renders nothing a reader could see.
+  //
+  // Examined before the walk rather than after it, so the scope below starts with the
+  // root already flagged. Every "is this inside something already flagged" test — the
+  // walk's, and the attribute scan's — reads that list, and a root discovered afterwards
+  // is invisible to both: a hidden `<body>` wrapping a described gallery reported every
+  // caption in a subtree that was about to be removed whole.
+  if (root) {
     const rootReason = isHidden(root);
     if (rootReason) {
       const rootText = (root.textContent || '').trim();
       if (rootText) {
-        hidden.push({ text: rootText.slice(0, MAX_TEXT), reason: rootReason, path: pathOf(root) });
+        report({ text: rootText.slice(0, MAX_TEXT), reason: rootReason, path: pathOf(root) });
       }
-      // Ahead of everything the walk found: removing it drops those nodes anyway, and a
-      // path resolved inside a removed subtree would no longer address anything.
-      toRemove.unshift(root);
+      rootFlagged = root;
+      toRemove.push(root);
     }
   }
+  scan(root, false, lightHosts);
   // Nothing below is removed from the live document. `remove()` is [CEReactions]: a
   // custom element's disconnectedCallback would run synchronously as it returned,
   // letting the page write content the reader never saw — as a text node, into an
@@ -300,7 +422,7 @@ DETECT_AND_COLLECT = r"""
     const c = commentWalker.currentNode;
     const text = (c.textContent || '').trim();
     if (text.length < MIN_COMMENT_CHARS) continue;
-    hidden.push({
+    report({
       text: text.slice(0, MAX_TEXT), reason: 'html-comment', path: pathOf(c.parentElement),
     });
     if (strip) commentPaths.push(indexPathOf(c));
@@ -342,6 +464,28 @@ DETECT_AND_COLLECT = r"""
     // and the composition below replaces whole subtrees.
     const doomed = hiddenPaths.concat(commentPaths).map((parts) => atIndexPath(copy, parts));
     const hostPairs = lightHosts.map((h) => [h, atIndexPath(copy, indexPathOf(h))]);
+    // Swept off the copy rather than addressed by recorded position. Removal is ungated,
+    // so every carrier attribute in the light DOM goes regardless — which makes an O(n)
+    // sweep exactly equivalent to resolving one index path per carrier, without the
+    // O(siblings)-per-level walk that made a wide catalogue page quadratic, and without a
+    // path that can fail to resolve and report an incomplete strip that never happened.
+    // The identity map above still covers the shadow and slotted cases: those nodes are
+    // rebuilt from the live tree below and have no position in the copy to address.
+    if (strip) {
+      for (const name of TEXT_ATTRIBUTES) copy.removeAttribute(name);
+      for (const el of copy.querySelectorAll(ATTRIBUTE_CARRIER_SELECTOR)) {
+        for (const name of TEXT_ATTRIBUTES) el.removeAttribute(name);
+      }
+      // Emptied rather than reported-and-left, on the same reasoning as the attributes
+      // above and ungated for the same reason: what renders is the instance a component
+      // clones into its shadow tree, which the composition below builds from the live
+      // tree. The inert original is never what a reader saw.
+      for (const tpl of copy.querySelectorAll('template')) {
+        const frag = tpl.content;
+        if (!frag) continue;
+        while (frag.firstChild) frag.removeChild(frag.firstChild);
+      }
+    }
     for (const node of doomed) {
       // A path that does not resolve means this markup still contains a node that was
       // flagged; say so rather than returning it as fully stripped.
@@ -375,6 +519,11 @@ DETECT_AND_COLLECT = r"""
       if (live.nodeType === 3) return inert.createTextNode(live.data);
       if (live.nodeType !== 1) return null;
       const el = inert.importNode(live, false);
+      // `importNode` copies the live element's attributes verbatim, so a carrier already
+      // cleared in the copy arrives here carrying its payload again — by identity, since
+      // this node may have no position in the copy at all.
+      const edits = attributeEdits.get(live);
+      if (edits) for (const name of edits) el.removeAttribute(name);
       for (const child of childrenOf(live)) {
         const built = composed(child);
         if (built) el.appendChild(built);
@@ -489,6 +638,7 @@ DETECT_AND_COLLECT = r"""
     text,
     title,
     stripIncomplete,
+    spansDropped,
   };
 }
 """
