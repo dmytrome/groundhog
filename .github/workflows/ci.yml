@@ -23,6 +23,8 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run pytest -q
+      - run: uv build --build-constraint build-constraints.txt
+      - run: uvx twine check dist/*
 
   # The suite above skips every test that needs a browser — which is all of the
   # hidden-text and injection-containment coverage, the part most worth gating. Those

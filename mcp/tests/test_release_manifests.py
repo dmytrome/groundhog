@@ -82,3 +82,30 @@ def test_every_changelog_version_heading_resolves_to_a_release_link() -> None:
     # Keep a Changelog's `## [Unreleased]` names no tag and never gets a release link.
     headings.discard("Unreleased")
     assert headings <= defined, f"undefined changelog links: {sorted(headings - defined)}"
+
+
+_BUILD_COMMAND = "uv build --build-constraint build-constraints.txt"
+_VALIDATE_COMMAND = "twine check dist/*"
+
+
+def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
+    constraints = (_REPO_ROOT / "mcp" / "build-constraints.txt").read_text()
+    assert re.search(r"^hatchling==\d+\.\d+\.\d+$", constraints, re.MULTILINE), constraints
+
+
+@pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
+def test_every_workflow_builds_against_the_pinned_backend(workflow: str) -> None:
+    text = (_REPO_ROOT / ".github" / "workflows" / workflow).read_text()
+    assert _BUILD_COMMAND in text, workflow
+
+
+@pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
+def test_every_workflow_validates_the_built_distribution(workflow: str) -> None:
+    text = (_REPO_ROOT / ".github" / "workflows" / workflow).read_text()
+    assert _VALIDATE_COMMAND in text, workflow
+
+
+def test_the_release_validates_the_distribution_before_it_publishes_anything() -> None:
+    text = (_REPO_ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert text.index(_VALIDATE_COMMAND) < text.index("Publish GitHub release")
+    assert text.index(_VALIDATE_COMMAND) < text.index("Publish to PyPI")
