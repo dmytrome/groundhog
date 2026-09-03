@@ -39,6 +39,8 @@ _TAG_LO, _TAG_HI = 0xE0000, 0xE007F
 
 ThreatType = Literal[
     "hidden_css",
+    "hidden_attribute",
+    "hidden_template",
     "report_truncated",
     "final_url_suppressed",
     "detection_degraded",

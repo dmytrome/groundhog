@@ -33,6 +33,7 @@ _DOM_SIZE_EXPR = (
 _PROBE_TIMEOUT_S = 2.0
 _AUTOSTART_READY_TRIES = 30
 _VERSION_PATH = "/json/version"
+_MAX_REPORTED_DROP = 1_000_000
 _CONTAINER_NAME = "groundhog-browser"
 _CONTAINER_SHM = "512m"
 _CONTAINER_CDP_PORT = 9222
@@ -246,6 +247,7 @@ class RenderedPage:
     # enumerated in `detect_js.py`, which is where they are detected. Same no-default
     # rule as `isolated`.
     strip_incomplete: bool
+    spans_dropped: int
     # The top-level response's HTTP status, or None if it was not observed. Not
     # page-authored free text — Chrome parses the status line into an int — so it is
     # bounds-checked here rather than run through the string sanitizer.
@@ -265,6 +267,9 @@ class RenderedPage:
         self.html, self.text = _as_text(self.html), _as_text(self.text)
         self.final_url = safety.safe_url(self.final_url) or ""
         self.title = sanitize.clean_field(self.title, sanitize.MAX_TITLE_CHARS) or ""
+        dropped = self.spans_dropped
+        valid = type(dropped) is int and dropped > 0
+        self.spans_dropped = min(dropped, _MAX_REPORTED_DROP) if valid else 0
         spans = self.hidden_spans if isinstance(self.hidden_spans, list) else []
         self.hidden_spans = [span for raw in spans if (span := _clean_span(raw))]
         raw_meta = self.meta if isinstance(self.meta, dict) else {}
@@ -591,6 +596,7 @@ class EngineProvider:
                 # Any non-false reply degrades to "say the strip was partial", so a
                 # page cannot quiet the disclosure by returning a surprising shape.
                 strip_incomplete=bool(found.get("stripIncomplete")),
+                spans_dropped=found.get("spansDropped") or 0,
                 http_status=http_status,
                 retrieval_status=retrieval_status,
                 hidden_spans=found.get("hidden") or [],

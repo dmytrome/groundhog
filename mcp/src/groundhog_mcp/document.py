@@ -6,6 +6,9 @@ from . import classify, engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
+_ATTRIBUTE_REASON_PREFIX = "attribute:"
+_TEMPLATE_REASON = "template"
+_LOW_SIGNAL_CARRIERS = ("hidden_attribute", "hidden_template")
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,19 @@ class Document:
     provenance: provenance.Provenance
 
 
+def _carrier_type(reason: str) -> sanitize.ThreatType:
+    """How the payload was carried, which is not always by stylesheet.
+
+    A caller filtering on `type` to see how a page smuggled text would otherwise be told
+    an `alt` attribute, or inert `<template>` markup, was hidden by CSS.
+    """
+    if reason.startswith(_ATTRIBUTE_REASON_PREFIX):
+        return "hidden_attribute"
+    if reason == _TEMPLATE_REASON:
+        return "hidden_template"
+    return "hidden_css"
+
+
 def _hidden_threats(spans: list[engine.HiddenSpan]) -> list[sanitize.Threat]:
     """Shape hidden spans into threat records.
 
@@ -31,7 +47,7 @@ def _hidden_threats(spans: list[engine.HiddenSpan]) -> list[sanitize.Threat]:
     """
     return [
         {
-            "type": "hidden_css",
+            "type": _carrier_type(span["reason"]),
             "reason": span["reason"],
             "location": span.get("path"),
             "excerpt": span["text"],
@@ -56,8 +72,30 @@ def _merged(
     return best
 
 
+def _ranked(hidden: list[sanitize.Threat], *, trusted: bool) -> list[sanitize.Threat]:
+    """Order hidden findings so the cap truncates the least informative first.
+
+    Without this a gallery of described images, or a page of component templates, evicts
+    the injection finding from a scope the collector reached later — findings are cut in
+    the order they were produced.
+
+    The rank is read from `reason`, which the collector supplies. In an isolated world
+    that is our own code; without one the page can write it, and then this stops being a
+    cosmetic label and starts choosing which findings reach the caller — a page could
+    label its own `display:none` finding `attribute:alt` and have it dropped. So the
+    ranking is applied only when the labels are ours. Untrusted, collection order stands:
+    it is the page's own emission order, which buys an attacker nothing this does not.
+    """
+    if not trusted:
+        return hidden
+    return sorted(hidden, key=lambda t: t["type"] in _LOW_SIGNAL_CARRIERS)
+
+
 def _capped(
-    char_threats: list[sanitize.Threat], hidden: list[sanitize.Threat], limit: int
+    char_threats: list[sanitize.Threat],
+    hidden: list[sanitize.Threat],
+    limit: int,
+    already_dropped: int,
 ) -> list[sanitize.Threat]:
     """Bound the reported threats, disclosing the drop.
 
@@ -77,7 +115,9 @@ def _capped(
     # that keep theirs — those carry the injection excerpt.
     kept_char = char_threats[: min(len(char_threats), max(limit // 2, limit - len(hidden)))]
     kept_hidden = hidden[: max(0, limit - len(kept_char))]
-    dropped = (len(char_threats) - len(kept_char)) + (len(hidden) - len(kept_hidden))
+    dropped = (
+        (len(char_threats) - len(kept_char)) + (len(hidden) - len(kept_hidden)) + already_dropped
+    )
     kept = kept_char + kept_hidden
     if not dropped:
         return kept
@@ -122,7 +162,12 @@ async def fetch_document(
     char_threats = sanitize.threats(found)
     if not include_hidden:
         markdown = sanitize.strip_invisible(markdown, scans[0])
-    threats = _capped(char_threats, _hidden_threats(page.hidden_spans), max_threats)
+    threats = _capped(
+        char_threats,
+        _ranked(_hidden_threats(page.hidden_spans), trusted=page.isolated),
+        max_threats,
+        page.spans_dropped,
+    )
     if not page.isolated:
         # The collector had to run in the page's own JavaScript world, where the page
         # can replace the DOM APIs it uses. Say so: a short `threats` list would

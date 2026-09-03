@@ -1,3 +1,5 @@
+import pytest
+
 from groundhog_mcp.document import fetch_document
 
 from .conftest import INVISIBLES, RTL_OVERRIDE, TAG_I, ZERO_WIDTH
@@ -32,6 +34,57 @@ async def test_hidden_spans_become_threats(fake_provider, make_page):
     assert "IGNORE PREVIOUS" in found["excerpt"]
 
 
+async def test_inert_template_markup_is_typed_apart_from_a_css_finding(fake_provider, make_page):
+    fake_provider(
+        make_page(
+            hidden=[
+                {"reason": "template", "text": "TEMPLATE PAYLOAD", "path": "template"},
+                {"reason": "display:none", "text": "CSS PAYLOAD", "path": "div"},
+            ]
+        )
+    )
+    doc = await fetch_document("https://ex.com/p")
+    assert [t["type"] for t in doc.threats] == ["hidden_css", "hidden_template"]
+
+
+async def test_an_attribute_carrier_is_typed_apart_from_a_css_one(fake_provider, make_page):
+    fake_provider(
+        make_page(
+            hidden=[
+                {"reason": "attribute:alt", "text": "ALT PAYLOAD", "path": "img"},
+                {"reason": "display:none", "text": "CSS PAYLOAD", "path": "div"},
+            ]
+        )
+    )
+    doc = await fetch_document("https://ex.com/p")
+    assert sorted(t["type"] for t in doc.threats) == ["hidden_attribute", "hidden_css"]
+
+
+@pytest.mark.parametrize(
+    ("isolated", "survives"), [(True, "DECOY CAPTION"), (False, "REAL PAYLOAD")]
+)
+async def test_the_eviction_ranking_is_not_applied_to_labels_the_page_wrote(
+    fake_provider, make_page, isolated, survives
+):
+    spans = [
+        {"reason": "attribute:alt", "text": "REAL PAYLOAD", "path": "img"},
+        {"reason": "display:none", "text": "DECOY CAPTION", "path": "div"},
+    ]
+    fake_provider(make_page(hidden=spans, isolated=isolated))
+    doc = await fetch_document("https://ex.com/p", max_threats=1)
+    findings = [t for t in doc.threats if t["type"] != "report_truncated"]
+    assert findings[0]["excerpt"] == survives
+
+
+async def test_a_caption_flood_cannot_evict_a_css_finding(fake_provider, make_page):
+    spans = [{"reason": "attribute:alt", "text": f"caption {i}", "path": "img"} for i in range(80)]
+    spans.append({"reason": "display:none", "text": "REAL PAYLOAD", "path": "div"})
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p")
+    assert doc.threats[0]["type"] == "hidden_css"
+    assert doc.threats[0]["excerpt"] == "REAL PAYLOAD"
+
+
 async def test_threat_location_is_sanitized_and_capped(fake_provider, make_page):
     # `path` embeds page-authored element ids, so it is attacker-controlled and unbounded.
     # The invisible characters sit at the front, inside the cap: putting them past it
@@ -55,6 +108,55 @@ async def test_threats_are_capped_and_the_cap_is_disclosed(fake_provider, make_p
     # A distinct type, so the notice cannot be miscounted as — or forged as — a finding.
     assert notice["type"] == "report_truncated"
     assert "150 further threats not reported" in notice["reason"]
+
+
+@pytest.mark.parametrize(
+    ("reported", "withheld", "limit"),
+    [(3, 17, 2), (60, 0, 50), (0, 40, 10), (30, 200, 50), (5, 0, 50)],
+)
+async def test_the_disclosed_drop_accounts_for_every_finding_not_reported(
+    fake_provider, make_page, reported, withheld, limit
+):
+    spans = [{"reason": "display:none", "text": f"p{i}", "path": "d"} for i in range(reported)]
+    fake_provider(make_page(hidden=spans, spans_dropped=withheld))
+    doc = await fetch_document("https://ex.com/p", max_threats=limit)
+    notices = [t for t in doc.threats if t["type"] == "report_truncated"]
+    findings = [t for t in doc.threats if t["type"] != "report_truncated"]
+    total = reported + withheld
+    if len(findings) == total:
+        assert notices == [], "a complete report must not claim a truncation"
+        return
+    dropped = int(notices[0]["reason"].split()[0])
+    assert len(findings) + dropped == total
+
+
+async def test_a_boolean_overflow_count_is_not_counted_as_one_finding(fake_provider, make_page):
+    fake_provider(make_page(spans_dropped=True))
+    doc = await fetch_document("https://e.co")
+    assert not any(t["type"] == "report_truncated" for t in doc.threats)
+
+
+async def test_a_large_but_real_overflow_count_is_reported_in_full(fake_provider, make_page):
+    fake_provider(make_page(spans_dropped=5000))
+    doc = await fetch_document("https://e.co")
+    assert "5000 further threats not reported" in doc.threats[-1]["reason"]
+
+
+async def test_an_unbounded_overflow_count_is_clamped_before_it_reaches_a_reason(
+    fake_provider, make_page
+):
+    fake_provider(make_page(spans_dropped=10**300))
+    doc = await fetch_document("https://e.co")
+    assert "1000000 further threats not reported" in doc.threats[-1]["reason"]
+
+
+async def test_findings_the_collector_never_returned_are_disclosed(fake_provider, make_page):
+    spans = [{"reason": "display:none", "text": f"p{i}", "path": "div"} for i in range(3)]
+    fake_provider(make_page(hidden=spans, spans_dropped=17))
+    doc = await fetch_document("https://ex.com/p", max_threats=2)
+    notice = doc.threats[-1]
+    assert notice["type"] == "report_truncated"
+    assert "18 further threats not reported" in notice["reason"]
 
 
 async def test_caller_can_lower_the_threat_cap(fake_provider, make_page):
