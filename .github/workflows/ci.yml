@@ -16,8 +16,8 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v8
         with:
           python-version: "3.12"
       - run: uv sync
@@ -34,7 +34,7 @@ jobs:
   live:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Start the stealth browser
         run: docker compose up --build -d
       - name: Wait for CDP
@@ -46,7 +46,7 @@ jobs:
           echo "CDP never became ready" >&2
           docker compose logs --no-color chrome | tail -50
           exit 1
-      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v8
         with:
           python-version: "3.12"
       - name: Run the browser-backed tests
