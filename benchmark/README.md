@@ -45,6 +45,14 @@ python3 run.py                   # serve locally, run every adapter, write RESUL
 python3 run.py --base-url URL    # measure a hosted fetcher against a published copy
 ```
 
+Hosted fetchers are measured only against a published copy — they cannot reach a loopback
+address, so `run.py` leaves them out of a local run rather than recording a column of
+connection errors. Jina Reader needs no key; Firecrawl is included when
+`FIRECRAWL_API_KEY` is set.
+
+Jina is asked not to serve its cache (`x-no-cache`). Its default response is a snapshot
+taken earlier, which would score whatever it fetched before rather than the page here.
+
 Scrapling is optional and skipped when absent. To include it:
 
 ```bash
@@ -58,9 +66,9 @@ reachable from the browser container as `host.docker.internal`.
 
 Stated because they bound what the numbers mean.
 
-- **Three fetchers so far.** Hosted services need the corpus published at a public URL
-  and, in most cases, an API key. `--base-url` exists for exactly that and has no other
-  user yet.
+- **Three fetchers measured so far.** Adapters for Jina Reader and Firecrawl are in
+  place and run against `--base-url`, so their columns fill in once the corpus is
+  published. Nothing in `RESULTS.md` speaks to them yet.
 - **Scrapling is measured through one of its fetchers, in its most favourable mode.** The
   HTTP `Fetcher`, read through `markdown(main_content_only=True)` — its article mode. The
   default returns the whole page and contains less. Its browser-backed fetchers
