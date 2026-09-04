@@ -45,6 +45,12 @@ python3 run.py                   # serve locally, run every adapter, write RESUL
 python3 run.py --base-url URL    # measure a hosted fetcher against a published copy
 ```
 
+Scrapling is optional and skipped when absent. To include it:
+
+```bash
+uv run --project ../mcp --with 'scrapling[fetchers,rag]' python run.py
+```
+
 `groundhog` needs a browser at `CDP_URL`. The local server binds an ephemeral port and is
 reachable from the browser container as `host.docker.internal`.
 
@@ -52,9 +58,18 @@ reachable from the browser container as `host.docker.internal`.
 
 Stated because they bound what the numbers mean.
 
-- **Two fetchers so far.** Hosted services need the corpus published at a public URL and,
-  in most cases, an API key. `--base-url` exists for exactly that and has no other user
-  yet.
+- **Three fetchers so far.** Hosted services need the corpus published at a public URL
+  and, in most cases, an API key. `--base-url` exists for exactly that and has no other
+  user yet.
+- **Scrapling is measured through one of its fetchers, in its most favourable mode.** The
+  HTTP `Fetcher`, read through `markdown(main_content_only=True)` — its article mode. The
+  default returns the whole page and contains less. Its browser-backed fetchers
+  (`StealthyFetcher`, `DynamicFetcher`) need a separate browser install and are not
+  covered here, so nothing in this table speaks to them.
+- **A fetcher without a browser cannot be judged on rendered carriers.** Where a payload
+  only exists after script runs, an HTTP fetcher neither contains nor leaks it — it never
+  saw it. Those cells are not evidence either way, and the split between static and
+  script-rendered carriers is in the `needs_js` field of `manifest.json`.
 - **The corpus is synthetic.** Every case is a carrier we can construct and verify, not a
   page sampled from the wild. It measures coverage of known carriers, not prevalence.
 - **Containment is string matching.** A payload that survives in paraphrase, or one split

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from adapters import Fetched, groundhog, naive
+from adapters import Fetched, groundhog, naive, scrapling_http
 from score import Score, score
 
 HERE = Path(__file__).parent
@@ -33,10 +33,13 @@ def _run_adapter(name: str, base: str, *, local: bool) -> list[Score]:
     results: list[Score] = []
     for case in MANIFEST["cases"]:
         url = f"{base}/{case['file']}"
+        direct = url.replace("host.docker.internal", "127.0.0.1")
         if name == "groundhog":
             fetched: Fetched = asyncio.run(groundhog.fetch_async(url, allow_private=local))
+        elif name == "scrapling":
+            fetched = scrapling_http.fetch(direct)
         else:
-            fetched = naive.fetch(url.replace("host.docker.internal", "127.0.0.1"))
+            fetched = naive.fetch(direct)
         results.append(score(case, fetched.content, fetched.disclosed, fetched.error))
     return results
 
@@ -75,7 +78,11 @@ def main() -> None:
         srv, base = _serve()
         local = True
     try:
-        rows = {name: _run_adapter(name, base, local=local) for name in ("naive", "groundhog")}
+        adapters = ["naive"]
+        if scrapling_http.available():
+            adapters.append("scrapling")
+        adapters.append("groundhog")
+        rows = {name: _run_adapter(name, base, local=local) for name in adapters}
     finally:
         if srv:
             srv.shutdown()
@@ -93,7 +100,8 @@ def main() -> None:
         "",
     ]
     for name, results in rows.items():
-        label = naive.NAME if name == "naive" else groundhog.NAME
+        label = {"naive": naive.NAME, "scrapling": scrapling_http.NAME,
+                 "groundhog": groundhog.NAME}[name]
         payloads = [r for r in results if not r.control]
         controls = [r for r in results if r.control]
         contained = sum(r.contained for r in payloads)
