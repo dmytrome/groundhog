@@ -11,19 +11,20 @@ _ENDPOINT = "https://api.firecrawl.dev/v2/scrape"
 
 
 def available() -> bool:
-    return bool(os.environ.get("FIRECRAWL_API_KEY"))
+    return True
+
+
+def build_request(url: str) -> urllib.request.Request:
+    body = json.dumps({"url": url, "formats": ["markdown"]}).encode()
+    headers = {"Content-Type": "application/json"}
+    key = os.environ.get("FIRECRAWL_API_KEY")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return urllib.request.Request(_ENDPOINT, data=body, headers=headers)
 
 
 def fetch(url: str) -> Fetched:
-    body = json.dumps({"url": url, "formats": ["markdown"]}).encode()
-    request = urllib.request.Request(
-        _ENDPOINT,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {os.environ['FIRECRAWL_API_KEY']}",
-            "Content-Type": "application/json",
-        },
-    )
+    request = build_request(url)
     try:
         with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
             payload = json.loads(response.read().decode("utf-8", "replace"))
