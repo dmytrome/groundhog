@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from . import engine
@@ -14,7 +14,7 @@ from .tools.status import status
 
 
 @asynccontextmanager
-async def _lifespan(_server: FastMCP) -> AsyncIterator[dict[str, object]]:
+async def _lifespan(_server: MCPServer) -> AsyncIterator[dict[str, object]]:
     try:
         yield {}
     finally:
@@ -22,7 +22,7 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[dict[str, object]]:
 
 
 def _register_read_only(
-    mcp: FastMCP, tool: Callable[..., object], title: str, *, open_world: bool
+    mcp: MCPServer, tool: Callable[..., object], title: str, *, open_world: bool
 ) -> None:
     """Register a read-only tool, carrying its title in both places the spec allows.
 
@@ -32,18 +32,14 @@ def _register_read_only(
     """
     mcp.tool(
         title=title,
-        annotations=ToolAnnotations(title=title, readOnlyHint=True, openWorldHint=open_world),
+        annotations=ToolAnnotations(
+            title=title, read_only_hint=True, open_world_hint=open_world
+        ),
     )(tool)
 
 
-def build_server() -> FastMCP:
-    mcp = FastMCP("groundhog", lifespan=_lifespan)
-    # Without this the handshake reports the *SDK's* version as ours: the low-level
-    # server falls back to `pkg_version("mcp")` when its own version is unset, and
-    # FastMCP has no constructor argument for it. Clients that show a server version
-    # were displaying the version of `mcp`. Read from installed metadata so it cannot
-    # drift from the released package.
-    mcp._mcp_server.version = version("groundhog-mcp")
+def build_server() -> MCPServer:
+    mcp = MCPServer("groundhog", version=version("groundhog-mcp"), lifespan=_lifespan)
     # All four tools are read-only. The three that fetch reach arbitrary external hosts
     # (openWorldHint); `status` only probes the local browser. readOnlyHint is what lets
     # a client auto-approve these without a per-call confirmation, and titles/annotations

@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Browsers",
 ]
 dependencies = [
-    "mcp>=1.28,<2",
+    "mcp>=2.1,<3",
     "websockets>=13",
     "trafilatura>=2.0",
     "tldextract>=5.3",  # top_domain_under_public_suffix
