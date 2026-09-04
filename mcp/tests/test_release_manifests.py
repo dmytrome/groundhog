@@ -4,6 +4,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 # Each of these manifests is consumed by a different registry — one entry per listing, so
 # add a line here whenever a new one is added — and none is exercised by anything else in
@@ -85,7 +86,27 @@ def test_every_changelog_version_heading_resolves_to_a_release_link() -> None:
 
 
 _BUILD_COMMAND = "uv build --build-constraint build-constraints.txt"
-_VALIDATE_COMMAND = "twine check dist/*"
+_VALIDATE_COMMAND = "twine check --strict dist/*"
+
+
+def _workflow(name: str) -> dict:
+    return yaml.safe_load((_REPO_ROOT / ".github" / "workflows" / name).read_text())
+
+
+def _runs(job: dict) -> list[str]:
+    return [step["run"] for step in job.get("steps", []) if "run" in step]
+
+
+def _upstream_of(workflow: dict, job: str) -> set[str]:
+    seen: set[str] = set()
+    queue = [job]
+    while queue:
+        needs = workflow["jobs"][queue.pop()].get("needs", [])
+        for dep in [needs] if isinstance(needs, str) else needs:
+            if dep not in seen:
+                seen.add(dep)
+                queue.append(dep)
+    return seen
 
 
 def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
@@ -95,17 +116,33 @@ def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
 
 @pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
 def test_every_workflow_builds_against_the_pinned_backend(workflow: str) -> None:
-    text = (_REPO_ROOT / ".github" / "workflows" / workflow).read_text()
-    assert _BUILD_COMMAND in text, workflow
+    assert any(_BUILD_COMMAND in cmd for job in _workflow(workflow)["jobs"].values()
+               for cmd in _runs(job)), workflow
 
 
 @pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
 def test_every_workflow_validates_the_built_distribution(workflow: str) -> None:
-    text = (_REPO_ROOT / ".github" / "workflows" / workflow).read_text()
-    assert _VALIDATE_COMMAND in text, workflow
+    assert any(_VALIDATE_COMMAND in cmd for job in _workflow(workflow)["jobs"].values()
+               for cmd in _runs(job)), workflow
 
 
-def test_the_release_validates_the_distribution_before_it_publishes_anything() -> None:
+def test_no_release_job_can_publish_without_an_earlier_job_having_run_the_gate() -> None:
+    workflow = _workflow("release.yml")
+    gates = {name for name, job in workflow["jobs"].items()
+             if any(_VALIDATE_COMMAND in cmd for cmd in _runs(job))}
+    assert gates, "no job runs the distribution gate"
+    publishers = [name for name in workflow["jobs"] if name.startswith("publish")]
+    assert publishers, "no publishing job found"
+    for publisher in publishers:
+        assert gates & _upstream_of(workflow, publisher), publisher
+
+
+def test_the_release_pins_the_validator_because_its_tag_is_already_pushed() -> None:
     text = (_REPO_ROOT / ".github" / "workflows" / "release.yml").read_text()
-    assert text.index(_VALIDATE_COMMAND) < text.index("Publish GitHub release")
-    assert text.index(_VALIDATE_COMMAND) < text.index("Publish to PyPI")
+    assert re.search(r"twine==\d+\.\d+\.\d+", text), "release.yml runs an unpinned twine"
+
+
+def test_ci_leaves_the_validator_floating_so_ecosystem_drift_fails_a_pull_request() -> None:
+    text = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert _VALIDATE_COMMAND in text
+    assert "twine==" not in text, "pinning here would hide the drift this gate exists to catch"
