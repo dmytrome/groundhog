@@ -187,3 +187,12 @@ def test_the_build_requirements_filename_is_one_dependabot_discovers() -> None:
     assert "requirements" in _BUILD_REQUIREMENTS, _BUILD_REQUIREMENTS
     assert _BUILD_REQUIREMENTS.endswith(".txt"), _BUILD_REQUIREMENTS
 
+
+
+def test_the_declared_sdk_floor_excludes_versions_the_code_cannot_import() -> None:
+    with (_REPO_ROOT / "mcp" / "pyproject.toml").open("rb") as handle:
+        deps = tomllib.load(handle)["project"]["dependencies"]
+    spec = next(d for d in deps if d.startswith("mcp"))
+    floor = re.search(r">=(\d+)", spec)
+    assert floor is not None, spec
+    assert int(floor.group(1)) >= 2, f"{spec} admits an SDK without mcp.server.mcpserver"
