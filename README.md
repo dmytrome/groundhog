@@ -14,6 +14,32 @@ the SSRF holes of naive fetch tools.
 agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ──CDP──▶  stealth Chrome  ──▶  the web
 ```
 
+## Measured against other fetch layers
+
+Eighteen pages, each carrying text a human reader cannot see, plus one clean control. A
+case passes when the payload does not reach the model **and** the article text still does —
+a fetcher that returns nothing contains every payload and is useless.
+
+| | contained | kept the article | reported it |
+| --- | --- | --- | --- |
+| `requests` + trafilatura | 16/18 | 18/18 | 0/18 |
+| Scrapling (HTTP) | 10/18 | 18/18 | 0/18 |
+| Jina Reader | 8/18 | 18/18 | 0/18 |
+| Firecrawl | 4/18 | 18/18 | 0/18 |
+| **Groundhog** | **18/18** | **18/18** | **18/18** |
+
+Containment happens by accident all the time — an article extractor prunes a hidden `<div>`
+because its heuristics dislike it, not because anything asked whether a reader could see
+it. That is why the last column matters: **nothing else tested tells the caller that
+anything was removed**, so an empty threat list and a page with nothing hidden look
+identical.
+
+The corpus is published at
+[dmytrome.github.io/groundhog](https://dmytrome.github.io/groundhog/), so any fetcher can
+be measured against the same pages. Harness, per-case results and the limits of what this
+proves are in [`benchmark/`](benchmark/) — including that hosted services are a snapshot of
+the date recorded in [`RESULTS.md`](benchmark/RESULTS.md).
+
 ## Quick start
 
 Add Groundhog to your MCP client — that's it. On the first fetch, Groundhog pulls and
@@ -69,7 +95,8 @@ named `groundhog-browser` first. A reachable one is never touched, and
 - **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it
   can judge what a *human* would actually see and strip what they could not, reporting each
   occurrence in `threats`. A strong heuristic, not a proof — see
-  [the limits of hidden-text detection](#limits-of-hidden-text-detection). The eleven signals,
+  [the limits of hidden-text detection](#limits-of-hidden-text-detection), and
+  [the benchmark](#measured-against-other-fetch-layers) for how that compares. The eleven signals,
   the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
 - **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
   language, word count, and author/date when the page declares them — so a downstream claim
