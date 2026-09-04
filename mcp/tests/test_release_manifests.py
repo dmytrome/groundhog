@@ -186,3 +186,4 @@ def test_the_build_backend_pin_has_an_update_channel() -> None:
 def test_the_build_requirements_filename_is_one_dependabot_discovers() -> None:
     assert "requirements" in _BUILD_REQUIREMENTS, _BUILD_REQUIREMENTS
     assert _BUILD_REQUIREMENTS.endswith(".txt"), _BUILD_REQUIREMENTS
+

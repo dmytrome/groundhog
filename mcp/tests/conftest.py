@@ -5,11 +5,24 @@ from groundhog_mcp.engine import HiddenSpan, PageMeta, RenderedPage
 
 # No <meta name="author"> here — the engine's JS collector provides it via engine_meta,
 # not via the HTML. trafilatura does not surface it reliably for short articles.
-_PAGE_HTML = """
+_CATS = (
+    "Cats are small carnivorous mammals kept as pets worldwide indeed, and have lived "
+    "alongside people for something close to ten thousand years, first tolerated around "
+    "grain stores and only much later invited indoors as company rather than pest control. "
+)
+_DOGS = (
+    "Dogs are loyal domesticated animals trained for work and company, bred over centuries "
+    "into shapes and temperaments suited to herding, guarding, hauling and retrieving, long "
+    "before any of them were kept purely for the pleasure of their presence. "
+)
+# Long enough that the extractor takes the same path it takes on a real page. Below a few
+# hundred characters it falls back to a bare-text path whose output has no headings and no
+# paragraph breaks, and it does so on some versions and not others.
+_PAGE_HTML = f"""
 <html lang="en"><head><title>Doc</title></head>
 <body><article>
-<h1>Cats</h1><p>Cats are small carnivorous mammals kept as pets worldwide indeed.</p>
-<h2>Dogs</h2><p>Dogs are loyal domesticated animals trained for work and company.</p>
+<h1>Cats</h1><p>{_CATS * 3}</p><p>{_CATS * 2}</p>
+<h2>Dogs</h2><p>{_DOGS * 3}</p><p>{_DOGS * 2}</p>
 </article></body></html>
 """
 
