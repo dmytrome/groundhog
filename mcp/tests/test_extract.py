@@ -45,3 +45,16 @@ def test_to_document_metadata_nulls_when_absent():
     )
     assert meta.author is None
     assert meta.canonical is None
+
+
+def test_the_shared_page_fixture_extracts_with_the_structure_a_real_page_has():
+    # Below a few hundred characters the extractor falls back to a bare-text path whose
+    # output carries no headings and no paragraph breaks — on some versions and not
+    # others. A fixture that small tests a path no real page takes, and silently changes
+    # meaning when the extractor is upgraded.
+    from .conftest import _PAGE_HTML
+
+    markdown, _ = to_document(_PAGE_HTML, "https://ex.com/p")
+    assert markdown.startswith("# "), markdown[:80]
+    assert "## " in markdown, markdown[:200]
+    assert markdown.count("\n\n") >= 3, markdown
