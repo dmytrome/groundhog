@@ -48,8 +48,27 @@ def test_every_manifest_case_has_a_corpus_file():
 
 
 def test_every_corpus_file_is_in_the_manifest():
-    listed = {case["file"] for case in MANIFEST["cases"]}
+    listed = {case["file"] for case in MANIFEST["cases"]} | {"index.html"}
     assert {p.name for p in (HERE / "corpus").glob("*.html")} == listed
+
+
+def _generated_index(tmp_path, monkeypatch) -> str:
+    import build_corpus
+
+    monkeypatch.setattr(build_corpus, "CORPUS", tmp_path)
+    build_corpus._write_index(MANIFEST["cases"])
+    return (tmp_path / "index.html").read_text()
+
+
+def test_the_generated_index_lists_every_case_and_carries_no_payload(tmp_path, monkeypatch):
+    index = _generated_index(tmp_path, monkeypatch)
+    for case in MANIFEST["cases"]:
+        assert case["file"] in index, case["id"]
+        assert case["payload"] not in index, case["id"]
+
+
+def test_the_committed_index_is_what_the_generator_produces(tmp_path, monkeypatch):
+    assert _generated_index(tmp_path, monkeypatch) == (HERE / "corpus" / "index.html").read_text()
 
 
 def test_every_case_plants_both_of_its_markers():
@@ -72,3 +91,16 @@ def test_a_notice_about_the_report_does_not_count_as_disclosure():
 def test_the_zero_width_case_hides_its_payload_rather_than_only_joining_it():
     html = (HERE / "corpus" / "evasion-zero-width.html").read_text()
     assert "display:none" in html
+
+
+def test_the_publish_workflow_uploads_the_corpus_that_is_scored():
+    workflow = (HERE.parent / ".github" / "workflows" / "pages.yml").read_text()
+    assert "path: benchmark/corpus" in workflow
+
+
+def test_a_hosted_fetcher_is_never_scored_against_a_loopback_corpus():
+    run = (HERE / "run.py").read_text()
+    gate = run[run.index("adapters = [") : run.index("rows = {")]
+    for hosted in ("jina", "firecrawl"):
+        assert f'"{hosted}"' in gate, hosted
+    assert "if not local:" in gate
