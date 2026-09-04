@@ -50,8 +50,8 @@ a hosted fetcher measurable and the results reproducible by someone without the 
 
 Hosted fetchers are measured only against a published copy — they cannot reach a loopback
 address, so `run.py` leaves them out of a local run rather than recording a column of
-connection errors. Jina Reader needs no key; Firecrawl is included when
-`FIRECRAWL_API_KEY` is set.
+connection errors. Neither Jina Reader nor Firecrawl needs a key at this volume;
+`FIRECRAWL_API_KEY` is used when set, for the higher rate limit.
 
 Jina is asked not to serve its cache (`x-no-cache`). Its default response is a snapshot
 taken earlier, which would score whatever it fetched before rather than the page here.
@@ -69,8 +69,15 @@ reachable from the browser container as `host.docker.internal`.
 
 Stated because they bound what the numbers mean.
 
-- **Four fetchers measured so far.** Firecrawl's adapter is in place and runs when
-  `FIRECRAWL_API_KEY` is set; nothing in `RESULTS.md` speaks to it yet.
+- **Both hosted fetchers are measured on their defaults.** Firecrawl is sent
+  `{"url": ..., "formats": ["markdown"]}` and nothing else; Jina is sent no options but
+  `x-no-cache`. Neither was tuned, and neither exposes an option this benchmark knows of
+  that would change the result. A configuration that does would be worth a column of its
+  own rather than a footnote.
+- **Firecrawl renders script.** It leaks the shadow-DOM cases, which an HTTP-only fetcher
+  cannot even see, so its score is not the artefact of a missing browser that
+  `scrapling (http)` and the naive baseline partly are. It is measured on the same
+  rendered DOM Groundhog is.
 - **A hosted result is a snapshot.** Jina is a service that can change on its own
   schedule, so its row describes what it returned on the date in `RESULTS.md` and carries
   no promise about today. The local fetchers are pinned by version and reproducible; a

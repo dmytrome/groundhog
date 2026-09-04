@@ -87,8 +87,7 @@ def main() -> None:
             adapters.append("scrapling")
         if not local:
             adapters.append("jina")
-            if firecrawl.available():
-                adapters.append("firecrawl")
+            adapters.append("firecrawl")
         adapters.append("groundhog")
         rows = {name: _run_adapter(name, base, local=local) for name in adapters}
     finally:

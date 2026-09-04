@@ -104,3 +104,23 @@ def test_a_hosted_fetcher_is_never_scored_against_a_loopback_corpus():
     for hosted in ("jina", "firecrawl"):
         assert f'"{hosted}"' in gate, hosted
     assert "if not local:" in gate
+
+
+def test_firecrawl_is_measurable_without_a_key():
+    from adapters import firecrawl
+
+    assert firecrawl.available() is True
+
+
+def test_firecrawl_sends_no_authorization_when_no_key_is_set(monkeypatch):
+    from adapters import firecrawl
+
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    assert firecrawl.build_request("https://ex.com").has_header("Authorization") is False
+
+
+def test_firecrawl_uses_the_key_when_one_is_set(monkeypatch):
+    from adapters import firecrawl
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+    assert firecrawl.build_request("https://ex.com").get_header("Authorization") == "Bearer fc-test"
