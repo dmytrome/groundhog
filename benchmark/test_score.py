@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from score import _flatten, score
@@ -124,3 +125,25 @@ def test_firecrawl_uses_the_key_when_one_is_set(monkeypatch):
 
     monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
     assert firecrawl.build_request("https://ex.com").get_header("Authorization") == "Bearer fc-test"
+
+
+def _readme_scores() -> set[tuple[str, str, str]]:
+    text = (HERE.parent / "README.md").read_text()
+    rows = set()
+    for line in text.splitlines():
+        cells = [c.strip().strip("*").strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 4 and all(re.fullmatch(r"\d+/\d+", c) for c in cells[1:]):
+            rows.add(tuple(cells[1:]))
+    return rows
+
+
+def _results_scores() -> set[tuple[str, str, str]]:
+    text = (HERE / "RESULTS.md").read_text()
+    pattern = r"contained (\d+/\d+), kept the article (\d+/\d+), disclosed (\d+/\d+)"
+    return set(re.findall(pattern, text))
+
+
+def test_the_front_page_table_matches_the_measured_results():
+    readme, results = _readme_scores(), _results_scores()
+    assert readme, "no score table found in the top-level README"
+    assert readme == results, f"front page and RESULTS.md disagree: {readme ^ results}"
