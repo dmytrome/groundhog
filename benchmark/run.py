@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from adapters import Fetched, groundhog, naive, scrapling_http
+from adapters import Fetched, firecrawl, groundhog, jina, naive, scrapling_http
 from score import Score, score
 
 HERE = Path(__file__).parent
@@ -38,6 +38,10 @@ def _run_adapter(name: str, base: str, *, local: bool) -> list[Score]:
             fetched: Fetched = asyncio.run(groundhog.fetch_async(url, allow_private=local))
         elif name == "scrapling":
             fetched = scrapling_http.fetch(direct)
+        elif name == "jina":
+            fetched = jina.fetch(url)
+        elif name == "firecrawl":
+            fetched = firecrawl.fetch(url)
         else:
             fetched = naive.fetch(direct)
         results.append(score(case, fetched.content, fetched.disclosed, fetched.error))
@@ -81,6 +85,10 @@ def main() -> None:
         adapters = ["naive"]
         if scrapling_http.available():
             adapters.append("scrapling")
+        if not local:
+            adapters.append("jina")
+            if firecrawl.available():
+                adapters.append("firecrawl")
         adapters.append("groundhog")
         rows = {name: _run_adapter(name, base, local=local) for name in adapters}
     finally:
@@ -101,6 +109,7 @@ def main() -> None:
     ]
     for name, results in rows.items():
         label = {"naive": naive.NAME, "scrapling": scrapling_http.NAME,
+                 "jina": jina.NAME, "firecrawl": firecrawl.NAME,
                  "groundhog": groundhog.NAME}[name]
         payloads = [r for r in results if not r.control]
         controls = [r for r in results if r.control]
