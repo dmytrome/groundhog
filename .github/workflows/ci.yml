@@ -23,7 +23,7 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run pytest -q
-      - run: uv build --build-constraint build-constraints.txt
+      - run: uv build --build-constraint build-requirements.txt
       - run: uvx twine check --strict dist/*
 
   # The suite above skips every test that needs a browser — which is all of the

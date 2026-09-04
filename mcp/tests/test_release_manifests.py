@@ -85,8 +85,14 @@ def test_every_changelog_version_heading_resolves_to_a_release_link() -> None:
     assert headings <= defined, f"undefined changelog links: {sorted(headings - defined)}"
 
 
-_BUILD_COMMAND = "uv build --build-constraint build-constraints.txt"
+_BUILD_REQUIREMENTS = "build-requirements.txt"
+_BUILD_COMMAND = f"uv build --build-constraint {_BUILD_REQUIREMENTS}"
 _VALIDATE_COMMAND = "twine check --strict dist/*"
+_PUBLISHING_MARKERS = (
+    "pypa/gh-action-pypi-publish",
+    "softprops/action-gh-release",
+    "mcp-publisher publish",
+)
 
 
 def _workflow(name: str) -> dict:
@@ -103,14 +109,25 @@ def _upstream_of(workflow: dict, job: str) -> set[str]:
     while queue:
         needs = workflow["jobs"][queue.pop()].get("needs", [])
         for dep in [needs] if isinstance(needs, str) else needs:
+            assert dep in workflow["jobs"], f"{job} needs a job that does not exist: {dep}"
             if dep not in seen:
                 seen.add(dep)
                 queue.append(dep)
     return seen
 
 
+def _gate_commands(workflow: dict) -> list[str]:
+    return [cmd for job in workflow["jobs"].values() for cmd in _runs(job)
+            if _VALIDATE_COMMAND in cmd]
+
+
+def _publishing_jobs(workflow: dict) -> set[str]:
+    return {name for name, job in workflow["jobs"].items()
+            if any(marker in yaml.safe_dump(job) for marker in _PUBLISHING_MARKERS)}
+
+
 def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
-    constraints = (_REPO_ROOT / "mcp" / "build-constraints.txt").read_text()
+    constraints = (_REPO_ROOT / "mcp" / _BUILD_REQUIREMENTS).read_text()
     assert re.search(r"^hatchling==\d+\.\d+\.\d+$", constraints, re.MULTILINE), constraints
 
 
@@ -122,27 +139,50 @@ def test_every_workflow_builds_against_the_pinned_backend(workflow: str) -> None
 
 @pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
 def test_every_workflow_validates_the_built_distribution(workflow: str) -> None:
-    assert any(_VALIDATE_COMMAND in cmd for job in _workflow(workflow)["jobs"].values()
-               for cmd in _runs(job)), workflow
+    assert _gate_commands(_workflow(workflow)), workflow
 
 
-def test_no_release_job_can_publish_without_an_earlier_job_having_run_the_gate() -> None:
+def test_nothing_that_publishes_can_run_before_the_gate() -> None:
     workflow = _workflow("release.yml")
     gates = {name for name, job in workflow["jobs"].items()
              if any(_VALIDATE_COMMAND in cmd for cmd in _runs(job))}
     assert gates, "no job runs the distribution gate"
-    publishers = [name for name in workflow["jobs"] if name.startswith("publish")]
-    assert publishers, "no publishing job found"
+    publishers = _publishing_jobs(workflow)
+    assert publishers, "no job was recognised as publishing"
     for publisher in publishers:
         assert gates & _upstream_of(workflow, publisher), publisher
 
 
 def test_the_release_pins_the_validator_because_its_tag_is_already_pushed() -> None:
-    text = (_REPO_ROOT / ".github" / "workflows" / "release.yml").read_text()
-    assert re.search(r"twine==\d+\.\d+\.\d+", text), "release.yml runs an unpinned twine"
+    for command in _gate_commands(_workflow("release.yml")):
+        assert re.search(r"twine==\d+\.\d+\.\d+", command), command
 
 
 def test_ci_leaves_the_validator_floating_so_ecosystem_drift_fails_a_pull_request() -> None:
-    text = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    assert _VALIDATE_COMMAND in text
-    assert "twine==" not in text, "pinning here would hide the drift this gate exists to catch"
+    for command in _gate_commands(_workflow("ci.yml")):
+        assert "twine==" not in command, command
+
+
+def _dependabot() -> dict:
+    return yaml.safe_load((_REPO_ROOT / ".github" / "dependabot.yml").read_text())
+
+
+def _channel(ecosystem: str) -> list[dict]:
+    return [u for u in _dependabot()["updates"] if u["package-ecosystem"] == ecosystem]
+
+
+def test_the_sha_pinned_actions_have_an_update_channel() -> None:
+    assert _channel("github-actions"), "every workflow pins actions by SHA and nothing bumps them"
+
+
+def test_the_locked_python_dependencies_have_an_update_channel() -> None:
+    assert any(u["directory"].rstrip("/") == "/mcp" for u in _channel("uv"))
+
+
+def test_the_build_backend_pin_has_an_update_channel() -> None:
+    assert any(u["directory"].rstrip("/") == "/mcp" for u in _channel("pip"))
+
+
+def test_the_build_requirements_filename_is_one_dependabot_discovers() -> None:
+    assert "requirements" in _BUILD_REQUIREMENTS, _BUILD_REQUIREMENTS
+    assert _BUILD_REQUIREMENTS.endswith(".txt"), _BUILD_REQUIREMENTS
