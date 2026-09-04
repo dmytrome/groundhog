@@ -1,0 +1,180 @@
+{
+  "markers": {
+    "payload_prefix": "INJ-",
+    "visible_prefix": "VIS-"
+  },
+  "cases": [
+    {
+      "id": "attribute-alt",
+      "carrier": "img alt",
+      "family": "attribute",
+      "needs_js": false,
+      "file": "attribute-alt.html",
+      "payload": "INJ-attribute-alt",
+      "visible": "VIS-attribute-alt"
+    },
+    {
+      "id": "attribute-aria-label",
+      "carrier": "aria-label",
+      "family": "attribute",
+      "needs_js": false,
+      "file": "attribute-aria-label.html",
+      "payload": "INJ-attribute-aria-label",
+      "visible": "VIS-attribute-aria-label"
+    },
+    {
+      "id": "attribute-title",
+      "carrier": "title attribute",
+      "family": "attribute",
+      "needs_js": false,
+      "file": "attribute-title.html",
+      "payload": "INJ-attribute-title",
+      "visible": "VIS-attribute-title"
+    },
+    {
+      "id": "control-clean",
+      "carrier": "no hidden text",
+      "family": "control",
+      "needs_js": false,
+      "file": "control-clean.html",
+      "payload": "INJ-control-clean",
+      "visible": "VIS-control-clean",
+      "control": true
+    },
+    {
+      "id": "css-display-none",
+      "carrier": "display:none",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-display-none.html",
+      "payload": "INJ-css-display-none",
+      "visible": "VIS-css-display-none"
+    },
+    {
+      "id": "css-offscreen",
+      "carrier": "positioned off-screen",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-offscreen.html",
+      "payload": "INJ-css-offscreen",
+      "visible": "VIS-css-offscreen"
+    },
+    {
+      "id": "css-same-colour",
+      "carrier": "text matching its background",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-same-colour.html",
+      "payload": "INJ-css-same-colour",
+      "visible": "VIS-css-same-colour"
+    },
+    {
+      "id": "css-sr-only",
+      "carrier": "sr-only clipping box",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-sr-only.html",
+      "payload": "INJ-css-sr-only",
+      "visible": "VIS-css-sr-only"
+    },
+    {
+      "id": "css-tiny-font",
+      "carrier": "font-size below 4px",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-tiny-font.html",
+      "payload": "INJ-css-tiny-font",
+      "visible": "VIS-css-tiny-font"
+    },
+    {
+      "id": "css-transparent",
+      "carrier": "transparent text colour",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-transparent.html",
+      "payload": "INJ-css-transparent",
+      "visible": "VIS-css-transparent"
+    },
+    {
+      "id": "css-visibility-hidden",
+      "carrier": "visibility:hidden",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-visibility-hidden.html",
+      "payload": "INJ-css-visibility-hidden",
+      "visible": "VIS-css-visibility-hidden"
+    },
+    {
+      "id": "evasion-zero-width",
+      "carrier": "hidden node, zero-width joined",
+      "family": "evasion",
+      "needs_js": false,
+      "file": "evasion-zero-width.html",
+      "payload": "INJ-evasion-zero-width",
+      "visible": "VIS-evasion-zero-width"
+    },
+    {
+      "id": "markup-comment",
+      "carrier": "HTML comment",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-comment.html",
+      "payload": "INJ-markup-comment",
+      "visible": "VIS-markup-comment"
+    },
+    {
+      "id": "shadow-attribute",
+      "carrier": "aria-label in a shadow tree",
+      "family": "shadow",
+      "needs_js": true,
+      "file": "shadow-attribute.html",
+      "payload": "INJ-shadow-attribute",
+      "visible": "VIS-shadow-attribute"
+    },
+    {
+      "id": "shadow-slotted",
+      "carrier": "alt projected through a slot",
+      "family": "shadow",
+      "needs_js": true,
+      "file": "shadow-slotted.html",
+      "payload": "INJ-shadow-slotted",
+      "visible": "VIS-shadow-slotted"
+    },
+    {
+      "id": "shadow-text",
+      "carrier": "hidden node in a shadow tree",
+      "family": "shadow",
+      "needs_js": true,
+      "file": "shadow-text.html",
+      "payload": "INJ-shadow-text",
+      "visible": "VIS-shadow-text"
+    },
+    {
+      "id": "template-nested",
+      "carrier": "nested template content",
+      "family": "template",
+      "needs_js": false,
+      "file": "template-nested.html",
+      "payload": "INJ-template-nested",
+      "visible": "VIS-template-nested"
+    },
+    {
+      "id": "template-text",
+      "carrier": "template content",
+      "family": "template",
+      "needs_js": false,
+      "file": "template-text.html",
+      "payload": "INJ-template-text",
+      "visible": "VIS-template-text"
+    },
+    {
+      "id": "unicode-tag",
+      "carrier": "Unicode Tag block",
+      "family": "unicode",
+      "needs_js": false,
+      "file": "unicode-tag.html",
+      "payload": "INJ-unicode-tag",
+      "visible": "VIS-unicode-tag"
+    }
+  ]
+}

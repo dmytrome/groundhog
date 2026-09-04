@@ -23,6 +23,7 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run pytest -q
+      - run: uv run pytest -q ../benchmark
       - run: uv build --build-constraint build-requirements.txt
       - run: uvx twine check --strict dist/*
 
