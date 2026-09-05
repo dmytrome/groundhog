@@ -192,7 +192,10 @@ def test_the_build_requirements_filename_is_one_dependabot_discovers() -> None:
 def test_the_declared_sdk_floor_excludes_versions_the_code_cannot_import() -> None:
     with (_REPO_ROOT / "mcp" / "pyproject.toml").open("rb") as handle:
         deps = tomllib.load(handle)["project"]["dependencies"]
-    spec = next(d for d in deps if d.startswith("mcp"))
-    floor = re.search(r">=(\d+)", spec)
-    assert floor is not None, spec
-    assert int(floor.group(1)) >= 2, f"{spec} admits an SDK without mcp.server.mcpserver"
+    specs = [d for d in deps if re.split(r"[<>=!~ ]", d, maxsplit=1)[0].strip() == "mcp"]
+    assert len(specs) == 1, specs
+    floor = re.search(r">=\s*(\d+)", specs[0])
+    assert floor is not None, specs[0]
+    assert int(floor.group(1)) >= 2, (
+        f"{specs[0]} admits an SDK predating mcp.server.mcpserver, which server.py imports"
+    )
