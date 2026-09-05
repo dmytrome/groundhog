@@ -1,12 +1,15 @@
+import functools
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from . import engine
 from .prompts import audit_hidden_text
+from .search import SearchUnavailableError
 from .tools.read_url import read_url
 from .tools.research import research
 from .tools.search import search
@@ -19,6 +22,25 @@ async def _lifespan(_server: MCPServer) -> AsyncIterator[dict[str, object]]:
         yield {}
     finally:
         await engine.shutdown_provider()
+
+
+_RAISED_TO_BE_READ = (
+    engine.BrowserUnavailableError,
+    SearchUnavailableError,
+    ValueError,
+    RuntimeError,
+)
+
+
+def _surfaced(tool: Callable[..., object]) -> Callable[..., object]:
+    @functools.wraps(tool)
+    async def surfaced(*args: object, **kwargs: object) -> object:
+        try:
+            return await tool(*args, **kwargs)
+        except _RAISED_TO_BE_READ as exc:
+            raise ToolError(str(exc)) from exc
+
+    return surfaced
 
 
 def _register_read_only(
@@ -35,7 +57,7 @@ def _register_read_only(
         annotations=ToolAnnotations(
             title=title, read_only_hint=True, open_world_hint=open_world
         ),
-    )(tool)
+    )(_surfaced(tool))
 
 
 def build_server() -> MCPServer:
