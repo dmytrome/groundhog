@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-06
+
+### Changed
+
+- Requires the MCP SDK 2.x (`mcp>=2.1,<3`). `FastMCP` is now `MCPServer` under a new
+  import path, and the server version is declared to the constructor rather than written
+  onto the low-level server. The wire format is unchanged: tool annotations still
+  serialise as `readOnlyHint` / `openWorldHint`.
+
+### Fixed
+
+- Tool error messages reach the caller again. The 2.x SDK withholds the message of any
+  exception that is not a `ToolError`, which reduced the browser remediation steps, the
+  search backend setup hint and argument validation to `Error executing tool <name>`.
+- A failure raised outside a tool's own handling is withheld rather than relayed. A
+  misconfigured `GROUNDHOG_SEARCH_BACKEND` reported the operator's value to the model;
+  errors are now relayed only where the message was written for the caller.
+
+### Added
+
+- A hidden-injection containment benchmark in `benchmark/`: nineteen cases across six
+  carrier families, scored on containment, article preservation and disclosure. The
+  corpus is published at https://dmytrome.github.io/groundhog/ and results for five fetch
+  layers are in `benchmark/RESULTS.md`. Not part of the published package.
+
 ## [0.12.0] - 2026-09-03
 
 ### Added
@@ -738,6 +763,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.13.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.13.0
 [0.12.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.12.0
 [0.11.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.11.0
 [0.10.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.10.1
