@@ -39,7 +39,7 @@ async def search(
     stealth browser. Hits are links only — nothing is fetched until you ask.
     """
     if not query.strip():
-        raise ValueError("query must not be empty")
+        raise safety.InvalidArgument("query must not be empty")
     capped = max(1, min(limit, _MAX_LIMIT))
     try:
         hits, backend = await search_backend.search(query, load_config(), capped)
@@ -48,5 +48,5 @@ async def search(
     except Exception as exc:
         # Same boundary the other two tools have: a third party's payload must not
         # decide the text, or the length, of what the caller's model reads.
-        raise RuntimeError(safety.safe_detail(exc)) from exc
+        raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     return {"query": query, "backend": backend, "hits": hits}

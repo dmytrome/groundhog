@@ -79,7 +79,7 @@ async def read_url(
         # Without this the SSRF guard's "blocked address: host -> 169.254.x.x" and any
         # page-chosen exception text reach the model unchanged. `research` already
         # refuses to echo those; this is the same rule for the single-page tool.
-        raise RuntimeError(safety.safe_detail(exc)) from exc
+        raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     limit = config.token_budget(max_tokens, engine.load_config().max_tokens)
 
     matches: list[retrieval.Match] = []

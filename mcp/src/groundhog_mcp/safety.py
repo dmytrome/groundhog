@@ -9,6 +9,19 @@ _BLOCKED_MESSAGE = "blocked by SSRF policy"
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
+class CallerFacingError(Exception):
+    """A failure whose message was written to be read by the caller.
+
+    The MCP boundary relays the message of these and withholds every other, so the
+    decision is made where the message is written rather than inferred from a type a
+    library might also raise.
+    """
+
+
+class InvalidArgument(CallerFacingError, ValueError):
+    """An argument the caller can correct. Also a `ValueError` for direct callers."""
+
+
 class BlockedURLError(Exception):
     """Raised when a URL is disallowed by the SSRF guard."""
 

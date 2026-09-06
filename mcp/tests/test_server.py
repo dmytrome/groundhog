@@ -62,3 +62,18 @@ async def test_the_ssrf_guards_internal_detail_does_not_cross_the_boundary():
     message = str(caught.value)
     assert "blocked" in message
     assert "169.254" not in message
+
+
+async def test_a_failure_outside_the_tools_own_handling_is_not_relayed(
+    fake_provider, make_page, monkeypatch: pytest.MonkeyPatch
+):
+    fake_provider(make_page())
+
+    def _misconfigured() -> object:
+        raise ValueError("GROUNDHOG_SEARCH_BACKEND must be one of (...), got 'operator-value'")
+
+    monkeypatch.setattr(engine, "load_config", _misconfigured)
+    mcp = server.build_server()
+    with pytest.raises(Exception) as caught:
+        await mcp.call_tool("read_url", {"url": "https://ex.com/p"})
+    assert "operator-value" not in str(caught.value)

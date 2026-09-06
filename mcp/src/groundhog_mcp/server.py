@@ -1,5 +1,5 @@
 import functools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 
@@ -7,9 +7,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import engine
+from . import engine, safety
 from .prompts import audit_hidden_text
-from .search import SearchUnavailableError
 from .tools.read_url import read_url
 from .tools.research import research
 from .tools.search import search
@@ -24,27 +23,19 @@ async def _lifespan(_server: MCPServer) -> AsyncIterator[dict[str, object]]:
         await engine.shutdown_provider()
 
 
-_RAISED_TO_BE_READ = (
-    engine.BrowserUnavailableError,
-    SearchUnavailableError,
-    ValueError,
-    RuntimeError,
-)
-
-
-def _surfaced(tool: Callable[..., object]) -> Callable[..., object]:
+def _surfaced(tool: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable[object]]:
     @functools.wraps(tool)
     async def surfaced(*args: object, **kwargs: object) -> object:
         try:
             return await tool(*args, **kwargs)
-        except _RAISED_TO_BE_READ as exc:
+        except safety.CallerFacingError as exc:
             raise ToolError(str(exc)) from exc
 
     return surfaced
 
 
 def _register_read_only(
-    mcp: MCPServer, tool: Callable[..., object], title: str, *, open_world: bool
+    mcp: MCPServer, tool: Callable[..., Awaitable[object]], title: str, *, open_world: bool
 ) -> None:
     """Register a read-only tool, carrying its title in both places the spec allows.
 
