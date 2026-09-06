@@ -23,6 +23,24 @@
       "visible": "VIS-attribute-aria-label"
     },
     {
+      "id": "attribute-input-hidden",
+      "carrier": "hidden input value",
+      "family": "attribute",
+      "needs_js": false,
+      "file": "attribute-input-hidden.html",
+      "payload": "INJ-attribute-input-hidden",
+      "visible": "VIS-attribute-input-hidden"
+    },
+    {
+      "id": "attribute-meta-description",
+      "carrier": "meta description",
+      "family": "attribute",
+      "needs_js": false,
+      "file": "attribute-meta-description.html",
+      "payload": "INJ-attribute-meta-description",
+      "visible": "VIS-attribute-meta-description"
+    },
+    {
       "id": "attribute-title",
       "carrier": "title attribute",
       "family": "attribute",
@@ -58,6 +76,15 @@
       "file": "css-offscreen.html",
       "payload": "INJ-css-offscreen",
       "visible": "VIS-css-offscreen"
+    },
+    {
+      "id": "css-print-only",
+      "carrier": "shown only when printed",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-print-only.html",
+      "payload": "INJ-css-print-only",
+      "visible": "VIS-css-print-only"
     },
     {
       "id": "css-same-colour",
@@ -121,6 +148,51 @@
       "file": "markup-comment.html",
       "payload": "INJ-markup-comment",
       "visible": "VIS-markup-comment"
+    },
+    {
+      "id": "markup-details-closed",
+      "carrier": "collapsed details",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-details-closed.html",
+      "payload": "INJ-markup-details-closed",
+      "visible": "VIS-markup-details-closed"
+    },
+    {
+      "id": "markup-iframe-srcdoc",
+      "carrier": "iframe srcdoc",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-iframe-srcdoc.html",
+      "payload": "INJ-markup-iframe-srcdoc",
+      "visible": "VIS-markup-iframe-srcdoc"
+    },
+    {
+      "id": "markup-noscript",
+      "carrier": "noscript content",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-noscript.html",
+      "payload": "INJ-markup-noscript",
+      "visible": "VIS-markup-noscript"
+    },
+    {
+      "id": "markup-select-option",
+      "carrier": "option in a closed select",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-select-option.html",
+      "payload": "INJ-markup-select-option",
+      "visible": "VIS-markup-select-option"
+    },
+    {
+      "id": "markup-svg-desc",
+      "carrier": "svg title and desc",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-svg-desc.html",
+      "payload": "INJ-markup-svg-desc",
+      "visible": "VIS-markup-svg-desc"
     },
     {
       "id": "shadow-attribute",
