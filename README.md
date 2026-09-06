@@ -96,7 +96,7 @@ named `groundhog-browser` first. A reachable one is never touched, and
   can judge what a *human* would actually see and strip what they could not, reporting each
   occurrence in `threats`. A strong heuristic, not a proof — see
   [the limits of hidden-text detection](#limits-of-hidden-text-detection), and
-  [the benchmark](#measured-against-other-fetch-layers) for how that compares. The eleven signals,
+  [the benchmark](#measured-against-other-fetch-layers) for how that compares. The twelve signals,
   the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
 - **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
   language, word count, and author/date when the page declares them — so a downstream claim
@@ -144,8 +144,10 @@ signal sees it), `opacity ≤ 0.05`, `font-size < 4 px`, zero-size elements, an 
 of its own (`display: contents`) whose contents render nothing, the sub-pixel box
 used by `.sr-only`/`.visually-hidden` accessibility utility classes (a pattern attackers now
 mimic), the legacy `clip: rect(...)` hiding technique, fully transparent text color, text
-color matching the background color (near-1:1 contrast), and elements positioned entirely
-outside the rendered page (e.g. `left: -9999px`). Non-trivial HTML comments are reported too — they never reach the
+color matching the background color (near-1:1 contrast), elements positioned entirely
+outside the rendered page (e.g. `left: -9999px`), and content the browser lays out but
+refuses to render — a collapsed `<details>`, whose hiding lives on a pseudo-element no
+per-element style read can see. Non-trivial HTML comments are reported too — they never reach the
 extracted content either way, but a page embedding instructions this way is worth knowing
 about. `<template>` content is treated the same and for a sharper reason: it never renders,
 so no reader and no computed style sees it, yet it *is* serialized into the markup the
@@ -362,7 +364,7 @@ gets no synchronous hook to react to the strip. What that does *not* cover:
   uses; if the browser ever declines to provide one, the result carries a
   `detection_degraded` threat rather than quietly weaker detection.
 - **Thresholds can be sat just inside.** `opacity: 0.06`, `font-size: 4px`, a contrast ratio
-  just above 1.15 — all pass, as do hiding techniques the eleven signals don't model
+  just above 1.15 — all pass, as do hiding techniques the twelve signals don't model
   (`clip-path`, `text-indent`, `transform: scale(0)`).
 - **Invisible-character coverage is a set, not a rule.** Zero-width, bidi and the Unicode Tag
   block are stripped and reported; codepoints outside that set are not.

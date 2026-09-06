@@ -205,6 +205,16 @@ DETECT_AND_COLLECT = r"""
       const contrast = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
       if (contrast < CONTRAST_THRESHOLD) return 'color-contrast<' + CONTRAST_THRESHOLD;
     }
+    // Last, so a specific reason above always wins. This catches what a per-element style
+    // read cannot see: the content of a closed `<details>` is hidden by
+    // `content-visibility` on the `::details-content` pseudo-element, so the element
+    // itself reports `display: block`, `visibility: visible`, a full-width box and a
+    // client rect — every check above passes — while the browser still refuses to render
+    // it and `innerText` omits it. Measured in Chrome 151.
+    // Skipped for an element that generates no box of its own — a `display: contents`
+    // wrapper or a `<slot>` — because the browser reports those unrendered while their
+    // contents render normally. Those are judged by `rendersContent` above.
+    if (!noBox && el.checkVisibility && !el.checkVisibility()) return 'not-rendered';
     return null;
   };
   const root = document.body || document.documentElement;
