@@ -135,10 +135,24 @@ def build() -> None:
     case("markup-details-closed", "collapsed details", "markup", False,
          _page("markup-details-closed",
                f"<details><summary>Notes</summary><p>{p('markup-details-closed')}</p></details>"))
-    case("markup-select-option", "option in a closed select", "markup", False,
-         _page("markup-select-option",
-               f"<select><option>Visible choice</option><option>{p('markup-select-option')}"
-               "</option></select>"))
+    CASES.append(
+        {
+            "id": "control-select-option",
+            "carrier": "option in a closed select (not hidden)",
+            "family": "control",
+            "needs_js": False,
+            "file": "control-select-option.html",
+            "payload": "INJ-control-select-option",
+            "visible": "VIS-control-select-option",
+            "control": True,
+        }
+    )
+    (CORPUS / "control-select-option.html").write_text(
+        _page("control-select-option",
+              "<select><option>Visible choice</option>"
+              "<option>A second choice nobody scrolled to</option></select>"),
+        encoding="utf-8",
+    )
     case("attribute-input-hidden", "hidden input value", "attribute", False,
          _page("attribute-input-hidden",
                f"<input type='hidden' value=\"{p('attribute-input-hidden')}\">"))

@@ -60,6 +60,16 @@
       "control": true
     },
     {
+      "id": "control-select-option",
+      "carrier": "option in a closed select (not hidden)",
+      "family": "control",
+      "needs_js": false,
+      "file": "control-select-option.html",
+      "payload": "INJ-control-select-option",
+      "visible": "VIS-control-select-option",
+      "control": true
+    },
+    {
       "id": "css-display-none",
       "carrier": "display:none",
       "family": "css",
@@ -175,15 +185,6 @@
       "file": "markup-noscript.html",
       "payload": "INJ-markup-noscript",
       "visible": "VIS-markup-noscript"
-    },
-    {
-      "id": "markup-select-option",
-      "carrier": "option in a closed select",
-      "family": "markup",
-      "needs_js": false,
-      "file": "markup-select-option.html",
-      "payload": "INJ-markup-select-option",
-      "visible": "VIS-markup-select-option"
     },
     {
       "id": "markup-svg-desc",

@@ -116,13 +116,24 @@ DETECT_AND_COLLECT = r"""
     };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
   };
+  // The page's own backdrop, for elements whose ancestors are all transparent within the
+  // bound below. Assuming white instead reported every light-on-dark element on a themed
+  // site as invisible: the dark background sits on `<html>`, further up than the walk goes.
+  const pageBg = (() => {
+    for (const n of [document.body, document.documentElement]) {
+      if (!n) continue;
+      const bg = parseColor(getComputedStyle(n).backgroundColor);
+      if (bg && bg.a > ALPHA_THRESHOLD) return bg;
+    }
+    return { r: 255, g: 255, b: 255, a: 1 };
+  })();
   const effectiveBg = (el) => {
     let n = el;
     for (let i = 0; n && i < MAX_BG_ANCESTORS; n = n.parentElement, i++) {
       const bg = parseColor(getComputedStyle(n).backgroundColor);
       if (bg && bg.a > ALPHA_THRESHOLD) return bg;
     }
-    return { r: 255, g: 255, b: 255, a: 1 };
+    return pageBg;
   };
   // Whether anything this element renders paints a box. A Range over its contents
   // measures the content rather than the element, which is what matters for a node that
@@ -276,6 +287,10 @@ DETECT_AND_COLLECT = r"""
       const shadowText = el.shadowRoot ? (el.shadowRoot.textContent || '').trim() : '';
       const text = (el.textContent || '').trim() || shadowText;
       if (!text) continue;
+      // A closed `<select>` paints no box for its options, but their text is part of the
+      // page's rendered text and a reader reaches it by opening the control. Flagging it
+      // said the text was hidden while the same run returned it.
+      if (el.localName === 'option' || el.localName === 'optgroup') continue;
       if (insideFlagged(el)) continue;
       const reason = isHidden(el);
       if (reason) {
