@@ -152,7 +152,7 @@ async def research(
     the slowest of the three and the one to avoid for a single known page.
     """
     if not query.strip():
-        raise ValueError("query must not be empty")
+        raise safety.InvalidArgument("query must not be empty")
     cfg = load_config()
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
@@ -164,7 +164,7 @@ async def research(
     except Exception as exc:
         # The same boundary `search` has: the SERP leg runs through the browser, so
         # its failures can name internal addresses or carry page-chosen text.
-        raise RuntimeError(safety.safe_detail(exc)) from exc
+        raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     chosen = _diverse(hits, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
 

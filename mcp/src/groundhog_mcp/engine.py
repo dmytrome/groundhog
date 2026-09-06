@@ -43,7 +43,7 @@ _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _ISOLATED_WORLD = "groundhog"
 
 
-class BrowserUnavailableError(Exception):
+class BrowserUnavailableError(safety.CallerFacingError):
     """The stealth browser's CDP endpoint could not be reached."""
 
 
