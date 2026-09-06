@@ -601,6 +601,35 @@ async def test_collapsed_details_is_reported_though_it_has_a_box_and_a_client_re
     assert "Cats are small carnivorous" in page.text
 
 
+_DEEP_OPEN = "<div>" * 20
+_DEEP_CLOSE = "</div>" * 20
+DARK_THEME_HTML = f"""<html lang="en" style="background:#111;color:#fff">
+<head><title>Doc</title></head>
+<body><article><h1>Cats</h1>
+{_DEEP_OPEN}<p>Cats are small carnivorous mammals kept as pets
+worldwide, and this paragraph is plainly legible against the page background.</p>{_DEEP_CLOSE}
+</article></body></html>"""
+
+
+async def test_light_text_nested_past_the_ancestor_bound_on_a_dark_page_is_not_flagged():
+    page = await _fetch_local(DARK_THEME_HTML)
+    assert not any("color-contrast" in h["reason"] for h in page.hidden_spans), page.hidden_spans
+    assert "carnivorous mammals" in page.text
+
+
+SELECT_HTML = f"""<html lang="en"><head><title>Doc</title></head><body><article>
+<h1>Cats</h1><p>Cats are small carnivorous mammals kept as pets worldwide indeed.</p>
+<select><option>First choice</option>
+<option>SECOND_CHOICE a longer label nobody scrolled to{_PAD}</option></select>
+</article></body></html>"""
+
+
+async def test_a_closed_selects_options_are_returned_as_text_and_not_called_hidden():
+    page = await _fetch_local(SELECT_HTML)
+    assert "SECOND_CHOICE" in page.text
+    assert not any("SECOND_CHOICE" in h["text"] for h in page.hidden_spans), page.hidden_spans
+
+
 _FLOODS = {
     "captions": "".join(
         f'<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="Photograph {i}{_PAD}{_PAD}">'
