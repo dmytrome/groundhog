@@ -70,6 +70,16 @@
       "control": true
     },
     {
+      "id": "control-translucent-panel",
+      "carrier": "readable label on a translucent panel (not hidden)",
+      "family": "control",
+      "needs_js": false,
+      "file": "control-translucent-panel.html",
+      "payload": "INJ-control-translucent-panel",
+      "visible": "VIS-control-translucent-panel",
+      "control": true
+    },
+    {
       "id": "css-display-none",
       "carrier": "display:none",
       "family": "css",
@@ -106,6 +116,15 @@
       "visible": "VIS-css-same-colour"
     },
     {
+      "id": "css-select-same-colour",
+      "carrier": "option text matching the select background",
+      "family": "css",
+      "needs_js": false,
+      "file": "css-select-same-colour.html",
+      "payload": "INJ-css-select-same-colour",
+      "visible": "VIS-css-select-same-colour"
+    },
+    {
       "id": "css-sr-only",
       "carrier": "sr-only clipping box",
       "family": "css",
@@ -140,6 +159,15 @@
       "file": "css-visibility-hidden.html",
       "payload": "INJ-css-visibility-hidden",
       "visible": "VIS-css-visibility-hidden"
+    },
+    {
+      "id": "evasion-oklch-colour",
+      "carrier": "text and background both in oklch",
+      "family": "evasion",
+      "needs_js": false,
+      "file": "evasion-oklch-colour.html",
+      "payload": "INJ-evasion-oklch-colour",
+      "visible": "VIS-evasion-oklch-colour"
     },
     {
       "id": "evasion-zero-width",
@@ -185,6 +213,15 @@
       "file": "markup-noscript.html",
       "payload": "INJ-markup-noscript",
       "visible": "VIS-markup-noscript"
+    },
+    {
+      "id": "markup-option-hidden",
+      "carrier": "option hidden inside a visible select",
+      "family": "markup",
+      "needs_js": false,
+      "file": "markup-option-hidden.html",
+      "payload": "INJ-markup-option-hidden",
+      "visible": "VIS-markup-option-hidden"
     },
     {
       "id": "markup-svg-desc",

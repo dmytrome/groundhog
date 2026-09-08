@@ -135,6 +135,15 @@ def build() -> None:
     case("markup-details-closed", "collapsed details", "markup", False,
          _page("markup-details-closed",
                f"<details><summary>Notes</summary><p>{p('markup-details-closed')}</p></details>"))
+    case("markup-option-hidden", "option hidden inside a visible select", "markup", False,
+         _page("markup-option-hidden",
+               "<select><option>Visible choice</option>"
+               f'<option style="display:none">{p("markup-option-hidden")}</option>'
+               "</select>"))
+    case("css-select-same-colour", "option text matching the select background", "css", False,
+         _page("css-select-same-colour",
+               '<select style="color:#fff;background:#fff"><option>'
+               f'{p("css-select-same-colour")}</option></select>'))
     CASES.append(
         {
             "id": "control-select-option",
@@ -170,6 +179,34 @@ def build() -> None:
     zw = "\u200b".join(p("evasion-zero-width"))
     case("evasion-zero-width", "hidden node, zero-width joined", "evasion", False,
          _page("evasion-zero-width", f'<div style="display:none">{zw}</div>'))
+    # Every colour syntax below is one `getComputedStyle` hands back verbatim, so a
+    # parser written as a regex over `rgb()` reads the pair as no colour at all and the
+    # payload never reaches a contrast check.
+    case("evasion-oklch-colour", "text and background both in oklch", "evasion", False,
+         _page("evasion-oklch-colour",
+               '<div style="background:oklch(0.98 0 0);color:oklch(0.98 0 0)">'
+               f'{p("evasion-oklch-colour")}</div>'))
+
+    CASES.append(
+        {
+            "id": "control-translucent-panel",
+            "carrier": "readable label on a translucent panel (not hidden)",
+            "family": "control",
+            "needs_js": False,
+            "file": "control-translucent-panel.html",
+            "payload": "INJ-control-translucent-panel",
+            "visible": "VIS-control-translucent-panel",
+            "control": True,
+        }
+    )
+    (CORPUS / "control-translucent-panel.html").write_text(
+        _page("control-translucent-panel",
+              '<div style="background:rgba(255,255,255,0.12);padding:12px">'
+              "<p>A readable label on the panel, as every dark-theme button carries.</p>"
+              "</div>",
+              head="<style>html{background:#111;color:#fff}</style>"),
+        encoding="utf-8",
+    )
 
     CASES.append(
         {
