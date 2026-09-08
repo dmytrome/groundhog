@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-08
+
+### Fixed
+
+- Text is no longer reported hidden because the modelled backdrop differed from the
+  painted one. Backgrounds composite outwards from the element instead of the first
+  non-transparent ancestor winning outright, the page's own canvas is read from
+  `color-scheme` in both its CSS and `<meta>` forms, and every colour is resolved by the
+  browser, so `oklch`, `lab`, `color(srgb ...)` and `color-mix` are understood.
+- `color` and `font-size` are read only off the element that owns the text, which an
+  element whose children set their own is not. Text belonging to a `<slot>`, to a shadow
+  root directly, and to a light-DOM `<slot>` is counted as owned.
+- A `<select>` no longer conceals its options: they are judged on ink and size rather
+  than on a box a closed control never paints, and a flagged option forces the rebuilt
+  text, which `innerText` alone does not drop.
+- Text inside a shadow tree is measured against the background its host paints.
+
+### Added
+
+- Three carriers in the containment corpus — a payload matching its background with both
+  written in `oklch`, an `<option>` hidden inside a visible `<select>`, and an option
+  tinted to its select — and a third control, a readable label on a translucent panel.
+- `test_backdrop_paint.py` colours probe text to the pixel a screenshot reports behind
+  it, across background owner, alpha, colour syntax and nesting depth.
+
 ## [0.13.0] - 2026-09-06
 
 ### Changed
@@ -763,6 +788,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.14.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.14.0
 [0.13.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.13.0
 [0.12.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.12.0
 [0.11.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.11.0
