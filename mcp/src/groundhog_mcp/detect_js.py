@@ -103,11 +103,78 @@ DETECT_AND_COLLECT = r"""
     }
     return parts.join('>');
   };
+  // Colour syntax the browser accepts grows faster than any regex tracks: `oklch`,
+  // `lab`, `color(srgb ...)` and `color-mix` all reach `getComputedStyle` unchanged.
+  // A 1x1 canvas resolves whatever the page wrote, so the browser stays the only
+  // parser. Cached by string: a page uses a handful of colours across many elements.
+  const colorCanvas = (() => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 1;
+      return c.getContext('2d', { willReadFrequently: true });
+    } catch (e) {
+      return null;
+    }
+  })();
+  // A memory bound on what is remembered, not on what is resolved: 20k canvas parses
+  // measured at 83ms against a 15s detect budget, so resolving one again is cheap and
+  // refusing to resolve it would not be safe.
+  const MAX_COLOR_CACHE = 512;
+  const colorCache = new Map();
+  const viaCanvas = (str) => {
+    // A value the canvas rejects leaves `fillStyle` holding the sentinel, so two probes
+    // with different sentinels separate a rejected value from one that resolves to a
+    // sentinel: only a rejected value takes on both.
+    colorCanvas.fillStyle = '#000000';
+    colorCanvas.fillStyle = str;
+    const resolved = colorCanvas.fillStyle;
+    colorCanvas.fillStyle = '#ffffff';
+    colorCanvas.fillStyle = str;
+    if (colorCanvas.fillStyle !== resolved) return null;
+    colorCanvas.clearRect(0, 0, 1, 1);
+    colorCanvas.fillRect(0, 0, 1, 1);
+    const d = colorCanvas.getImageData(0, 0, 1, 1).data;
+    // `getImageData` returns premultiplied-then-unpremultiplied bytes, so a translucent
+    // fill comes back at full channel value with the alpha in the fourth byte.
+    return { r: d[0], g: d[1], b: d[2], a: d[3] / 255 };
+  };
   const parseColor = (str) => {
-    const m = (str || '').match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    const p = m[1].split(',').map((s) => parseFloat(s));
-    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    if (!str) return null;
+    if (colorCache.has(str)) return colorCache.get(str);
+    let out = null;
+    const m = str.match(/^rgba?\(([^)]+)\)$/);
+    if (m) {
+      const p = m[1].split(',').map((s) => parseFloat(s));
+      if (p.length >= 3 && !p.some((v) => Number.isNaN(v)))
+        out = { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    }
+    if (!out && colorCanvas) {
+      try {
+        out = viaCanvas(str);
+      } catch (e) {
+        out = null;
+      }
+    }
+    // The map is bounded, the parsing is not: past the bound a colour is resolved
+    // again rather than remembered. An unresolved colour is skipped rather than judged,
+    // so a page able to exhaust a parse budget could choose what goes unexamined.
+    if (colorCache.size < MAX_COLOR_CACHE) colorCache.set(str, out);
+    return out;
+  };
+  // A translucent layer over what is behind it. `under` is always opaque, so the result
+  // is too, and the walk below can stop as soon as it reaches an opaque layer.
+  const blend = (layers, under) => {
+    let out = under;
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const t = layers[i];
+      out = {
+        r: t.r * t.a + out.r * (1 - t.a),
+        g: t.g * t.a + out.g * (1 - t.a),
+        b: t.b * t.a + out.b * (1 - t.a),
+        a: 1,
+      };
+    }
+    return out;
   };
   const relLuminance = ({ r, g, b }) => {
     const f = (c) => {
@@ -119,21 +186,87 @@ DETECT_AND_COLLECT = r"""
   // The page's own backdrop, for elements whose ancestors are all transparent within the
   // bound below. Assuming white instead reported every light-on-dark element on a themed
   // site as invisible: the dark background sits on `<html>`, further up than the walk goes.
+  const WHITE = { r: 255, g: 255, b: 255, a: 1 };
+  // What the browser paints under a page that declares no background of its own.
+  // `color-scheme` decides it. The `Canvas` system colour would answer exactly, but
+  // reading a system colour needs an element inside the document and this collector adds
+  // none; the constant is pinned against a screenshot in the backdrop tests instead.
+  const DARK_CANVAS = { r: 18, g: 18, b: 18, a: 1 };
+  const canvasBg = (() => {
+    // Chrome paints the dark canvas for `<meta name="color-scheme">` without reflecting
+    // it into the computed value, which reads `normal`, so the pragma is read directly.
+    let declared = getComputedStyle(document.documentElement).colorScheme || '';
+    if (!declared || declared === 'normal') {
+      const meta = document.querySelector('meta[name="color-scheme" i]');
+      declared = (meta && meta.getAttribute('content')) || '';
+    }
+    if (!/(^|\s)dark(\s|$)/.test(declared)) return WHITE;
+    if (!/(^|\s)light(\s|$)/.test(declared)) return DARK_CANVAS;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? DARK_CANVAS : WHITE;
+  })();
+  // `color` and `font-size` inherit, so an element holding no text of its own would be
+  // judged on a value the descendants that do hold text are free to override. Where they
+  // do not override it they inherit the invisible value and are flagged in their own
+  // right, so reading these two only off the element that owns the text loses nothing.
+  // A filled `<slot>` holds the text it projects rather than a child of its own, and a
+  // bare projected text node has no element of its own to be judged instead, so the slot
+  // is the only place that reading can happen.
+  const ownsText = (el) => {
+    // Flattening yields nothing for a `<slot>` whose root is not a shadow root, so a
+    // slot used as an ordinary light-DOM element has to be read as one -- the same
+    // fallback `rendersContent` makes -- or its own ink and size go unexamined.
+    const assigned = el.tagName === 'SLOT' && el.assignedNodes
+      ? el.assignedNodes({ flatten: true })
+      : null;
+    const nodes = assigned && assigned.length ? assigned : el.childNodes;
+    for (const node of nodes) {
+      if (node.nodeType === 3 && node.data.trim()) return true;
+    }
+    // A bare text node directly inside an open shadow root has no element of its own to
+    // be judged on, and inherits `color` and `font-size` from the host across the
+    // boundary, so the host is the only place that reading can happen. Element children
+    // of the root are walked in their own right and are deliberately not counted here.
+    if (el.shadowRoot) {
+      for (const node of el.shadowRoot.childNodes) {
+        if (node.nodeType === 3 && node.data.trim()) return true;
+      }
+    }
+    return false;
+  };
   const pageBg = (() => {
+    const layers = [];
     for (const n of [document.body, document.documentElement]) {
       if (!n) continue;
       const bg = parseColor(getComputedStyle(n).backgroundColor);
-      if (bg && bg.a > ALPHA_THRESHOLD) return bg;
+      if (!bg || bg.a === 0) continue;
+      if (bg.a >= 1) return blend(layers, bg);
+      layers.push(bg);
     }
-    return { r: 255, g: 255, b: 255, a: 1 };
+    return blend(layers, canvasBg);
   })();
   const effectiveBg = (el) => {
+    // Layers are collected from the element outwards and composited. A translucent
+    // overlay -- `rgba(255,255,255,0.12)` on a dark page, the standard dark-theme
+    // button -- is part of the backdrop, not the whole of it.
+    const layers = [];
     let n = el;
-    for (let i = 0; n && i < MAX_BG_ANCESTORS; n = n.parentElement, i++) {
+    for (let i = 0; n && i < MAX_BG_ANCESTORS; i++) {
+      // `pageBg` already composites these two; collecting them here as well would
+      // apply a translucent `<body>` twice and model a backdrop darker than the paint.
+      if (n === document.body || n === document.documentElement) break;
       const bg = parseColor(getComputedStyle(n).backgroundColor);
-      if (bg && bg.a > ALPHA_THRESHOLD) return bg;
+      if (bg && bg.a >= 1) return blend(layers, bg);
+      if (bg && bg.a !== 0) layers.push(bg);
+      if (n.parentElement) {
+        n = n.parentElement;
+        continue;
+      }
+      // A ShadowRoot is not an Element, so `parentElement` stops the walk inside the
+      // component. The host paints behind the whole tree and belongs in the layers.
+      const rootNode = n.getRootNode ? n.getRootNode() : null;
+      n = rootNode && rootNode.host ? rootNode.host : null;
     }
-    return pageBg;
+    return blend(layers, pageBg);
   };
   // Whether anything this element renders paints a box. A Range over its contents
   // measures the content rather than the element, which is what matters for a node that
@@ -177,11 +310,22 @@ DETECT_AND_COLLECT = r"""
     // Skipping them all let `display:contents` + `font-size:1px` walk straight through.
     // `opacity` is skipped with the box tests — with no box there is nothing to composite.
     const noBox = cs.display === 'contents';
+    // A closed `<select>` paints no box for its options, yet their text is part of the
+    // page's rendered text and a reader reaches it by opening the control, so no
+    // box-shaped test describes them. Their inherited `color` and `font-size` do, and
+    // a `<select>` owns no text of its own for those to be read from.
+    // Only inside a control: a bare `<option>` computes to `display:block` and renders
+    // its text in the flow like any other element, so every box-shaped test still
+    // describes it.
+    const optionLike = (el.localName === 'option' || el.localName === 'optgroup')
+      && !!(el.closest && el.closest('select'));
     if (!noBox && parseFloat(cs.opacity) <= ALPHA_THRESHOLD)
       return 'opacity<=' + ALPHA_THRESHOLD;
-    if (parseFloat(cs.fontSize) < 4) return 'font-size<4px';
+    if (ownsText(el) && parseFloat(cs.fontSize) < 4) return 'font-size<4px';
     const r = el.getBoundingClientRect();
-    if (noBox) {
+    if (optionLike) {
+      // Judged on ink and size below, and on nothing shaped like a box.
+    } else if (noBox) {
       // Generating no box of its own is not the same as rendering nothing, so judge it
       // by what its content paints. Skipping the box tests outright let a `display:
       // contents` element inside a `display:none` subtree through: `zero-size` is the
@@ -202,12 +346,12 @@ DETECT_AND_COLLECT = r"""
     }
     // Off-canvas (e.g. `left:-9999px`), checked against full document extent so
     // below-the-fold content — still within scrollHeight — is never flagged.
-    if (r.width > 0 && r.height > 0) {
+    if (!optionLike && r.width > 0 && r.height > 0) {
       const docW = document.documentElement.scrollWidth;
       const docH = document.documentElement.scrollHeight;
       if (r.right <= 0 || r.bottom <= 0 || r.left >= docW || r.top >= docH) return 'off-screen';
     }
-    const fg = parseColor(cs.color);
+    const fg = ownsText(el) ? parseColor(cs.color) : null;
     if (fg) {
       if (fg.a <= ALPHA_THRESHOLD) return 'text-color-transparent';
       const bg = effectiveBg(el);
@@ -225,7 +369,8 @@ DETECT_AND_COLLECT = r"""
     // Skipped for an element that generates no box of its own — a `display: contents`
     // wrapper or a `<slot>` — because the browser reports those unrendered while their
     // contents render normally. Those are judged by `rendersContent` above.
-    if (!noBox && el.checkVisibility && !el.checkVisibility()) return 'not-rendered';
+    if (!noBox && !optionLike && el.checkVisibility && !el.checkVisibility())
+      return 'not-rendered';
     return null;
   };
   const root = document.body || document.documentElement;
@@ -287,10 +432,6 @@ DETECT_AND_COLLECT = r"""
       const shadowText = el.shadowRoot ? (el.shadowRoot.textContent || '').trim() : '';
       const text = (el.textContent || '').trim() || shadowText;
       if (!text) continue;
-      // A closed `<select>` paints no box for its options, but their text is part of the
-      // page's rendered text and a reader reaches it by opening the control. Flagging it
-      // said the text was hidden while the same run returned it.
-      if (el.localName === 'option' || el.localName === 'optgroup') continue;
       if (insideFlagged(el)) continue;
       const reason = isHidden(el);
       if (reason) {
@@ -634,6 +775,13 @@ DETECT_AND_COLLECT = r"""
     let untrusted = document.body.getClientRects().length === 0;
     if (!untrusted) {
       for (const el of toRemove) {
+        // `innerText` lists every `<option>` label whatever its own display, so hiding
+        // one changes nothing about the live text and the copy is the only place it is
+        // structurally gone.
+        if (el.localName === 'option' || el.localName === 'optgroup') {
+          untrusted = true;
+          break;
+        }
         if (getComputedStyle(el).display !== 'none') { untrusted = true; break; }
       }
     }
