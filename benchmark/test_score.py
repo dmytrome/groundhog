@@ -127,19 +127,22 @@ def test_firecrawl_uses_the_key_when_one_is_set(monkeypatch):
     assert firecrawl.build_request("https://ex.com").get_header("Authorization") == "Bearer fc-test"
 
 
-def _readme_scores() -> set[tuple[str, str, str]]:
+def _readme_scores() -> set[tuple[str, ...]]:
     text = (HERE.parent / "README.md").read_text()
     rows = set()
     for line in text.splitlines():
         cells = [c.strip().strip("*").strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) == 4 and all(re.fullmatch(r"\d+/\d+", c) for c in cells[1:]):
+        if len(cells) == 5 and all(re.fullmatch(r"\d+/\d+", c) for c in cells[1:]):
             rows.add(tuple(cells[1:]))
     return rows
 
 
-def _results_scores() -> set[tuple[str, str, str]]:
+def _results_scores() -> set[tuple[str, ...]]:
     text = (HERE / "RESULTS.md").read_text()
-    pattern = r"contained (\d+/\d+), kept the article (\d+/\d+), disclosed (\d+/\d+)"
+    pattern = (
+        r"contained (\d+/\d+), kept the article (\d+/\d+), "
+        r"disclosed (\d+/\d+), false positives (\d+/\d+)"
+    )
     return set(re.findall(pattern, text))
 
 
