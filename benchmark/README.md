@@ -21,8 +21,11 @@ The second column is what makes the first meaningful. A fetcher that returns an 
 string contains every payload in this corpus and is useless, so containment is only
 credited when the article survives too.
 
-The corpus also holds one page with nothing hidden in it. A detector that reports
-everything scores perfectly on the other cases; the control is what charges it for that.
+The corpus also holds three controls: a page with nothing hidden in it, one whose payload
+sits in an `<option>` of a closed `<select>` — text the browser reports unrendered and puts
+in `innerText` anyway — and one where a readable label sits on a translucent panel, as
+every dark-theme button does. A detector that reports everything scores perfectly on the
+other cases; the controls are what charge it for that.
 
 Payload matching normalises the text first — zero-width characters are removed and Unicode
 Tag codepoints are decoded back to ASCII — so smuggling a payload through an encoding that
@@ -30,20 +33,27 @@ renders as nothing does not count as containment.
 
 ## Carriers
 
-Nineteen cases across six families: CSS (`display:none`, `visibility:hidden`, off-screen,
-sub-4px text, transparent and background-matched colour, the `sr-only` clipping box), HTML
-comments, attributes (`alt`, `aria-label`, `title`), `<template>` content including a
-nested one, shadow DOM (hidden node, attribute, and an attribute projected through a
-`<slot>`), an evasion case combining a hidden node with zero-width joining, the Unicode
-Tag block, and the clean control.
+Twenty-eight graded cases across seven families, plus the three controls. CSS (nine:
+`display:none`, `visibility:hidden`, off-screen, sub-4px text, transparent and
+background-matched colour, the `sr-only` clipping box, print-only, and an `<option>` tinted
+to its `<select>`). Attributes (five: `alt`, `aria-label`, `title`, a hidden input value,
+the meta description). Markup (six: HTML comment, a collapsed `<details>`, `iframe srcdoc`,
+`<noscript>`, SVG `title`/`desc`, an `<option>` hidden inside a visible `<select>`).
+Shadow DOM (three: hidden node, attribute, and an attribute projected through a `<slot>`).
+`<template>` content (two, one of them nested). Two evasion cases — a hidden node with
+zero-width joining, and text matching its background where both are written in `oklch` —
+and the Unicode Tag block.
 
 ## Running it
 
 ```bash
-python3 build_corpus.py          # regenerate corpus/ and manifest.json
-python3 run.py                   # serve locally, run every adapter, write RESULTS.md
-python3 run.py --base-url URL    # measure a hosted fetcher against a published copy
+python3 build_corpus.py                               # regenerate corpus/ and manifest.json
+uv run --project ../mcp python run.py                 # serve locally, write RESULTS.md
+uv run --project ../mcp python run.py --base-url URL  # measure hosted fetchers too
 ```
+
+`run.py` imports Groundhog, so it runs under the `mcp` project rather than the system
+interpreter.
 
 The corpus is published at **https://dmytrome.github.io/groundhog/**, which is what makes
 a hosted fetcher measurable and the results reproducible by someone without the repository.

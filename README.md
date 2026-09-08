@@ -16,17 +16,22 @@ agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ─
 
 ## Measured against other fetch layers
 
-Eighteen pages, each carrying text a human reader cannot see, plus one clean control. A
-case passes when the payload does not reach the model **and** the article text still does —
-a fetcher that returns nothing contains every payload and is useless.
+Twenty-eight pages, each carrying text a human reader cannot see, plus three controls
+carrying none. A case passes when the payload does not reach the model **and** the article
+text still does — a fetcher that returns nothing contains every payload and is useless.
 
-| | contained | kept the article | reported it |
-| --- | --- | --- | --- |
-| `requests` + trafilatura | 16/18 | 18/18 | 0/18 |
-| Scrapling (HTTP) | 10/18 | 18/18 | 0/18 |
-| Jina Reader | 8/18 | 18/18 | 0/18 |
-| Firecrawl | 4/18 | 18/18 | 0/18 |
-| **Groundhog** | **18/18** | **18/18** | **18/18** |
+| | contained | kept the article | reported it | false positives |
+| --- | --- | --- | --- | --- |
+| `requests` + trafilatura | 25/28 | 28/28 | 0/28 | 0/3 |
+| Scrapling (HTTP) | 16/28 | 28/28 | 0/28 | 0/3 |
+| Jina Reader | 15/28 | 28/28 | 0/28 | 0/3 |
+| Firecrawl | 7/28 | 28/28 | 0/28 | 0/3 |
+| **Groundhog** | **28/28** | **28/28** | **25/28** | **0/3** |
+
+Groundhog reports 25 of the 28 rather than all of them. The other three — a hidden input
+value, a meta description, an `iframe srcdoc` — are contained because no extractor ever
+collected them, and naming text that was never on its way to the model would describe work
+nothing did.
 
 Containment happens by accident all the time — an article extractor prunes a hidden `<div>`
 because its heuristics dislike it, not because anything asked whether a reader could see
