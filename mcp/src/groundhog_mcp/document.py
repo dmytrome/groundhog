@@ -73,6 +73,22 @@ def _merged(
     return best
 
 
+def _folded(threats: list[sanitize.Threat]) -> list[sanitize.Threat]:
+    first: dict[tuple[str, str], sanitize.Threat] = {}
+    out: list[sanitize.Threat] = []
+    for threat in threats:
+        key = (threat["reason"], threat["excerpt"])
+        already = first.get(key)
+        if already is None:
+            first[key] = threat
+            out.append(threat)
+            continue
+        already["seen"] = already.get("seen", 1) + 1
+        if already["location"] != threat["location"]:
+            already["location"] = None
+    return out
+
+
 def _ranked(hidden: list[sanitize.Threat], *, trusted: bool, limit: int) -> list[sanitize.Threat]:
     """Order hidden findings so the cap truncates the least informative first.
 
@@ -134,9 +150,12 @@ def _capped(
     # that keep theirs — those carry the injection excerpt.
     kept_char = char_threats[: min(len(char_threats), max(limit // 2, limit - len(hidden)))]
     budget = limit - len(kept_char)
-    kept_hidden = _ranked(hidden, trusted=trusted, limit=budget)[:budget]
+    ranked = _ranked(hidden, trusted=trusted, limit=budget)
+    kept_hidden = ranked[:budget]
     dropped = (
-        (len(char_threats) - len(kept_char)) + (len(hidden) - len(kept_hidden)) + already_dropped
+        (len(char_threats) - len(kept_char))
+        + sum(t.get("seen", 1) for t in ranked[budget:])
+        + already_dropped
     )
     kept = kept_char + kept_hidden
     if not dropped:
@@ -184,7 +203,9 @@ async def fetch_document(
         markdown = sanitize.strip_invisible(markdown, scans[0])
     threats = _capped(
         char_threats,
-        _hidden_threats(page.hidden_spans),
+        _folded(_hidden_threats(page.hidden_spans))
+        if page.isolated
+        else _hidden_threats(page.hidden_spans),
         max_threats,
         page.spans_dropped,
         trusted=page.isolated,

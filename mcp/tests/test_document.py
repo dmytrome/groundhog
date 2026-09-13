@@ -335,14 +335,104 @@ async def test_decoys_wearing_the_payloads_own_reason_leave_the_drop_disclosed(
     assert notice and "31 further threats not reported" in notice[0]["reason"]
 
 
+async def test_a_tally_gathered_from_several_places_names_none_of_them(fake_provider, make_page):
+    spans = [
+        {"reason": _DISPLAY_NONE, "text": _BOILERPLATE, "path": place}
+        for place in ("body>nav>div", "body>aside>div", "body>footer>div")
+    ]
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p")
+    folded = next(t for t in doc.threats if t["excerpt"] == _BOILERPLATE)
+    assert folded["seen"] == 3
+    assert folded["location"] is None
+
+
+async def test_a_tally_gathered_from_one_place_still_names_it(fake_provider, make_page):
+    spans = [
+        {"reason": _DISPLAY_NONE, "text": _BOILERPLATE, "path": "body>nav>div"} for _ in range(3)
+    ]
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p")
+    folded = next(t for t in doc.threats if t["excerpt"] == _BOILERPLATE)
+    assert folded["seen"] == 3
+    assert folded["location"] == "body>nav>div"
+
+
+async def test_a_page_that_writes_its_own_reasons_has_nothing_gathered_for_it(
+    fake_provider, make_page
+):
+    spans = [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(30)]
+    fake_provider(make_page(hidden=spans, isolated=False))
+    doc = await fetch_document("https://ex.com/p")
+    carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
+    assert len(carriers) == 30
+    assert not any("seen" in t for t in carriers)
+
+
+async def test_a_research_sources_budget_still_reports_both_the_tally_and_the_injection(
+    fake_provider, make_page
+):
+    spans = [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(30)]
+    spans.append(_injection())
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p", max_threats=10)
+    carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
+    assert next(t for t in carriers if t["excerpt"] == _BOILERPLATE)["seen"] == 30
+    assert any(t["excerpt"].startswith("IGNORE ALL") for t in carriers)
+    assert not [t for t in doc.threats if t["type"] == "report_truncated"], doc.threats
+
+
+async def test_a_finding_repeated_verbatim_is_reported_once_with_a_tally(fake_provider, make_page):
+    spans = [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(26)]
+    spans.append(_injection())
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p")
+    carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
+    assert len(carriers) == 2
+    boilerplate = next(t for t in carriers if t["excerpt"] == _BOILERPLATE)
+    assert boilerplate["seen"] == 26
+    assert "seen" not in next(t for t in carriers if t["excerpt"].startswith("IGNORE ALL"))
+
+
+async def test_folding_repeats_frees_slots_for_findings_that_differ(fake_provider, make_page):
+    spans = [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(40)]
+    spans += [
+        {"reason": "off-screen", "text": f"a distinct finding {i}", "path": "d"} for i in range(40)
+    ]
+    spans.append(_injection())
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p")
+    carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
+    assert len(carriers) == 42
+    assert any(t["excerpt"].startswith("IGNORE ALL") for t in carriers)
+
+
+async def test_a_dropped_tally_is_counted_in_findings_not_in_entries(fake_provider, make_page):
+    spans = [
+        {"reason": _HIDING_REASONS[i % 8], "text": f"a distinct finding {i}", "path": "d"}
+        for i in range(16)
+    ]
+    spans += [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(30)]
+    fake_provider(make_page(hidden=spans))
+    doc = await fetch_document("https://ex.com/p", max_threats=10)
+    notice = [t for t in doc.threats if t["type"] == "report_truncated"]
+    carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
+    reported = sum(t.get("seen", 1) for t in carriers)
+    assert notice, doc.threats
+    assert reported + int(notice[0]["reason"].split()[0]) == 46
+
+
 async def test_a_page_that_writes_its_own_reasons_keeps_collection_order(fake_provider, make_page):
-    spans = [{"reason": "sr-only-1px", "text": _BOILERPLATE, "path": "a>span"} for _ in range(80)]
+    spans = [
+        {"reason": "sr-only-1px", "text": f"{_BOILERPLATE} {i}", "path": "a>span"}
+        for i in range(80)
+    ]
     spans.append(_injection())
     fake_provider(make_page(hidden=spans, isolated=False))
     doc = await fetch_document("https://ex.com/p")
     carriers = [t for t in doc.threats if t["type"].startswith("hidden_")]
     assert len(carriers) == 50
-    assert [t["excerpt"] for t in carriers] == [_BOILERPLATE] * 50
+    assert [t["excerpt"] for t in carriers] == [f"{_BOILERPLATE} {i}" for i in range(50)]
 
 
 _LOW_SIGNAL_REASONS = [

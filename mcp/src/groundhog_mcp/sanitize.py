@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 # Caps for the page-authored strings that reach a tool result. They live here,
 # beside `clean_field`, so a new call site picks an existing bound instead of
@@ -56,6 +56,7 @@ class Threat(TypedDict):
     reason: str
     location: str | None
     excerpt: str
+    seen: NotRequired[int]
 
 
 def _category(ch: str) -> ThreatType | None:
