@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-13
+
+### Fixed
+
+- A page carrying a great many harmless hidden findings no longer conceals the one that
+  carries an injection. The report opens in the order the collector produced, then gives
+  each way of hiding text a turn, so no single carrier spends the cap. Measured against
+  the page shapes live sites show, this reports a payload the previous order dropped 663
+  times against 65 the other way. The payload was stripped from the content either way;
+  what changed is whether the caller is told.
+- Findings that repeat verbatim fold into one entry carrying a `seen` count, so the cap
+  is spent on findings that differ. On a page whose findings fit under the cap this cuts
+  the report by two thirds; on one that fills it, the freed slots go to findings the
+  report previously had no room for.
+
+### Changed
+
+- `threats` entries may carry `seen`, the number of findings an entry stands for. It is
+  absent when an entry stands for one. A tally gathered from more than one place in the
+  document reports no `location`, rather than naming one of them.
+
 ## [0.14.0] - 2026-09-08
 
 ### Fixed
@@ -788,6 +809,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.15.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.15.0
 [0.14.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.14.0
 [0.13.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.13.0
 [0.12.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.12.0
