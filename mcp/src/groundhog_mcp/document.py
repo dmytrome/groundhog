@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import zip_longest
 from typing import Literal
 
 from . import classify, engine, extract, provenance, sanitize
@@ -72,7 +73,7 @@ def _merged(
     return best
 
 
-def _ranked(hidden: list[sanitize.Threat], *, trusted: bool) -> list[sanitize.Threat]:
+def _ranked(hidden: list[sanitize.Threat], *, trusted: bool, limit: int) -> list[sanitize.Threat]:
     """Order hidden findings so the cap truncates the least informative first.
 
     Without this a gallery of described images, or a page of component templates, evicts
@@ -88,7 +89,23 @@ def _ranked(hidden: list[sanitize.Threat], *, trusted: bool) -> list[sanitize.Th
     """
     if not trusted:
         return hidden
-    return sorted(hidden, key=lambda t: t["type"] in _LOW_SIGNAL_CARRIERS)
+    low = [t for t in hidden if t["type"] in _LOW_SIGNAL_CARRIERS]
+    high = [t for t in hidden if t["type"] not in _LOW_SIGNAL_CARRIERS]
+    return _collection_order_then_turns(high, limit) + _interleaved_by_reason(low)
+
+
+def _collection_order_then_turns(
+    threats: list[sanitize.Threat], budget: int
+) -> list[sanitize.Threat]:
+    head = budget // 2
+    return threats[:head] + _interleaved_by_reason(threats[head:])
+
+
+def _interleaved_by_reason(threats: list[sanitize.Threat]) -> list[sanitize.Threat]:
+    groups: dict[str, list[sanitize.Threat]] = {}
+    for threat in threats:
+        groups.setdefault(threat["reason"], []).append(threat)
+    return [t for row in zip_longest(*groups.values()) for t in row if t is not None]
 
 
 def _capped(
@@ -96,6 +113,8 @@ def _capped(
     hidden: list[sanitize.Threat],
     limit: int,
     already_dropped: int,
+    *,
+    trusted: bool,
 ) -> list[sanitize.Threat]:
     """Bound the reported threats, disclosing the drop.
 
@@ -114,7 +133,8 @@ def _capped(
     # free. Below two slots one class must yield, and it is the hidden-node findings
     # that keep theirs — those carry the injection excerpt.
     kept_char = char_threats[: min(len(char_threats), max(limit // 2, limit - len(hidden)))]
-    kept_hidden = hidden[: max(0, limit - len(kept_char))]
+    budget = limit - len(kept_char)
+    kept_hidden = _ranked(hidden, trusted=trusted, limit=budget)[:budget]
     dropped = (
         (len(char_threats) - len(kept_char)) + (len(hidden) - len(kept_hidden)) + already_dropped
     )
@@ -164,9 +184,10 @@ async def fetch_document(
         markdown = sanitize.strip_invisible(markdown, scans[0])
     threats = _capped(
         char_threats,
-        _ranked(_hidden_threats(page.hidden_spans), trusted=page.isolated),
+        _hidden_threats(page.hidden_spans),
         max_threats,
         page.spans_dropped,
+        trusted=page.isolated,
     )
     if not page.isolated:
         # The collector had to run in the page's own JavaScript world, where the page
