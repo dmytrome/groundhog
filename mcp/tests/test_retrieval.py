@@ -6,8 +6,10 @@ from markdown_it import MarkdownIt
 from groundhog_mcp import extract
 from groundhog_mcp.retrieval import (
     _HEADING_RE,
+    Chunk,
     _fenced_lines,
     chunk_document,
+    rank,
     select,
 )
 
@@ -26,7 +28,7 @@ The cat is a crepuscular hunter that stalks prey using acute night vision.
 
 
 def test_returns_only_relevant_passages_in_document_order():
-    body, matches, truncated = select(DOC, "cat hunting vision", max_tokens=10000)
+    body, matches, truncated, _ = select(DOC, "cat hunting vision", max_tokens=10000)
     assert "crepuscular hunter" in body
     assert "loyal domesticated" not in body  # dog paragraph is irrelevant
     # matches are ordered by document offset, not by score
@@ -35,19 +37,19 @@ def test_returns_only_relevant_passages_in_document_order():
 
 
 def test_match_carries_nearest_heading():
-    _, matches, _ = select(DOC, "crepuscular night vision", max_tokens=10000)
+    _, matches, _, _ = select(DOC, "crepuscular night vision", max_tokens=10000)
     assert matches[0]["heading"] == "Feline behavior"
 
 
 def test_no_match_returns_empty_for_caller_fallback():
-    body, matches, truncated = select(DOC, "quantum chromodynamics lattice", max_tokens=10000)
+    body, matches, truncated, _ = select(DOC, "quantum chromodynamics lattice", max_tokens=10000)
     assert body == ""
     assert matches == []
     assert truncated is False
 
 
 def test_budget_drops_lowest_ranked_and_marks_truncated():
-    body, matches, truncated = select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
+    body, matches, truncated, _ = select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
     assert truncated is True
     assert len(matches) >= 1
 
@@ -62,7 +64,7 @@ def test_body_without_blank_line_after_heading_is_searchable():
     # A heading directly followed by its body (no blank line) must still yield a
     # searchable body chunk, not be swallowed whole into the heading.
     doc = "# Dogs\nLoyal domesticated animals trained for companionship and work."
-    body, matches, _ = select(doc, "loyal domesticated companionship", max_tokens=10000)
+    body, matches, _, _ = select(doc, "loyal domesticated companionship", max_tokens=10000)
     assert "Loyal domesticated" in body
     assert matches and matches[0]["heading"] == "Dogs"
 
@@ -72,6 +74,91 @@ def test_heading_is_capped():
     # token budget, so an enormous one would flood context outside max_tokens.
     chunks = chunk_document("# " + "h" * 500 + "\n\nbody text here\n")
     assert len(chunks[0].heading) == 200
+
+
+_ABOUT_CATS = "\n\n".join(
+    [
+        "## Feeding",
+        "A cat eats meat and a kitten eats more often than a grown cat does each day.",
+        "## Litter",
+        "A cat wants its litter tray cleaned each day, which no cat owner enjoys.",
+        "## Sleeping",
+        "A cat sleeps most of the day, and a kitten sleeps more of the day than that.",
+        "## Grooming",
+        "A cat grooms itself each day, and a kitten learns the habit from its mother.",
+        "## Company",
+        "A cat kept alone each day fares worse than a cat that has another cat about.",
+    ]
+)
+
+
+def test_two_different_questions_do_not_return_the_same_passages():
+    feeding, _, _, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    litter, _, _, _ = select(_ABOUT_CATS, "how often is the litter tray cleaned", 20000)
+    assert feeding != litter
+    assert "eats meat" in feeding and "litter tray" not in feeding
+    assert "litter tray" in litter and "eats meat" not in litter
+
+
+def test_a_question_does_not_bring_back_the_whole_document():
+    body, _, _, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    assert len(body) < len(_ABOUT_CATS) / 2
+
+
+def test_narrowing_to_the_question_is_not_reported_as_a_budget_truncation():
+    _, _, truncated, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    assert truncated is False
+
+
+def test_the_count_of_passages_the_floor_set_aside_is_reported():
+    _, matches, truncated, set_aside = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    scoring, _, _ = rank(chunk_document(_ABOUT_CATS), "what does a kitten eat", 20000)
+    assert truncated is False
+    assert set_aside == len(scoring) - len(matches) > 0
+
+
+def test_a_pooled_ranking_keeps_a_source_that_corroborates_rather_than_answers():
+    chunks = [
+        Chunk(heading=None, offset=0, source=name, text=text)
+        for name, text in (
+            ("a", "Cats eat meat and a kitten eats more often than a grown cat does."),
+            ("b", "A kitten needs feeding several times a day."),
+            ("c", "Feeding a cat once a day suits an adult animal."),
+        )
+    ]
+    ranked, _, _ = rank(chunks, "what does a kitten eat", 20000)
+    assert [s.chunk.source for s in ranked] == ["a", "b", "c"]
+
+
+def test_a_short_page_is_narrowed_like_any_other():
+    markdown = "\n\n".join(
+        [
+            "## A",
+            "kitten eats meat daily and a kitten eats it twice",
+            "## B",
+            "the kitten tray is emptied twice daily",
+            "## C",
+            "vaccinations are due at twelve weeks",
+        ]
+    )
+    _, matches, _, _ = select(markdown, "what does a kitten eat", 20000)
+    assert [m["heading"] for m in matches] == ["A"]
+
+
+def test_two_sections_that_both_answer_the_question_both_survive():
+    markdown = "\n\n".join(
+        [
+            "## Kitten feeding",
+            "A kitten eats meat several times a day while it is still growing fast.",
+            "## Kitten meals",
+            "A kitten eats meat in small meals rather than one large meal each day.",
+            "## Litter",
+            "The tray wants cleaning daily, which is the part that nobody enjoys.",
+        ]
+    )
+    body, matches, _, _ = select(markdown, "what does a kitten eat", 20000)
+    assert len(matches) == 2
+    assert "several times a day" in body and "small meals" in body
 
 
 def test_a_chunk_that_opens_with_a_fence_reports_where_it_starts():

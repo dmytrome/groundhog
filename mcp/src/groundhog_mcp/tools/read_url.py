@@ -18,6 +18,7 @@ class ReadResult(TypedDict):
     truncated: bool
     threats: list[sanitize.Threat]
     matches: list[retrieval.Match]
+    set_aside: int
     provenance: provenance.Provenance
 
 
@@ -83,13 +84,14 @@ async def read_url(
     limit = config.token_budget(max_tokens, engine.load_config().max_tokens)
 
     matches: list[retrieval.Match] = []
-    body, truncated = doc.markdown, False
+    body, truncated, set_aside = doc.markdown, False, 0
     if query and query.strip():
-        selected, selected_matches, selected_truncated = retrieval.select(
+        selected, selected_matches, selected_truncated, selected_set_aside = retrieval.select(
             doc.markdown, query, limit
         )
         if selected_matches:
             body, matches, truncated = selected, selected_matches, selected_truncated
+            set_aside = selected_set_aside
     # select() admits the top passage unconditionally, so even a ranked body can
     # exceed the budget — one clamp covers both paths and keeps the flag honest.
     body, over_budget = extract.truncate(body, limit)
@@ -106,5 +108,6 @@ async def read_url(
         "truncated": truncated,
         "threats": doc.threats,
         "matches": matches,
+        "set_aside": set_aside,
         "provenance": doc.provenance,
     }

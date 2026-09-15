@@ -139,6 +139,7 @@ Fetches a page and returns clean content plus provenance.
 | `truncated`  | Whether the content was cut to fit the token budget                                              |
 | `threats`    | Signals detected: hidden-CSS nodes and invisible-character classes; empty when none found |
 | `matches`    | When `query` is set: ranked passages with `heading`, `offset`, and `score` for citation          |
+| `set_aside`  | When `query` is set: how many scoring passages the relevance floor dropped; `0` otherwise        |
 | `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present         |
 
 Because Groundhog renders a real DOM, it can evaluate computed styles. Text invisible to
@@ -189,9 +190,14 @@ appended after the cap — so they can never themselves be dropped, and a capped
 50 findings plus at most two notices.
 
 Pass `query` to replace blunt head-truncation with relevance-ranked passage selection:
-content is chunked on markdown structure, ranked by lexical (BM25) relevance, and the top
-passages within the token budget are returned; `matches` gives each passage's heading,
-character offset, and score for downstream citation. Ranking runs on the sanitized content,
+content is chunked on markdown structure, ranked by lexical (BM25) relevance, and the
+passages scoring within half of the best one are returned, up to the token budget — so a
+question narrows a page to what answers it rather than to whatever fits the budget, and two
+different questions about one page come back with different content. `matches` gives each
+passage's heading, character offset, and score for downstream citation, and `set_aside`
+counts the scoring passages the floor dropped, so a narrowed page is never mistaken for a
+whole one: `truncated` still means only that the budget cut the content. Ranking runs on the
+sanitized content,
 so hidden-text injection payloads cannot influence which passages surface — with the one
 exception of `include_hidden=True`, which leaves the hidden text in the document and ranks it
 along with everything else.

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- `read_url` with a `query` returns the passages that answer it rather than everything that
+  mentioned it. Selection was bounded only by the token budget, so on any page smaller than
+  the budget two different questions came back with the same bytes. Passages now have to
+  score within half of the best one. `truncated` still means the budget cut the content, not
+  that a passage was set aside for relevance; a new `set_aside` count on the result says how
+  many scoring passages the floor dropped, so a caller can tell a narrowed page from a whole
+  one.
+
 ### Fixed
 
 - A `#` comment inside a fenced code block is no longer read as a markdown heading, so a

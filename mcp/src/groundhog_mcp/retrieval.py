@@ -11,6 +11,7 @@ _HEADING_RE = re.compile(r"^#{1,6}\s+")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
+_RELEVANCE_FLOOR = 0.5
 _K1 = 1.5
 _B = 0.75
 
@@ -146,7 +147,9 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def rank(chunks: list[Chunk], query: str, max_tokens: int) -> tuple[list[Scored], bool]:
+def rank(
+    chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
+) -> tuple[list[Scored], bool, int]:
     """Score passages against `query` and admit the best that fit the budget."""
     scores = _bm25(chunks, _tokenize(query))
     by_relevance = sorted(
@@ -154,23 +157,32 @@ def rank(chunks: list[Chunk], query: str, max_tokens: int) -> tuple[list[Scored]
         key=lambda i: (-scores[i], i),
     )
     if not by_relevance:
-        return [], False
+        return [], False, 0
+    least = scores[by_relevance[0]] * floor
+    relevant = [i for i in by_relevance if scores[i] >= least]
+    set_aside = len(by_relevance) - len(relevant)
     limit = max_tokens * _CHARS_PER_TOKEN
     chosen: list[int] = []
     used = 0
-    for i in by_relevance:
+    for i in relevant:
         blen = len(chunks[i].text) + 2
         if chosen and used + blen > limit:
             break
         chosen.append(i)
         used += blen
-    return [Scored(chunks[i], scores[i]) for i in chosen], len(chosen) < len(by_relevance)
+    return (
+        [Scored(chunks[i], scores[i]) for i in chosen],
+        len(chosen) < len(relevant),
+        set_aside,
+    )
 
 
-def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool]:
-    ranked, truncated = rank(chunk_document(markdown), query, max_tokens)
+def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool, int]:
+    ranked, truncated, set_aside = rank(
+        chunk_document(markdown), query, max_tokens, floor=_RELEVANCE_FLOOR
+    )
     if not ranked:
-        return "", [], False
+        return "", [], False, 0
     # Within one document, offset order is reading order — what a caller wants to
     # read back, unlike the relevance order `rank` returns.
     by_offset = sorted(ranked, key=lambda s: s.chunk.offset)
@@ -183,4 +195,4 @@ def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match]
         for s in by_offset
     ]
     body = "\n\n".join(s.chunk.text for s in by_offset)
-    return body, matches, truncated
+    return body, matches, truncated, set_aside
