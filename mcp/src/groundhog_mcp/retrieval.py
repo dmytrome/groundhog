@@ -8,6 +8,8 @@ from . import sanitize
 _CHARS_PER_TOKEN = 4
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
 _K1 = 1.5
 _B = 0.75
@@ -38,10 +40,44 @@ def _tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
+def _fenced_lines(lines: list[str]) -> set[int]:
+    closers: list[tuple[str, int]] = []
+    for line in lines:
+        closing = _FENCE_CLOSE_RE.match(line)
+        run = closing.group(1) if closing else ""
+        closers.append((run[:1], len(run)))
+    ahead = {"`": [0] * (len(lines) + 1), "~": [0] * (len(lines) + 1)}
+    for index in range(len(lines) - 1, -1, -1):
+        char, size = closers[index]
+        for key, longest in ahead.items():
+            longest[index] = max(longest[index + 1], size) if key == char else longest[index + 1]
+
+    inside: set[int] = set()
+    index = 0
+    while index < len(lines):
+        opening = _FENCE_OPEN_RE.match(lines[index])
+        if not opening:
+            index += 1
+            continue
+        run, info = opening.group(1), opening.group(2)
+        if (run[0] == "`" and "`" in info) or ahead[run[0]][index + 1] < len(run):
+            index += 1
+            continue
+        closed_at = next(
+            i
+            for i in range(index + 1, len(lines))
+            if closers[i][0] == run[0] and closers[i][1] >= len(run)
+        )
+        inside.update(range(index, closed_at + 1))
+        index = closed_at + 1
+    return inside
+
+
 def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
     # Scan line by line so a heading with no blank line before its body still
     # splits into a heading + a searchable body chunk (a blank-line-delimited
     # block would swallow the body into the heading and drop it).
+    fenced = _fenced_lines(markdown.splitlines())
     chunks: list[Chunk] = []
     heading: str | None = None
     lines: list[str] = []
@@ -56,11 +92,15 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
             )
             lines = []
 
-    for raw in markdown.splitlines(keepends=True):
+    for index, raw in enumerate(markdown.splitlines(keepends=True)):
         line = raw.rstrip("\n")
         start = pos
         pos += len(raw)
-        if not line.strip():
+        if index in fenced:
+            if not lines:
+                offset = start
+            lines.append(line)
+        elif not line.strip():
             flush()
         elif _HEADING_RE.match(line):
             flush()

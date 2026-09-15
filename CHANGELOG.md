@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A `#` comment inside a fenced code block is no longer read as a markdown heading, so a
+  shell comment can no longer be cited to the model as the section a passage came from. A
+  fence closes only on the character that opened it, repeated at least as many times; fence
+  lines pair in the order they appear; a line opening with a backtick run whose info string
+  holds another backtick is prose, not a fence; and an opener with no closer of its own is
+  prose too, so a bare fence line in a page's own text neither swallows the headings after
+  it nor strips the cover from the next real code block.
+
 ## [0.15.0] - 2026-09-13
 
 ### Fixed
