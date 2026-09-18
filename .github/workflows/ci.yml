@@ -17,7 +17,7 @@ jobs:
         working-directory: mcp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v8
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v8
         with:
           python-version: "3.12"
       - run: uv sync
@@ -46,7 +46,7 @@ jobs:
           echo "CDP never became ready" >&2
           docker compose logs --no-color chrome | tail -50
           exit 1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v8
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v8
         with:
           python-version: "3.12"
       - name: Run the browser-backed tests
