@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-09-19
+
+### Fixed
+
+- A one-line passage no longer sets the relevance bar for the paragraph that answers.
+  BM25 weights a term more heavily in a short passage, so a page keeping a nav label such
+  as `Install` above a long paragraph on installing returned only the label and set the
+  paragraph aside. A passage that matches every query term the best one matches now stays,
+  whatever its length.
+
 ## [0.16.0] - 2026-09-19
 
 ### Changed
@@ -831,6 +841,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.16.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.16.1
 [0.16.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.16.0
 [0.15.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.15.0
 [0.14.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.14.0
