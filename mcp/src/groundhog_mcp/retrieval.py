@@ -151,15 +151,18 @@ def rank(
     chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
 ) -> tuple[list[Scored], bool, int]:
     """Score passages against `query` and admit the best that fit the budget."""
-    scores = _bm25(chunks, _tokenize(query))
+    terms = _tokenize(query)
+    scores = _bm25(chunks, terms)
     by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
         key=lambda i: (-scores[i], i),
     )
     if not by_relevance:
         return [], False, 0
-    least = scores[by_relevance[0]] * floor
-    relevant = [i for i in by_relevance if scores[i] >= least]
+    best = by_relevance[0]
+    least = scores[best] * floor
+    matched = {i: set(terms) & set(_tokenize(chunks[i].text)) for i in by_relevance}
+    relevant = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
     set_aside = len(by_relevance) - len(relevant)
     limit = max_tokens * _CHARS_PER_TOKEN
     chosen: list[int] = []

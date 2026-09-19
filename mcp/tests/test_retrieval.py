@@ -145,6 +145,34 @@ def test_a_short_page_is_narrowed_like_any_other():
     assert [m["heading"] for m in matches] == ["A"]
 
 
+def test_a_one_word_chunk_does_not_set_the_bar_for_the_paragraph_that_answers():
+    filler = "\n\n".join(
+        f"Paragraph {i} talks about cats and their habits at some length without the key word. " * 3
+        for i in range(6)
+    )
+    paragraph = "To install the tool, run the installer and follow the getting started guide. " + (
+        "After that the daemon starts on its own and the browser image is pulled on first use. " * 5
+    )
+    markdown = "# Page\n\nInstall\n\n" + filler + "\n\n" + paragraph + "\n"
+    body, matches, _, set_aside = select(markdown, "install", 20000)
+    assert "run the installer" in body
+    assert len(matches) == 2 and set_aside == 0
+
+
+def test_a_passage_matching_every_term_the_best_one_matches_is_not_set_aside_for_length():
+    filler = "\n\n".join(
+        f"Paragraph {i} talks about cats and their habits at some length without the key word. " * 3
+        for i in range(6)
+    )
+    nav = "Install guide: how to set up the tool quickly on any machine today"
+    paragraph = "To install the tool, read the guide, run the installer and check the version. " + (
+        "After that the daemon starts on its own and the browser image is pulled on first use. " * 5
+    )
+    markdown = "# Page\n\n" + nav + "\n\n" + filler + "\n\n" + paragraph + "\n"
+    body, _, _, set_aside = select(markdown, "install guide", 20000)
+    assert "run the installer" in body and set_aside == 0
+
+
 def test_two_sections_that_both_answer_the_question_both_survive():
     markdown = "\n\n".join(
         [
