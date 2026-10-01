@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import tldextract
 import websockets
+from websockets.exceptions import WebSocketException
 
 from . import classify, http, safety, sanitize
 from .cdp import CDPClient, CDPError
@@ -235,7 +236,7 @@ async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool
         if _is_websocket(cdp_url):
             return await _websocket_answers(cdp_url, timeout)
         return "webSocketDebuggerUrl" in await _fetch_version(cdp_url, timeout)
-    except (OSError, websockets.exceptions.WebSocketException):
+    except (OSError, WebSocketException):
         return False
     except ValueError:
         # A malformed CDP_URL (`http://host:abc`) raises out of `urlparse`. The tool
@@ -644,7 +645,7 @@ class EngineProvider:
         self._cdp = CDPClient(ws_url)
         try:
             await self._cdp.connect()
-        except (OSError, websockets.exceptions.WebSocketException) as exc:
+        except (OSError, WebSocketException) as exc:
             raise BrowserUnavailableError(remediation(self._cfg)) from exc
         self._identity = await _read_identity(self._cdp)
 

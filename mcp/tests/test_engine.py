@@ -1,5 +1,7 @@
 import asyncio
 import json
+import subprocess
+import sys
 
 import pytest
 import websockets
@@ -445,3 +447,14 @@ async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, he
         assert cdp.calls[0][1] == provider._identity
     assert cdp.methods() == expected
     assert all(session == "tab" for _, _, session in cdp.calls)
+
+
+def test_a_fresh_process_reports_an_unreachable_browser_instead_of_raising():
+    probe = (
+        "import asyncio; from groundhog_mcp import engine; "
+        "print(asyncio.run(engine.check_browser('http://127.0.0.1:1')), "
+        "asyncio.run(engine.check_browser('ws://127.0.0.1:1/devtools/browser/x')))"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == ["False", "False"]
