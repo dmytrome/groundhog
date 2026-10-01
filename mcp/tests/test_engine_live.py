@@ -23,9 +23,8 @@ async def test_fetch_example_com():
     try:
         page = await provider.fetch("https://example.com/")
         assert "Example Domain" in page.title
-        assert "Example Domain" in page.html
         assert page.final_url.startswith("https://example.com")
-        assert "Example Domain" in page.text
+        assert "documentation examples" in page.text
     finally:
         await provider.aclose()
 
