@@ -20,7 +20,7 @@ from groundhog_mcp import engine
 from groundhog_mcp.cdp import CDPClient
 from groundhog_mcp.config import load_config
 
-from .test_engine_live import _fetch_local, _serve
+from .test_engine_live import PAGE_HOST, _fetch_local, _serve
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LIVE") != "1",
@@ -125,7 +125,7 @@ async def _painted_backdrops(
     srv: ThreadingHTTPServer, page: Page
 ) -> dict[str, tuple[int, int, int]]:
     """The colour actually painted inside each probe's padding, from a screenshot."""
-    url = f"http://host.docker.internal:{srv.server_address[1]}/"
+    url = f"http://{PAGE_HOST}:{srv.server_address[1]}/"
     cdp = CDPClient(await engine._browser_ws_url(load_config().cdp_url))
     target = None
     try:

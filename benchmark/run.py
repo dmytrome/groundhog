@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import functools
 import json
+import os
 import threading
 from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -21,19 +22,27 @@ HERE = Path(__file__).parent
 MANIFEST = json.loads((HERE / "manifest.json").read_text())
 
 
+def _page_host() -> str:
+    from groundhog_mcp.config import load_config
+
+    return os.environ.get("GROUNDHOG_TEST_PAGE_HOST") or (
+        "host.docker.internal" if load_config().browser == "stealth" else "127.0.0.1"
+    )
+
+
 def _serve() -> tuple[ThreadingHTTPServer, str]:
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(HERE / "corpus"))
     handler.log_message = lambda *a, **k: None  # type: ignore[method-assign]
     srv = ThreadingHTTPServer(("", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv, f"http://host.docker.internal:{srv.server_address[1]}"
+    return srv, f"http://{_page_host()}:{srv.server_address[1]}"
 
 
 def _run_adapter(name: str, base: str, *, local: bool) -> list[Score]:
     results: list[Score] = []
     for case in MANIFEST["cases"]:
         url = f"{base}/{case['file']}"
-        direct = url.replace("host.docker.internal", "127.0.0.1")
+        direct = url.replace(_page_host(), "127.0.0.1")
         if name == "groundhog":
             fetched: Fetched = asyncio.run(groundhog.fetch_async(url, allow_private=local))
         elif name == "scrapling":

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- The default browser is the Chrome you already have. Auto-start launches it headless, in
+  Groundhog's own profile at `~/.groundhog/chrome`, so a first fetch needs no Docker and no
+  window ever opens over your work. Each tab carries the identity of the same Chrome with a
+  window: the `HeadlessChrome` token is replaced and the client hints are copied from the
+  browser, since overriding the user agent alone makes Chrome stop sending them. The 28-case
+  hidden-text benchmark and the three graded anti-bot detectors give the same results as
+  the stealth image. `GROUNDHOG_BROWSER=stealth` restores the container;
+  `GROUNDHOG_CHROME_PATH` and `GROUNDHOG_CHROME_PROFILE` override what is found.
+
 ### Fixed
 
 - `CDP_URL` is used as given. A `ws://` or `wss://` address is connected to directly, the

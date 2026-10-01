@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 import websockets
@@ -19,6 +20,9 @@ def _cfg(**over):
         max_concurrent_pages=1,
         search_backend="auto",
         searxng_url=None,
+        browser="stealth",
+        chrome_path=None,
+        chrome_profile="/tmp/groundhog-test-profile",
     )
     base.update(over)
     return Config(**base)
@@ -254,3 +258,190 @@ def test_a_websocket_endpoint_that_cannot_be_reached_is_reported_without_its_cre
 
     message = asyncio.run(scenario())
     assert "SECRET" not in message and "127.0.0.1" in message
+
+
+def _stub_chrome(monkeypatch, launched, ready=True):
+    async def fake_launch(argv):
+        launched.append(argv)
+
+    async def answers(url, timeout=engine._PROBE_TIMEOUT_S):
+        return ready
+
+    async def no_docker(cmd):
+        pytest.fail(f"the chrome backend ran {cmd}")
+
+    monkeypatch.setattr(engine, "_launch_detached", fake_launch)
+    monkeypatch.setattr(engine, "check_browser", answers)
+    monkeypatch.setattr(engine, "_run", no_docker)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(engine.asyncio, "sleep", lambda s: real_sleep(0))
+
+
+async def test_the_chrome_backend_launches_the_installed_chrome_with_its_own_profile(
+    monkeypatch, tmp_path
+):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile = tmp_path / "chrome"
+    cfg = _cfg(
+        browser="chrome",
+        chrome_path="/opt/chrome",
+        chrome_profile=str(profile),
+        cdp_url="http://127.0.0.1:7000",
+    )
+    await engine._start_browser(cfg)
+    argv = launched[0]
+    assert argv[0] == "/opt/chrome"
+    assert "--remote-debugging-port=7000" in argv
+    assert f"--user-data-dir={profile}" in argv
+    assert "--headless=new" in argv
+    assert "--window-size=1440,900" in argv
+    assert profile.is_dir() and profile.stat().st_mode & 0o777 == 0o700
+
+
+async def test_the_chrome_backend_finds_chrome_where_the_platform_installs_it(monkeypatch):
+    monkeypatch.setattr(engine.sys, "platform", "darwin")
+    mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    monkeypatch.setattr(engine.os.path, "isfile", lambda p: p == mac)
+    monkeypatch.setattr(engine.os, "access", lambda p, mode: p == mac)
+    assert engine._chrome_binary(_cfg(browser="chrome")) == mac
+
+    monkeypatch.setattr(engine.sys, "platform", "linux")
+    monkeypatch.setattr(engine.os.path, "isfile", lambda p: False)
+    monkeypatch.setattr(
+        engine.shutil, "which", lambda name: "/usr/bin/chromium" if name == "chromium" else None
+    )
+    assert engine._chrome_binary(_cfg(browser="chrome")) == "/usr/bin/chromium"
+
+
+async def test_without_chrome_the_chrome_backend_says_how_to_get_a_browser(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    monkeypatch.setattr(engine, "_chrome_binary", lambda cfg: None)
+    with pytest.raises(engine.BrowserUnavailableError) as raised:
+        await engine._start_browser(_cfg(browser="chrome"))
+    assert launched == []
+    assert "GROUNDHOG_CHROME_PATH" in str(raised.value)
+    assert "GROUNDHOG_BROWSER=stealth" in str(raised.value)
+
+
+async def test_a_chrome_that_never_answers_is_reported(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched, ready=False)
+    with pytest.raises(engine.BrowserUnavailableError):
+        await engine._start_browser(_cfg(browser="chrome", chrome_path="/opt/chrome"))
+    assert len(launched) == 1
+
+
+def test_remediation_names_the_backend_that_is_configured(monkeypatch):
+    monkeypatch.setattr(engine, "_chrome_binary", lambda cfg: "/opt/chrome")
+    assert "Chrome" in engine.remediation(_cfg(browser="chrome"))
+    assert "docker" not in engine.remediation(_cfg(browser="chrome")).lower()
+
+
+_HEADLESS_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36"
+)
+_HINTS = {
+    "secure": True,
+    "brands": [
+        {"brand": "Chromium", "version": "154"},
+        {"brand": "Google Chrome", "version": "154"},
+    ],
+    "fullVersionList": [{"brand": "Google Chrome", "version": "154.0.8037.92"}],
+    "mobile": False,
+    "platform": "macOS",
+    "platformVersion": "26.5.1",
+    "architecture": "arm",
+    "model": "",
+    "bitness": "64",
+    "wow64": False,
+}
+
+
+def test_a_headless_browser_is_given_the_identity_of_the_same_chrome_with_a_window():
+    identity = engine._headful_identity(_HEADLESS_UA, _HINTS)
+    assert identity is not None
+    assert "HeadlessChrome" not in identity["userAgent"]
+    assert identity["userAgent"].endswith("Chrome/154.0.0.0 Safari/537.36")
+    metadata = identity["userAgentMetadata"]
+    assert metadata["brands"] == _HINTS["brands"]
+    assert metadata["platformVersion"] == "26.5.1" and "secure" not in metadata
+
+
+def test_a_browser_with_a_window_keeps_its_own_identity():
+    headful = _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/")
+    assert engine._headful_identity(headful, _HINTS) is None
+
+
+class _ScriptedCDP:
+    def __init__(self, user_agent: str, hints: dict) -> None:
+        self.user_agent = user_agent
+        self.hints = hints
+        self.calls: list[tuple[str, dict | None, str | None]] = []
+        self.closed = False
+
+    async def connect(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def send(self, method, params=None, session_id=None):
+        self.calls.append((method, params, session_id))
+        replies = {
+            "Browser.getVersion": {"userAgent": self.user_agent},
+            "Target.createTarget": {"targetId": "probe"},
+            "Target.attachToTarget": {"sessionId": "probe-session"},
+            "Runtime.evaluate": {"result": {"value": json.dumps(self.hints)}},
+        }
+        return replies.get(method, {})
+
+    def expect_event(self, method, session_id=None):
+        done = asyncio.get_running_loop().create_future()
+        done.set_result({})
+        return done
+
+    def methods(self) -> list[str]:
+        return [method for method, _, _ in self.calls]
+
+
+async def test_a_headless_browser_has_its_identity_read_from_its_own_client_hints():
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    identity = await engine._read_identity(cdp)
+    assert identity == engine._headful_identity(_HEADLESS_UA, _HINTS)
+    opened = next(p for m, p, _ in cdp.calls if m == "Target.createTarget")
+    assert opened == {"url": engine._HINTS_PAGE}
+    assert cdp.methods()[-1] == "Target.closeTarget"
+
+
+async def test_a_browser_with_a_window_is_not_probed_for_an_identity():
+    cdp = _ScriptedCDP(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
+    assert await engine._read_identity(cdp) is None
+    assert cdp.methods() == ["Browser.getVersion"]
+
+
+async def test_starting_against_a_headless_browser_arms_the_identity(monkeypatch):
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
+    await provider.start()
+    assert provider._identity == engine._headful_identity(_HEADLESS_UA, _HINTS)
+
+
+@pytest.mark.parametrize("headless", [True, False])
+async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, headless):
+    user_agent = _HEADLESS_UA if headless else _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/")
+    cdp = _ScriptedCDP(user_agent, _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
+    await provider.start()
+    cdp.calls.clear()
+    await provider._prepare_tab("tab")
+    expected = ["Page.enable", "Network.enable"]
+    if headless:
+        expected = ["Emulation.setUserAgentOverride", *expected]
+        assert cdp.calls[0][1] == provider._identity
+    assert cdp.methods() == expected
+    assert all(session == "tab" for _, _, session in cdp.calls)

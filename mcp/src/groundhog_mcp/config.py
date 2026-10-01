@@ -7,6 +7,8 @@ _DEFAULT_BROWSER_IMAGE = "ghcr.io/dmytrome/groundhog:latest"
 
 SearchBackend = Literal["auto", "searxng", "serp"]
 _SEARCH_BACKENDS = get_args(SearchBackend)
+Browser = Literal["chrome", "stealth"]
+_BROWSERS = get_args(Browser)
 ALLOWED_SCHEMES = ("http", "https")
 
 
@@ -22,6 +24,9 @@ class Config:
     max_concurrent_pages: int
     search_backend: SearchBackend
     searxng_url: str | None
+    browser: Browser
+    chrome_path: str | None
+    chrome_profile: str
 
 
 def _bool(value: str | None, default: bool) -> bool:
@@ -42,6 +47,10 @@ def load_config() -> Config:
         max_concurrent_pages=int(os.environ.get("GROUNDHOG_MAX_CONCURRENT_PAGES", "4")),
         search_backend=_search_backend(),
         searxng_url=_searxng_url(),
+        browser=_browser(),
+        chrome_path=os.environ.get("GROUNDHOG_CHROME_PATH") or None,
+        chrome_profile=os.environ.get("GROUNDHOG_CHROME_PROFILE")
+        or os.path.join(os.path.expanduser("~"), ".groundhog", "chrome"),
     )
 
 
@@ -60,6 +69,14 @@ def _search_backend() -> SearchBackend:
         if value == backend:
             return backend
     raise ValueError(f"GROUNDHOG_SEARCH_BACKEND must be one of {_SEARCH_BACKENDS}, got {value!r}")
+
+
+def _browser() -> Browser:
+    value = (os.environ.get("GROUNDHOG_BROWSER") or "chrome").strip().lower()
+    for browser in _BROWSERS:
+        if value == browser:
+            return browser
+    raise ValueError(f"GROUNDHOG_BROWSER must be one of {_BROWSERS}, got {value!r}")
 
 
 def _searxng_url() -> str | None:

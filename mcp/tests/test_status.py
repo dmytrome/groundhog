@@ -22,6 +22,7 @@ async def test_status_reports_unreachable(monkeypatch):
 
 async def test_start_raises_actionable_error(monkeypatch):
     monkeypatch.setenv("CDP_URL", _UNREACHABLE)
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "stealth")
     monkeypatch.setenv("GROUNDHOG_AUTO_START_BROWSER", "false")
     provider = EngineProvider(load_config())
     try:
@@ -33,6 +34,7 @@ async def test_start_raises_actionable_error(monkeypatch):
 
 async def test_no_container_runtime_message(monkeypatch):
     monkeypatch.setenv("CDP_URL", _UNREACHABLE)
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "stealth")
     monkeypatch.delenv("GROUNDHOG_AUTO_START_BROWSER", raising=False)  # default-on
     monkeypatch.setattr(engine, "_container_runtime", lambda: None)  # no docker/podman
     provider = EngineProvider(load_config())
@@ -59,3 +61,16 @@ async def test_a_credential_bearing_cdp_url_is_redacted(monkeypatch):
     result = await status()
     assert "secret" not in result["cdp_url"].lower()
     assert "hosted.example" in result["cdp_url"]
+
+
+async def test_with_chrome_missing_the_default_says_how_to_get_a_browser(monkeypatch):
+    monkeypatch.setenv("CDP_URL", _UNREACHABLE)
+    monkeypatch.delenv("GROUNDHOG_BROWSER", raising=False)
+    monkeypatch.delenv("GROUNDHOG_AUTO_START_BROWSER", raising=False)
+    monkeypatch.setattr(engine, "_chrome_binary", lambda cfg: None)
+    provider = EngineProvider(load_config())
+    try:
+        with pytest.raises(BrowserUnavailableError, match="GROUNDHOG_BROWSER=stealth"):
+            await provider.start()
+    finally:
+        await provider.aclose()

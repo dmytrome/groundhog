@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from groundhog_mcp import classify, engine
@@ -34,6 +36,18 @@ ZERO_WIDTH = "\u200b"
 RTL_OVERRIDE = "\u202e"
 TAG_I = "\U000e0049"  # Unicode Tag block: an invisible ASCII mirror
 INVISIBLES = (ZERO_WIDTH, RTL_OVERRIDE, TAG_I)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser_launch(monkeypatch, tmp_path):
+    if os.environ.get("RUN_LIVE") == "1":
+        return
+    monkeypatch.setenv("GROUNDHOG_CHROME_PROFILE", str(tmp_path / "chrome"))
+
+    async def refuse(argv):
+        pytest.fail(f"a unit test tried to launch a real browser: {argv[0]}")
+
+    monkeypatch.setattr(engine, "_launch_detached", refuse)
 
 
 class _FakeProvider:

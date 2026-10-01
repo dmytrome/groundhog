@@ -47,10 +47,15 @@ the date recorded in [`RESULTS.md`](benchmark/RESULTS.md).
 
 ## Quick start
 
-Add Groundhog to your MCP client — that's it. On the first fetch, Groundhog pulls and
-starts the stealth-browser container for you (Docker or Podman required); no repo checkout,
-no manual steps. When the default (non-compose) auto-start path has to run, any stale
-container named `groundhog-browser` is removed first; a reachable browser is never touched.
+Add Groundhog to your MCP client — that's it. On the first fetch, Groundhog starts the
+Chrome you already have, headless and in its own profile at `~/.groundhog/chrome`: no
+Docker, no repo checkout, and no window, so it never takes focus while you work. It stays
+running for the next fetch. Chrome refuses remote control of your everyday profile (since
+Chrome 136), so your own browsing, tabs and logins are never touched.
+
+Prefer the hardened browser? `GROUNDHOG_BROWSER=stealth` pulls and starts the stealth-browser
+container instead (Docker or Podman required). When that path has to run, any stale container
+named `groundhog-browser` is removed first; a reachable browser is never touched.
 
 Claude Code:
 
@@ -88,11 +93,28 @@ curl -s http://localhost:9222/json/version    # CDP is live
 Set `GROUNDHOG_AUTO_START_BROWSER=false` to disable auto-start. To run the MCP server from
 source: `cd mcp && uv sync && uv run groundhog-mcp`.
 
+### Use any CDP browser
+
+`CDP_URL` takes the address a browser gives you, used exactly as given. An `http://` address
+is probed for `/json/version`; a `ws://` or `wss://` address — what hosted browsers hand out,
+often with a key in the query — is connected to directly.
+
+```bash
+CDP_URL=http://127.0.0.1:9222                      # a Chrome you started yourself
+CDP_URL="$(agent-browser get cdp-url)"             # a browser agent-browser opened
+CDP_URL="wss://<provider host>/?token=<your key>"  # a hosted browser
+```
+
+Auto-start only ever runs for a local address that isn't answering, so a browser you point
+`CDP_URL` at is yours to manage. `status` reports the address without its query or
+credentials.
+
 All four tools are annotated `readOnlyHint`, which is what lets a client run them without a
 per-call confirmation. That describes what they do to *your data*: nothing is written, and no
 remote state is changed. Worth knowing, because it is the one exception: with auto-start on,
-the first call may pull and run the browser container, and remove an **unreachable** container
-named `groundhog-browser` first. A reachable one is never touched, and
+the first call may start Chrome in Groundhog's own profile — or, with `GROUNDHOG_BROWSER=stealth`,
+pull and run the browser container and remove an **unreachable** container named
+`groundhog-browser` first. A reachable browser is never touched, and
 `GROUNDHOG_AUTO_START_BROWSER=false` turns the whole path off.
 
 ## What makes it different
@@ -115,9 +137,13 @@ named `groundhog-browser` first. A reachable one is never touched, and
   which anti-bots detect (`isAutomatedWithCDP`). Groundhog drives the browser over raw CDP
   and never enables `Runtime`/`Console`, so that signal is absent — a clean session that
   full automation libraries can't produce over `connect_over_cdp`.
-- **A real fingerprint.** It's real Chrome, run headful under Xvfb (no `HeadlessChrome`
-  token) — authentic TLS/HTTP2 fingerprint, real WebGL/canvas — not a Python HTTP client,
-  so fingerprint-driven blocks go away and cheap proxies work where they otherwise wouldn't.
+- **A real fingerprint.** It's real Chrome — authentic TLS/HTTP2 fingerprint, real
+  WebGL/canvas — not a Python HTTP client, so fingerprint-driven blocks go away and cheap
+  proxies work where they otherwise wouldn't. Your own Chrome runs headless, and Groundhog
+  gives each tab the identity of the same Chrome with a window: the `HeadlessChrome` token is
+  replaced and the client hints are copied from the browser itself, because overriding the
+  user agent alone makes Chrome drop them. The stealth image instead runs Chrome headful
+  under Xvfb.
 - **No model, no API key.** `research` returns extracts, not summaries; your agent does the
   synthesis. Self-hosted and MIT — the pages you fetch never leave your infrastructure.
 
@@ -269,15 +295,18 @@ its URL, and this value reaches the model.
 
 | Env var                          | Default                 | Purpose                                                                                  |
 | -------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint of the stealth browser. May be remote (a DNS name or IP); auto-start is skipped for non-local values. The endpoint is unauthenticated — keep it on a private network or a tunnel. |
+| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint, used as given: `http(s)://` is probed for `/json/version`, `ws(s)://` is connected to directly. May be remote; auto-start is skipped for non-local values. A local endpoint is unauthenticated — keep it on a private network or a tunnel. |
+| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` (your installed Chrome, headless, own profile) or `stealth` (the browser container) |
+| `GROUNDHOG_CHROME_PATH`          | _(found)_               | Chrome executable for `chrome`; found in the standard install locations when unset       |
+| `GROUNDHOG_CHROME_PROFILE`       | `~/.groundhog/chrome`   | Profile directory for `chrome`, created `0700`. Log into a site here once and Groundhog reuses that session |
 | `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | Enforce the SSRF guard (resolve + block private ranges)                                  |
 | `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
 | `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
 | `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Cap on concurrent open tabs                                                              |
 | `SEARXNG_URL`                    | _(unset)_               | Your SearXNG instance for `search`, e.g. `http://searxng:8080`. Needs `formats: [html, json]`. Unset → SERP via the stealth browser. |
 | `GROUNDHOG_SEARCH_BACKEND`       | `auto`                  | `auto` (SearXNG when `SEARXNG_URL` is set, else SERP), or force `searxng` / `serp`        |
-| `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Auto-pull-and-run the browser container when it isn't reachable (needs Docker/Podman); `false` to manage it yourself |
-| `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image used for auto-start                                                    |
+| `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Start the browser named by `GROUNDHOG_BROWSER` when a local `CDP_URL` isn't reachable; `false` to manage it yourself |
+| `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image used when `GROUNDHOG_BROWSER=stealth`                                    |
 | `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Use `docker compose -f <file> up -d` for auto-start instead of `docker run` (local repo) |
 
 **Dependencies:** `py3langid` (which pulls in numpy) is used for language detection in the

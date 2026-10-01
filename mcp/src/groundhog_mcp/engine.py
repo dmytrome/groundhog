@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import json
+import os
 import shlex
 import shutil
 import socket
@@ -40,9 +41,43 @@ _CONTAINER_SHM = "512m"
 _CONTAINER_CDP_PORT = 9222
 _CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
 _RUNTIMES = ("docker", "podman")
+_CHROME_PATHS = {
+    "darwin": (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ),
+    "win32": tuple(
+        os.path.join(root, "Google", "Chrome", "Application", "chrome.exe")
+        for root in filter(
+            None,
+            (os.environ.get(k) for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")),
+        )
+    ),
+}
+_CHROME_COMMANDS = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _WS_SCHEMES = ("ws", "wss")
 _ISOLATED_WORLD = "groundhog"
+_HEADLESS_TOKEN = "HeadlessChrome/"
+_HINTS_PAGE = "chrome://version/"
+_HINTS_EXPR = (
+    "navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', "
+    "'architecture', 'model', 'bitness', 'fullVersionList', 'wow64']).then(v => "
+    "JSON.stringify(Object.assign({brands: navigator.userAgentData.brands, "
+    "mobile: navigator.userAgentData.mobile}, v)))"
+)
+_HINT_KEYS = (
+    "brands",
+    "fullVersionList",
+    "platform",
+    "platformVersion",
+    "architecture",
+    "model",
+    "mobile",
+    "bitness",
+    "wow64",
+)
 
 
 class BrowserUnavailableError(safety.CallerFacingError):
@@ -91,7 +126,48 @@ def _run_argv(runtime: str, cfg: Config) -> list[str]:
     ]
 
 
+def _chrome_binary(cfg: Config) -> str | None:
+    if cfg.chrome_path:
+        return cfg.chrome_path
+    for path in _CHROME_PATHS.get(sys.platform, ()):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    for name in _CHROME_COMMANDS:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def _chrome_argv(binary: str, cfg: Config) -> list[str]:
+    return [
+        binary,
+        f"--remote-debugging-port={_port_of(cfg.cdp_url)}",
+        f"--user-data-dir={cfg.chrome_profile}",
+        "--headless=new",
+        "--window-size=1440,900",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "about:blank",
+    ]
+
+
+def _chrome_remediation(cfg: Config) -> str:
+    if _chrome_binary(cfg) is None:
+        return (
+            "Chrome was not found. Install Google Chrome, set GROUNDHOG_CHROME_PATH to its "
+            "executable, or set GROUNDHOG_BROWSER=stealth to run the stealth image in Docker."
+        )
+    return (
+        f"Cannot reach Chrome at {safety.redacted_url(cfg.cdp_url)}. Start it with "
+        f"`{shlex.join(_chrome_argv(_chrome_binary(cfg) or '', cfg))}`, or point CDP_URL "
+        "at a running browser."
+    )
+
+
 def remediation(cfg: Config) -> str:
+    if cfg.browser == "chrome":
+        return _chrome_remediation(cfg)
     runtime = _container_runtime()
     if runtime is None:
         return (
@@ -184,7 +260,48 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     return proc.returncode or 0, detail or ""
 
 
+async def _launch_detached(argv: list[str]) -> None:
+    await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+async def _await_ready(cfg: Config, what: str) -> None:
+    for _ in range(_AUTOSTART_READY_TRIES):
+        if await check_browser(cfg.cdp_url):
+            return
+        await asyncio.sleep(1)
+    raise BrowserUnavailableError(
+        f"{what} started but {safety.redacted_url(cfg.cdp_url)} did not become ready in time."
+    )
+
+
+async def _start_chrome(cfg: Config) -> None:
+    binary = _chrome_binary(cfg)
+    if binary is None:
+        raise BrowserUnavailableError(_chrome_remediation(cfg))
+    os.makedirs(cfg.chrome_profile, mode=0o700, exist_ok=True)
+    os.chmod(cfg.chrome_profile, 0o700)
+    print(
+        f"[groundhog] starting Chrome with its own profile at {cfg.chrome_profile}…",
+        file=sys.stderr,
+    )
+    await _launch_detached(_chrome_argv(binary, cfg))
+    await _await_ready(cfg, "Chrome")
+
+
 async def _start_browser(cfg: Config) -> None:
+    if cfg.browser == "chrome":
+        await _start_chrome(cfg)
+    else:
+        await _start_stealth(cfg)
+
+
+async def _start_stealth(cfg: Config) -> None:
     """Bring up the stealth browser.
 
     Default path: `docker run` the published image, so a bare `uvx groundhog-mcp`
@@ -207,14 +324,7 @@ async def _start_browser(cfg: Config) -> None:
     code, detail = await _run(cmd)
     if code != 0:
         raise BrowserUnavailableError(f"Could not start the browser via {runtime}: {detail}")
-    for _ in range(_AUTOSTART_READY_TRIES):
-        if await check_browser(cfg.cdp_url):
-            return
-        await asyncio.sleep(1)
-    raise BrowserUnavailableError(
-        f"Browser container started but {safety.redacted_url(cfg.cdp_url)} "
-        "did not become ready in time."
-    )
+    await _await_ready(cfg, "Browser container")
 
 
 class HiddenSpan(TypedDict):
@@ -487,6 +597,39 @@ class _ChallengeAssets:
         return [cdp.on_event("Network.requestWillBeSent", session_id, self._on)]
 
 
+def _headful_identity(user_agent: str, hints: dict) -> dict | None:
+    if _HEADLESS_TOKEN not in user_agent:
+        return None
+    return {
+        "userAgent": user_agent.replace(_HEADLESS_TOKEN, "Chrome/"),
+        "userAgentMetadata": {key: hints[key] for key in _HINT_KEYS if key in hints},
+    }
+
+
+async def _read_identity(cdp: CDPClient) -> dict | None:
+    user_agent = (await cdp.send("Browser.getVersion"))["userAgent"]
+    if _HEADLESS_TOKEN not in user_agent:
+        return None
+    target = await cdp.send("Target.createTarget", {"url": _HINTS_PAGE})
+    try:
+        att = await cdp.send(
+            "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
+        )
+        sid = att["sessionId"]
+        loaded = cdp.expect_event("Page.loadEventFired", session_id=sid)
+        await cdp.send("Page.enable", session_id=sid)
+        await cdp.send("Page.reload", session_id=sid)
+        await asyncio.wait_for(loaded, timeout=_GOTO_TIMEOUT_S)
+        result = await cdp.send(
+            "Runtime.evaluate",
+            {"expression": _HINTS_EXPR, "awaitPromise": True, "returnByValue": True},
+            session_id=sid,
+        )
+        return _headful_identity(user_agent, json.loads(result["result"]["value"]))
+    finally:
+        await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -494,6 +637,7 @@ class EngineProvider:
         self._rl = RateLimiter(cfg.min_delay_ms / 1000)
         self._pages = asyncio.Semaphore(cfg.max_concurrent_pages)
         self._reconnect_lock = asyncio.Lock()
+        self._identity: dict | None = None
 
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
@@ -502,6 +646,7 @@ class EngineProvider:
             await self._cdp.connect()
         except (OSError, websockets.exceptions.WebSocketException) as exc:
             raise BrowserUnavailableError(remediation(self._cfg)) from exc
+        self._identity = await _read_identity(self._cdp)
 
     async def _resolve_ws(self) -> str:
         cfg = self._cfg
@@ -539,6 +684,15 @@ class EngineProvider:
         async with self._pages:
             return await self._fetch_in_target(url, strip_hidden)
 
+    async def _prepare_tab(self, sid: str) -> None:
+        assert self._cdp is not None
+        if self._identity is not None:
+            await self._cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
+        # Only Page and Network are enabled — never Runtime/Console, which would
+        # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
+        await self._cdp.send("Page.enable", session_id=sid)
+        await self._cdp.send("Network.enable", session_id=sid)
+
     async def _fetch_in_target(self, url: str, strip_hidden: bool) -> RenderedPage:
         assert self._cdp is not None
         target = await self._cdp.send("Target.createTarget", {"url": "about:blank"})
@@ -554,10 +708,7 @@ class EngineProvider:
             + challenge_assets.attach(self._cdp, sid)
         )
         try:
-            # Only Page and Network are enabled — never Runtime/Console, which would
-            # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
-            await self._cdp.send("Page.enable", session_id=sid)
-            await self._cdp.send("Network.enable", session_id=sid)
+            await self._prepare_tab(sid)
             # Re-check right before navigate: the rate-limiter/semaphore wait above plus
             # Chrome's own independent DNS resolution at nav time reopen a rebinding window.
             await safety.check_url(url, self._cfg)

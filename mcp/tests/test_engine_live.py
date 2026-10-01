@@ -1,5 +1,6 @@
 import base64
 import dataclasses
+import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,6 +11,10 @@ from groundhog_mcp import document, engine, extract
 from groundhog_mcp.config import load_config
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
+
+PAGE_HOST = os.environ.get("GROUNDHOG_TEST_PAGE_HOST") or (
+    "host.docker.internal" if load_config().browser == "stealth" else "127.0.0.1"
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LIVE") != "1",
@@ -40,6 +45,19 @@ async def test_a_browser_is_reachable_by_the_websocket_url_it_advertises():
         assert "Example Domain" in page.title
     finally:
         await provider.aclose()
+
+
+async def test_a_server_sees_chrome_with_its_client_hints_not_headless_chrome():
+    provider = EngineProvider(load_config())
+    await provider.start()
+    try:
+        page = await provider.fetch("https://httpbin.org/headers")
+    finally:
+        await provider.aclose()
+    headers = json.loads(page.text)["headers"]
+    assert "HeadlessChrome" not in headers["User-Agent"]
+    assert "Chrome/" in headers["User-Agent"]
+    assert '"Google Chrome"' in headers["Sec-Ch-Ua"]
 
 
 async def test_fetch_blocks_internal():
@@ -104,7 +122,7 @@ async def _fetch_local(
     await provider.start()
     try:
         return await provider.fetch(
-            f"http://host.docker.internal:{srv.server_address[1]}/", strip_hidden=strip_hidden
+            f"http://{PAGE_HOST}:{srv.server_address[1]}/", strip_hidden=strip_hidden
         )
     finally:
         await provider.aclose()
@@ -234,7 +252,7 @@ async def _fetch_path(srv: ThreadingHTTPServer, path: str) -> engine.RenderedPag
     provider = EngineProvider(cfg)
     await provider.start()
     try:
-        return await provider.fetch(f"http://host.docker.internal:{srv.server_address[1]}{path}")
+        return await provider.fetch(f"http://{PAGE_HOST}:{srv.server_address[1]}{path}")
     finally:
         await provider.aclose()
 
@@ -768,7 +786,7 @@ async def test_a_payload_is_stripped_from_the_content_even_when_its_finding_is_d
     await engine._provider.start()
     try:
         doc = await document.fetch_document(
-            f"http://host.docker.internal:{srv.server_address[1]}/", max_threats=2
+            f"http://{PAGE_HOST}:{srv.server_address[1]}/", max_threats=2
         )
     finally:
         await engine.shutdown_provider()
@@ -1018,7 +1036,7 @@ async def test_fetch_reconnects_after_connection_drop():
     provider = EngineProvider(cfg)
     await provider.start()
     try:
-        url = f"http://host.docker.internal:{srv.server_address[1]}/"
+        url = f"http://{PAGE_HOST}:{srv.server_address[1]}/"
         await provider.fetch(url)
         # Simulate the CDP websocket dying under a long-lived MCP process
         # (browser container replaced or Docker restarted): the endpoint still

@@ -1,3 +1,5 @@
+import pytest
+
 from groundhog_mcp.config import load_config
 
 
@@ -52,3 +54,30 @@ def test_search_backend_and_instance_from_env(monkeypatch):
     cfg = load_config()
     assert cfg.search_backend == "searxng"
     assert cfg.searxng_url == "http://sx:8080/"
+
+
+def test_the_installed_chrome_is_the_default_browser(monkeypatch):
+    for key in ("GROUNDHOG_BROWSER", "GROUNDHOG_CHROME_PATH", "GROUNDHOG_CHROME_PROFILE"):
+        monkeypatch.delenv(key, raising=False)
+    cfg = load_config()
+    assert cfg.browser == "chrome"
+    assert cfg.chrome_path is None
+    assert cfg.chrome_profile.endswith("/.groundhog/chrome")
+
+
+def test_the_browser_can_be_switched_to_the_stealth_image(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "Stealth")
+    monkeypatch.setenv("GROUNDHOG_CHROME_PATH", "/opt/chrome")
+    monkeypatch.setenv("GROUNDHOG_CHROME_PROFILE", "/srv/profile")
+    cfg = load_config()
+    assert (cfg.browser, cfg.chrome_path, cfg.chrome_profile) == (
+        "stealth",
+        "/opt/chrome",
+        "/srv/profile",
+    )
+
+
+def test_an_unknown_browser_is_refused(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "firefox")
+    with pytest.raises(ValueError, match="GROUNDHOG_BROWSER"):
+        load_config()
