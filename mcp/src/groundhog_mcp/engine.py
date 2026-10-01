@@ -631,6 +631,40 @@ async def _read_identity(cdp: CDPClient) -> dict | None:
         await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
 
 
+class _PrivateDocuments:
+    def __init__(self, cfg: Config) -> None:
+        self._cfg = cfg
+        self.blocked: str | None = None
+        self._pending: set[asyncio.Task[None]] = set()
+
+    async def _decide(self, cdp: CDPClient, session_id: str, params: dict) -> None:
+        request_id = params["requestId"]
+        request = params.get("request")
+        url = request.get("url") if isinstance(request, dict) else None
+        if isinstance(url, str) and urlparse(url).scheme in ("http", "https"):
+            try:
+                await safety.check_url(url, self._cfg)
+            except safety.BlockedURLError as exc:
+                self.blocked = str(exc)
+                await cdp.send(
+                    "Fetch.failRequest",
+                    {"requestId": request_id, "errorReason": "AddressUnreachable"},
+                    session_id=session_id,
+                )
+                return
+            except OSError:
+                pass
+        await cdp.send("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        def on_paused(params: dict) -> None:
+            task = asyncio.ensure_future(self._decide(cdp, session_id, params))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+        return [cdp.on_event("Fetch.requestPaused", session_id, on_paused)]
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -693,6 +727,12 @@ class EngineProvider:
         # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
         await self._cdp.send("Page.enable", session_id=sid)
         await self._cdp.send("Network.enable", session_id=sid)
+        if self._cfg.block_private_ips:
+            await self._cdp.send(
+                "Fetch.enable",
+                {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
+                session_id=sid,
+            )
 
     async def _fetch_in_target(self, url: str, strip_hidden: bool) -> RenderedPage:
         assert self._cdp is not None
@@ -703,10 +743,12 @@ class EngineProvider:
         inflight = _InflightRequests()
         responses = _MainResponse()
         challenge_assets = _ChallengeAssets()
+        private_documents = _PrivateDocuments(self._cfg)
         unsubscribes = (
             inflight.attach(self._cdp, sid)
             + responses.attach(self._cdp, sid)
             + challenge_assets.attach(self._cdp, sid)
+            + private_documents.attach(self._cdp, sid)
         )
         try:
             await self._prepare_tab(sid)
@@ -717,6 +759,8 @@ class EngineProvider:
             try:
                 nav = await self._cdp.send("Page.navigate", {"url": url}, session_id=sid)
                 if nav.get("errorText"):
+                    if private_documents.blocked:
+                        raise safety.BlockedURLError(private_documents.blocked)
                     reason = sanitize.clean_field(str(nav["errorText"]), sanitize.MAX_ERROR_CHARS)
                     raise CDPError(f"navigation failed: {reason or 'unknown error'}")
                 await asyncio.wait_for(loaded, timeout=_GOTO_TIMEOUT_S)

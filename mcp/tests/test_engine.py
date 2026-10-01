@@ -437,7 +437,9 @@ async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, he
     user_agent = _HEADLESS_UA if headless else _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/")
     cdp = _ScriptedCDP(user_agent, _HINTS)
     monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
-    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
+    provider = engine.EngineProvider(
+        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=False)
+    )
     await provider.start()
     cdp.calls.clear()
     await provider._prepare_tab("tab")
@@ -458,3 +460,69 @@ def test_a_fresh_process_reports_an_unreachable_browser_instead_of_raising():
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=30)
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == ["False", "False"]
+
+
+def _paused(url: str) -> dict:
+    return {"requestId": "r1", "request": {"url": url}, "resourceType": "Document"}
+
+
+async def test_a_document_on_a_private_address_is_stopped_before_it_is_requested():
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    guard = engine._PrivateDocuments(_cfg())
+    await guard._decide(cdp, "tab", _paused("http://127.0.0.1:8080/admin"))
+    assert cdp.calls == [
+        ("Fetch.failRequest", {"requestId": "r1", "errorReason": "AddressUnreachable"}, "tab")
+    ]
+    assert guard.blocked and "127.0.0.1" in guard.blocked
+
+
+async def test_a_document_on_a_public_address_goes_ahead(monkeypatch):
+    async def public(url, cfg):
+        return None
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    guard = engine._PrivateDocuments(_cfg())
+    await guard._decide(cdp, "tab", _paused("https://example.com/"))
+    assert cdp.calls == [("Fetch.continueRequest", {"requestId": "r1"}, "tab")]
+    assert guard.blocked is None
+
+
+@pytest.mark.parametrize("url", ["data:text/html,hi", "blob:https://example.com/x", "about:srcdoc"])
+async def test_a_document_that_makes_no_request_goes_ahead_unchecked(monkeypatch, url):
+    async def must_not_check(url, cfg):
+        pytest.fail("checked a URL that makes no network request")
+
+    monkeypatch.setattr(engine.safety, "check_url", must_not_check)
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    await engine._PrivateDocuments(_cfg())._decide(cdp, "tab", _paused(url))
+    assert cdp.methods() == ["Fetch.continueRequest"]
+
+
+async def test_a_document_whose_host_does_not_resolve_is_left_for_chrome_to_fail(monkeypatch):
+    async def unresolvable(url, cfg):
+        raise engine.socket.gaierror("nodename nor servname provided")
+
+    monkeypatch.setattr(engine.safety, "check_url", unresolvable)
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    guard = engine._PrivateDocuments(_cfg())
+    await guard._decide(cdp, "tab", _paused("https://no-such-host.invalid/"))
+    assert cdp.methods() == ["Fetch.continueRequest"] and guard.blocked is None
+
+
+@pytest.mark.parametrize("block", [True, False])
+async def test_documents_are_intercepted_only_while_private_addresses_are_blocked(
+    monkeypatch, block
+):
+    cdp = _ScriptedCDP(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(
+        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=block)
+    )
+    await provider.start()
+    cdp.calls.clear()
+    await provider._prepare_tab("tab")
+    fetch = [p for m, p, _ in cdp.calls if m == "Fetch.enable"]
+    assert fetch == (
+        [{"patterns": [{"urlPattern": "*", "resourceType": "Document"}]}] if block else []
+    )

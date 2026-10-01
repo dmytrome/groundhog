@@ -1,13 +1,16 @@
+import asyncio
 import base64
 import dataclasses
 import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote
 
 import pytest
 
 from groundhog_mcp import document, engine, extract
+from groundhog_mcp.cdp import CDPClient
 from groundhog_mcp.config import load_config
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
@@ -58,6 +61,75 @@ async def test_a_server_sees_chrome_with_its_client_hints_not_headless_chrome():
     assert "HeadlessChrome" not in headers["User-Agent"]
     assert "Chrome/" in headers["User-Agent"]
     assert '"Google Chrome"' in headers["Sec-Ch-Ua"]
+
+
+def _local_service() -> tuple[ThreadingHTTPServer, list[str]]:
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b"LOCAL-SECRET")
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, hits
+
+
+async def test_a_public_redirect_into_a_local_service_never_reaches_it():
+    srv, hits = _local_service()
+    local = f"http://127.0.0.1:{srv.server_address[1]}/admin"
+    provider = EngineProvider(load_config())
+    await provider.start()
+    try:
+        with pytest.raises(BlockedURLError, match="127.0.0.1"):
+            await provider.fetch("https://httpbin.org/redirect-to?url=" + quote(local, safe=""))
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+    assert hits == []
+
+
+async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
+    srv, hits = _local_service()
+    port = srv.server_address[1]
+    warm = EngineProvider(load_config())
+    await warm.start()
+    await warm.aclose()
+    cdp = CDPClient(await engine._browser_ws_url(load_config().cdp_url))
+    await cdp.connect()
+    try:
+        target = await cdp.send("Target.createTarget", {"url": "about:blank"})
+        att = await cdp.send(
+            "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
+        )
+        sid = att["sessionId"]
+        await cdp.send("Page.enable", session_id=sid)
+        loaded = cdp.expect_event("Page.loadEventFired", session_id=sid)
+        await cdp.send("Page.navigate", {"url": "https://example.org/"}, session_id=sid)
+        await asyncio.wait_for(loaded, timeout=30)
+        probe = (
+            f"new Image().src = 'http://127.0.0.1:{port}/img';"
+            f"fetch('http://127.0.0.1:{port}/fetch').then(r => r.text(), e => 'refused')"
+            ".then(t => new Promise(r => setTimeout(() => r(t), 1500)))"
+        )
+        result = await cdp.send(
+            "Runtime.evaluate",
+            {"expression": probe, "awaitPromise": True, "returnByValue": True},
+            session_id=sid,
+        )
+        await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
+    finally:
+        await cdp.close()
+        srv.shutdown()
+    assert result["result"]["value"] == "refused"
+    assert hits == []
 
 
 async def test_fetch_blocks_internal():

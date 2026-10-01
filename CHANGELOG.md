@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- A page can no longer send the browser to a private address. The address check covered
+  only the URL Groundhog was given, so a public page that redirected to `127.0.0.1` had the
+  request made before the result was refused — with Chrome on your own machine, that request
+  reached whatever was listening there. Every document request is now checked as Chrome is
+  about to send it, redirect hops included, and one on a private address is stopped and
+  reported as blocked.
 - `CDP_URL` is used as given. A `ws://` or `wss://` address is connected to directly, the
   form hosted browsers hand out, instead of being probed for `/json/version` first. An
   `http(s)://` address keeps its query string: the probe went to `?token=x/json/version`.

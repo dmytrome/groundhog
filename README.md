@@ -386,9 +386,17 @@ Playwright, go-rod, Crawlee, and nodriver pointers.
 
 The CDP endpoint is **unauthenticated** — anyone who can reach the port has full control
 of the browser. Bind it to localhost or a trusted private network; never expose it to the
-public internet. `--no-sandbox` is used because Chrome's sandbox does not work in an
-unprivileged container; keep the container isolated. To report a vulnerability, see
-[`SECURITY.md`](SECURITY.md).
+public internet. The local Chrome listens on `127.0.0.1` only. `--no-sandbox` is used in the
+stealth image because Chrome's sandbox does not work in an unprivileged container; keep the
+container isolated. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
+
+**Your local network.** A local Chrome shares your machine's network, so a page could try to
+reach services on `localhost` or your LAN. Groundhog checks the address of every document
+the browser is about to request — redirects, framed documents and later navigations, not only
+the URL it was given — and stops one on a private address before the request is sent.
+Requests a page makes for its own images, scripts and `fetch()` are left to Chrome, which
+already refuses a public page's requests into the local network. Both are covered by live
+tests. `GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the document check off.
 
 ### Limits of hidden-text detection
 
