@@ -126,6 +126,9 @@ async def _painted_backdrops(
 ) -> dict[str, tuple[int, int, int]]:
     """The colour actually painted inside each probe's padding, from a screenshot."""
     url = f"http://{PAGE_HOST}:{srv.server_address[1]}/"
+    warm = engine.EngineProvider(load_config())
+    await warm.start()
+    await warm.aclose()
     cdp = CDPClient(await engine._browser_ws_url(load_config().cdp_url))
     target = None
     try:
