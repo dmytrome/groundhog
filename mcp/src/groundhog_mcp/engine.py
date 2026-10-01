@@ -11,6 +11,7 @@ from typing import NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import tldextract
+import websockets
 
 from . import classify, http, safety, sanitize
 from .cdp import CDPClient, CDPError
@@ -40,6 +41,7 @@ _CONTAINER_CDP_PORT = 9222
 _CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
 _RUNTIMES = ("docker", "podman")
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+_WS_SCHEMES = ("ws", "wss")
 _ISOLATED_WORLD = "groundhog"
 
 
@@ -114,7 +116,7 @@ def _ip_probe_url(cdp_url: str) -> str:
     """
     parts = urlparse(cdp_url)
     host = parts.hostname or ""
-    if host in _LOCAL_HOSTS:
+    if host in _LOCAL_HOSTS or parts.scheme != "http":
         return cdp_url
     try:
         ipaddress.ip_address(host)
@@ -129,21 +131,36 @@ def _ip_probe_url(cdp_url: str) -> str:
     return parts._replace(netloc=netloc).geturl()
 
 
+def _version_url(cdp_url: str) -> str:
+    parts = urlparse(_ip_probe_url(cdp_url))
+    return parts._replace(path=parts.path.rstrip("/") + _VERSION_PATH).geturl()
+
+
 async def _fetch_version(cdp_url: str, timeout: float) -> dict:
     """Read the CDP `/json/version` document off the event loop."""
     return await asyncio.get_running_loop().run_in_executor(
         None,
         # _ip_probe_url resolves DNS, which also blocks — keep it in the executor.
-        lambda: http.read_json(_ip_probe_url(cdp_url).rstrip("/") + _VERSION_PATH, timeout),
+        lambda: http.read_json(_version_url(cdp_url), timeout),
     )
 
 
+def _is_websocket(cdp_url: str) -> bool:
+    return urlparse(cdp_url).scheme in _WS_SCHEMES
+
+
+async def _websocket_answers(cdp_url: str, timeout: float) -> bool:
+    async with websockets.connect(cdp_url, open_timeout=timeout):
+        return True
+
+
 async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool:
-    """Return whether the CDP endpoint answers its `/json/version` probe."""
     try:
+        if _is_websocket(cdp_url):
+            return await _websocket_answers(cdp_url, timeout)
         return "webSocketDebuggerUrl" in await _fetch_version(cdp_url, timeout)
-    except OSError:
-        return False  # refused / DNS / timeout all mean "not reachable"
+    except (OSError, websockets.exceptions.WebSocketException):
+        return False
     except ValueError:
         # A malformed CDP_URL (`http://host:abc`) raises out of `urlparse`. The tool
         # whose job is reporting a broken configuration must survive one.
@@ -151,6 +168,8 @@ async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool
 
 
 async def _browser_ws_url(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> str:
+    if _is_websocket(cdp_url):
+        return cdp_url
     return (await _fetch_version(cdp_url, timeout))["webSocketDebuggerUrl"]
 
 
@@ -479,7 +498,10 @@ class EngineProvider:
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
         self._cdp = CDPClient(ws_url)
-        await self._cdp.connect()
+        try:
+            await self._cdp.connect()
+        except (OSError, websockets.exceptions.WebSocketException) as exc:
+            raise BrowserUnavailableError(remediation(self._cfg)) from exc
 
     async def _resolve_ws(self) -> str:
         cfg = self._cfg

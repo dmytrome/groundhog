@@ -30,6 +30,19 @@ async def test_fetch_example_com():
         await provider.aclose()
 
 
+async def test_a_browser_is_reachable_by_the_websocket_url_it_advertises():
+    cfg = load_config()
+    ws_url = await engine._browser_ws_url(cfg.cdp_url)
+    assert ws_url.startswith("ws://")
+    provider = EngineProvider(dataclasses.replace(cfg, cdp_url=ws_url))
+    await provider.start()
+    try:
+        page = await provider.fetch("https://example.com/")
+        assert "Example Domain" in page.title
+    finally:
+        await provider.aclose()
+
+
 async def test_fetch_blocks_internal():
     provider = EngineProvider(load_config())
     await provider.start()

@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+import websockets
 
 from groundhog_mcp import engine
 from groundhog_mcp.config import Config
@@ -181,3 +182,75 @@ def test_a_non_string_eval_result_becomes_empty_text(value):
 
 def test_a_string_eval_result_passes_through():
     assert engine._as_text("https://ex.com/") == "https://ex.com/"
+
+
+@pytest.mark.parametrize(
+    "cdp_url,probe",
+    [
+        ("http://127.0.0.1:9222", "http://127.0.0.1:9222/json/version"),
+        ("http://127.0.0.1:9222/", "http://127.0.0.1:9222/json/version"),
+        ("https://cdp.example.com/?token=abc", "https://cdp.example.com/json/version?token=abc"),
+        (
+            "https://cdp.example.com/base?a=1&b=2",
+            "https://cdp.example.com/base/json/version?a=1&b=2",
+        ),
+    ],
+)
+def test_the_version_probe_keeps_everything_the_url_carries(cdp_url, probe):
+    assert engine._version_url(cdp_url) == probe
+
+
+def test_a_tls_endpoint_is_dialled_by_its_name_not_its_address(monkeypatch):
+    monkeypatch.setattr(engine.socket, "getaddrinfo", lambda *a, **k: pytest.fail("resolved"))
+    assert engine._ip_probe_url("https://cdp.example.com/") == "https://cdp.example.com/"
+
+
+@pytest.mark.parametrize("cdp_url", ["wss://cdp.example.com/?token=abc", "ws://10.0.0.5:3000/x"])
+def test_a_websocket_url_is_connected_to_exactly_as_given(cdp_url):
+    assert asyncio.run(engine._browser_ws_url(cdp_url)) == cdp_url
+
+
+def test_a_websocket_endpoint_that_answers_is_reachable():
+    async def scenario() -> tuple[bool, bool]:
+        async def accept(ws) -> None:
+            await ws.wait_closed()
+
+        async with websockets.serve(accept, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            up = await engine.check_browser(f"ws://127.0.0.1:{port}/devtools/browser/x?token=t")
+        down = await engine.check_browser(f"ws://127.0.0.1:{port}/devtools/browser/x")
+        return up, down
+
+    assert asyncio.run(scenario()) == (True, False)
+
+
+def test_a_websocket_endpoint_that_refuses_the_handshake_is_not_reachable():
+    async def scenario() -> bool:
+        async def reject(connection, request):
+            return connection.respond(401, "no\n")
+
+        async with websockets.serve(
+            lambda ws: None, "127.0.0.1", 0, process_request=reject
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            return await engine.check_browser(f"ws://127.0.0.1:{port}/?token=wrong")
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_a_websocket_endpoint_that_cannot_be_reached_is_reported_without_its_credential():
+    async def scenario() -> str:
+        async def reject(connection, request):
+            return connection.respond(401, "no\n")
+
+        async with websockets.serve(
+            lambda ws: None, "127.0.0.1", 0, process_request=reject
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            provider = engine.EngineProvider(_cfg(cdp_url=f"ws://127.0.0.1:{port}/?token=SECRET"))
+            with pytest.raises(engine.BrowserUnavailableError) as raised:
+                await provider.start()
+        return str(raised.value)
+
+    message = asyncio.run(scenario())
+    assert "SECRET" not in message and "127.0.0.1" in message

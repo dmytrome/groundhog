@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `CDP_URL` is used as given. A `ws://` or `wss://` address is connected to directly, the
+  form hosted browsers hand out, instead of being probed for `/json/version` first. An
+  `http(s)://` address keeps its query string: the probe went to `?token=x/json/version`.
+  An `https://` endpoint is dialled by its name, since resolving it to an address broke
+  TLS. A connection that fails is reported without the URL's credentials.
+
 ## [0.16.1] - 2026-09-19
 
 ### Fixed
