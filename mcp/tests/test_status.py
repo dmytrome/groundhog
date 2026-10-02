@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from groundhog_mcp import engine
@@ -76,6 +78,7 @@ async def test_with_chrome_missing_the_default_says_how_to_get_a_browser(monkeyp
         await provider.aclose()
 
 
+@pytest.mark.skipif(os.environ.get("RUN_LIVE") == "1", reason="live runs launch real browsers")
 async def test_a_unit_test_cannot_start_a_real_container(monkeypatch):
     monkeypatch.setenv("CDP_URL", _UNREACHABLE)
     monkeypatch.setenv("GROUNDHOG_BROWSER", "stealth")
