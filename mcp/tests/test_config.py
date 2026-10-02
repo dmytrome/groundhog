@@ -110,3 +110,13 @@ def test_an_explicit_browser_choice_wins_over_a_container_setting(monkeypatch):
     monkeypatch.setenv("GROUNDHOG_BROWSER_IMAGE", "my/img:1")
 
     assert load_config().browser == "chrome"
+
+
+def test_a_home_relative_chrome_path_and_profile_are_expanded(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/ada")
+    monkeypatch.setenv("GROUNDHOG_CHROME_PATH", "~/bin/chrome")
+    monkeypatch.setenv("GROUNDHOG_CHROME_PROFILE", "~/gh-chrome")
+
+    cfg = load_config()
+
+    assert (cfg.chrome_path, cfg.chrome_profile) == ("/home/ada/bin/chrome", "/home/ada/gh-chrome")

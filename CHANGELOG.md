@@ -17,8 +17,11 @@ All notable changes to this project are documented here. The format is based on
   without the identity. The 28-case hidden-text benchmark and the three graded anti-bot
   detectors give the same results as the stealth image. A Chrome that is missing, not
   executable, already running on the profile, or exits at launch is reported at once rather
-  than after a 30-second wait. `GROUNDHOG_BROWSER=stealth` restores the container;
-  `GROUNDHOG_CHROME_PATH` and `GROUNDHOG_CHROME_PROFILE` override what is found.
+  than after a 30-second wait, and a Chrome that never answers is stopped rather than left
+  holding the profile. `GROUNDHOG_BROWSER=stealth` restores the container, and is the default
+  wherever `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is already set, so an existing
+  container setup is not switched over. `GROUNDHOG_CHROME_PATH` and `GROUNDHOG_CHROME_PROFILE`
+  override what is found, and may start with `~`.
 
 ### Fixed
 

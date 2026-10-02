@@ -48,8 +48,8 @@ def load_config() -> Config:
         search_backend=_search_backend(),
         searxng_url=_searxng_url(),
         browser=_browser(),
-        chrome_path=os.environ.get("GROUNDHOG_CHROME_PATH") or None,
-        chrome_profile=os.environ.get("GROUNDHOG_CHROME_PROFILE")
+        chrome_path=_path(os.environ.get("GROUNDHOG_CHROME_PATH")),
+        chrome_profile=_path(os.environ.get("GROUNDHOG_CHROME_PROFILE"))
         or os.path.join(os.path.expanduser("~"), ".groundhog", "chrome"),
     )
 
@@ -69,6 +69,10 @@ def _search_backend() -> SearchBackend:
         if value == backend:
             return backend
     raise ValueError(f"GROUNDHOG_SEARCH_BACKEND must be one of {_SEARCH_BACKENDS}, got {value!r}")
+
+
+def _path(value: str | None) -> str | None:
+    return os.path.expanduser(value) if value else None
 
 
 def _browser() -> Browser:

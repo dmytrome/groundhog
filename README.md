@@ -296,7 +296,7 @@ its URL, and this value reaches the model.
 | Env var                          | Default                 | Purpose                                                                                  |
 | -------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
 | `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint, used as given: `http(s)://` is probed for `/json/version`, `ws(s)://` is connected to directly. May be remote; auto-start is skipped for non-local values. A local endpoint is unauthenticated — keep it on a private network or a tunnel. |
-| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` (your installed Chrome, headless, own profile) or `stealth` (the browser container) |
+| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` (your installed Chrome, headless, own profile) or `stealth` (the browser container). Defaults to `stealth` when `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is set, so an existing container setup keeps its container. Chrome is started only for a `127.0.0.1` or `localhost` `CDP_URL`, the one address it listens on |
 | `GROUNDHOG_CHROME_PATH`          | _(found)_               | Chrome executable for `chrome`; found in the standard install locations when unset       |
 | `GROUNDHOG_CHROME_PROFILE`       | `~/.groundhog/chrome`   | Profile directory for `chrome`, created `0700`. Log into a site here once and Groundhog reuses that session |
 | `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | Enforce the SSRF guard (resolve + block private ranges)                                  |
