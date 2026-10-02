@@ -54,6 +54,7 @@ jobs:
         env:
           RUN_LIVE: "1"
           CDP_URL: http://127.0.0.1:9222
+          GROUNDHOG_BROWSER: stealth
           GROUNDHOG_AUTO_START_BROWSER: "false"
         run: uv run pytest -q --durations=10
       - name: Browser logs on failure
