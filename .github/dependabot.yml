@@ -12,6 +12,8 @@ updates:
     directory: "/mcp"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "hatchling"
     groups:
       python:
         patterns: ["*"]
