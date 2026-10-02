@@ -499,15 +499,40 @@ async def test_a_document_that_makes_no_request_goes_ahead_unchecked(monkeypatch
     assert cdp.methods() == ["Fetch.continueRequest"]
 
 
-async def test_a_document_whose_host_does_not_resolve_is_left_for_chrome_to_fail(monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    [engine.socket.gaierror("nodename nor servname provided"), UnicodeError("label too long")],
+)
+async def test_a_document_whose_address_cannot_be_checked_is_stopped(monkeypatch, error):
     async def unresolvable(url, cfg):
-        raise engine.socket.gaierror("nodename nor servname provided")
+        raise error
 
     monkeypatch.setattr(engine.safety, "check_url", unresolvable)
     cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
     guard = engine._PrivateDocuments(_cfg())
     await guard._decide(cdp, "tab", _paused("https://no-such-host.invalid/"))
-    assert cdp.methods() == ["Fetch.continueRequest"] and guard.blocked is None
+    assert cdp.calls == [
+        ("Fetch.failRequest", {"requestId": "r1", "errorReason": "NameNotResolved"}, "tab")
+    ]
+    assert guard.blocked is None
+
+
+async def test_a_long_hostname_label_stops_the_document_instead_of_leaving_it_paused():
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    await engine._PrivateDocuments(_cfg())._decide(
+        cdp, "tab", _paused(f"http://{'a' * 64}.example.com/")
+    )
+    assert cdp.methods() == ["Fetch.failRequest"]
+
+
+async def test_a_tab_that_closes_mid_decision_does_not_raise():
+    class Closed(_ScriptedCDP):
+        async def send(self, method, params=None, session_id=None):
+            raise engine.CDPError("CDP client is not connected")
+
+    await engine._PrivateDocuments(_cfg())._decide(
+        Closed(_HEADLESS_UA, _HINTS), "tab", _paused("http://127.0.0.1/")
+    )
 
 
 @pytest.mark.parametrize("block", [True, False])

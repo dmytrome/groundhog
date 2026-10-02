@@ -638,23 +638,40 @@ class _PrivateDocuments:
         self._pending: set[asyncio.Task[None]] = set()
 
     async def _decide(self, cdp: CDPClient, session_id: str, params: dict) -> None:
-        request_id = params["requestId"]
         request = params.get("request")
         url = request.get("url") if isinstance(request, dict) else None
-        if isinstance(url, str) and urlparse(url).scheme in ("http", "https"):
-            try:
+        refusal: str | None = "NameNotResolved"
+        try:
+            if not (isinstance(url, str) and urlparse(url).scheme in ("http", "https")):
+                refusal = None
+            else:
                 await safety.check_url(url, self._cfg)
-            except safety.BlockedURLError as exc:
-                self.blocked = str(exc)
+                refusal = None
+        except safety.BlockedURLError as exc:
+            self.blocked = str(exc)
+            refusal = "AddressUnreachable"
+        except (OSError, ValueError):
+            pass
+        finally:
+            await self._resolve(cdp, session_id, params.get("requestId"), refusal)
+
+    @staticmethod
+    async def _resolve(
+        cdp: CDPClient, session_id: str, request_id: object, refusal: str | None
+    ) -> None:
+        try:
+            if refusal is None:
+                await cdp.send(
+                    "Fetch.continueRequest", {"requestId": request_id}, session_id=session_id
+                )
+            else:
                 await cdp.send(
                     "Fetch.failRequest",
-                    {"requestId": request_id, "errorReason": "AddressUnreachable"},
+                    {"requestId": request_id, "errorReason": refusal},
                     session_id=session_id,
                 )
-                return
-            except OSError:
-                pass
-        await cdp.send("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
+        except (CDPError, OSError, WebSocketException):
+            pass
 
     def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
         def on_paused(params: dict) -> None:
