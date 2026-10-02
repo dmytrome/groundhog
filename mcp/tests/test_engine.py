@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import os
 import subprocess
@@ -784,3 +785,42 @@ async def test_frames_are_attached_whenever_they_need_a_guard_or_an_identity(
     for unsubscribe in unsubscribes:
         unsubscribe()
     assert not cdp.listeners.get(("Fetch.requestPaused", "frame"))
+
+
+@pytest.mark.parametrize(
+    "field,raw,cleaned",
+    [
+        ("hidden_spans", None, []),
+        ("meta", None, {"meta": {}, "lang": None, "canonical": None}),
+        ("meta", {"meta": None}, {"meta": {}, "lang": None, "canonical": None}),
+    ],
+    ids=["spans-not-a-list", "meta-not-a-map", "meta-pairs-not-a-map"],
+)
+def test_a_malformed_collector_result_is_emptied_not_trusted(make_page, field, raw, cleaned):
+    page = dataclasses.replace(make_page(), **{field: raw})
+
+    assert getattr(page, field) == cleaned
+
+
+def test_a_page_metadata_value_is_cut_to_url_length(make_page):
+    description = "d" * 5000
+
+    page = dataclasses.replace(
+        make_page(), meta={"meta": {"description": description}, "lang": None, "canonical": None}
+    )
+
+    assert page.meta["meta"]["description"] == "d" * 2048
+
+
+def test_a_page_canonical_url_reaches_the_result(make_page):
+    meta = {"meta": {}, "lang": "en", "canonical": "https://ex.com/a"}
+
+    page = dataclasses.replace(make_page(), meta=meta)
+
+    assert page.meta["canonical"] == "https://ex.com/a"
+
+
+def test_a_single_dropped_span_is_reported(make_page):
+    page = dataclasses.replace(make_page(), spans_dropped=1)
+
+    assert page.spans_dropped == 1
