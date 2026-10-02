@@ -424,12 +424,50 @@ async def test_a_browser_with_a_window_is_not_probed_for_an_identity():
     assert cdp.methods() == ["Browser.getVersion"]
 
 
-async def test_starting_against_a_headless_browser_arms_the_identity(monkeypatch):
+async def test_the_first_tab_on_a_headless_browser_arms_the_identity(monkeypatch):
     cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
     monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
     provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
     await provider.start()
+    assert "Browser.getVersion" not in cdp.methods()
+    await provider._prepare_tab("tab")
     assert provider._identity == engine._headful_identity(_HEADLESS_UA, _HINTS)
+
+
+class _RefusesChromePages(_ScriptedCDP):
+    async def send(self, method, params=None, session_id=None):
+        if method == "Target.createTarget" and (params or {}).get("url") == engine._HINTS_PAGE:
+            self.calls.append((method, params, session_id))
+            raise engine.CDPError("Target.createTarget: not allowed")
+        return await super().send(method, params, session_id)
+
+
+async def test_a_browser_that_refuses_the_identity_probe_still_fetches(monkeypatch, capsys):
+    cdp = _RefusesChromePages(_HEADLESS_UA, _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(
+        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=False)
+    )
+    await provider.start()
+    for _ in range(engine._IDENTITY_ATTEMPTS + 2):
+        await provider._prepare_tab("tab")
+    probes = [p for m, p, _ in cdp.calls if m == "Target.createTarget"]
+    assert len(probes) == engine._IDENTITY_ATTEMPTS
+    assert provider._identity is None
+    assert cdp.methods().count("Page.enable") == engine._IDENTITY_ATTEMPTS + 2
+    assert capsys.readouterr().err.count("HeadlessChrome") == 1
+
+
+async def test_an_identity_probe_without_a_result_is_a_failed_probe_not_a_crash():
+    class NoValue(_ScriptedCDP):
+        async def send(self, method, params=None, session_id=None):
+            if method == "Runtime.evaluate":
+                self.calls.append((method, params, session_id))
+                return {"result": {"type": "undefined"}}
+            return await super().send(method, params, session_id)
+
+    with pytest.raises(ValueError):
+        await engine._read_identity(NoValue(_HEADLESS_UA, _HINTS))
 
 
 @pytest.mark.parametrize("headless", [True, False])
@@ -441,6 +479,7 @@ async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, he
         _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=False)
     )
     await provider.start()
+    await provider._prepare_tab("first")
     cdp.calls.clear()
     await provider._prepare_tab("tab")
     expected = ["Page.enable", "Network.enable"]

@@ -61,6 +61,8 @@ _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _WS_SCHEMES = ("ws", "wss")
 _ISOLATED_WORLD = "groundhog"
 _HEADLESS_TOKEN = "HeadlessChrome/"
+_IDENTITY_TIMEOUT_S = 10.0
+_IDENTITY_ATTEMPTS = 3
 _HINTS_PAGE = "chrome://version/"
 _HINTS_EXPR = (
     "navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', "
@@ -626,7 +628,10 @@ async def _read_identity(cdp: CDPClient) -> dict | None:
             {"expression": _HINTS_EXPR, "awaitPromise": True, "returnByValue": True},
             session_id=sid,
         )
-        return _headful_identity(user_agent, json.loads(result["result"]["value"]))
+        value = result.get("result", {}).get("value")
+        if not isinstance(value, str):
+            raise ValueError("the browser returned no client hints")
+        return _headful_identity(user_agent, json.loads(value))
     finally:
         await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
 
@@ -690,6 +695,9 @@ class EngineProvider:
         self._pages = asyncio.Semaphore(cfg.max_concurrent_pages)
         self._reconnect_lock = asyncio.Lock()
         self._identity: dict | None = None
+        self._identity_settled = False
+        self._identity_failures = 0
+        self._identity_lock = asyncio.Lock()
 
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
@@ -698,7 +706,27 @@ class EngineProvider:
             await self._cdp.connect()
         except (OSError, WebSocketException) as exc:
             raise BrowserUnavailableError(remediation(self._cfg)) from exc
-        self._identity = await _read_identity(self._cdp)
+        self._identity, self._identity_settled, self._identity_failures = None, False, 0
+
+    async def _ensure_identity(self) -> None:
+        assert self._cdp is not None
+        async with self._identity_lock:
+            if self._identity_settled:
+                return
+            try:
+                self._identity = await asyncio.wait_for(
+                    _read_identity(self._cdp), timeout=_IDENTITY_TIMEOUT_S
+                )
+                self._identity_settled = True
+            except (CDPError, OSError, ValueError, KeyError, WebSocketException):
+                self._identity_failures += 1
+                if self._identity_failures >= _IDENTITY_ATTEMPTS:
+                    self._identity_settled = True
+                    print(
+                        "[groundhog] could not read the browser's client hints; "
+                        "pages will see it as HeadlessChrome",
+                        file=sys.stderr,
+                    )
 
     async def _resolve_ws(self) -> str:
         cfg = self._cfg
@@ -738,6 +766,7 @@ class EngineProvider:
 
     async def _prepare_tab(self, sid: str) -> None:
         assert self._cdp is not None
+        await self._ensure_identity()
         if self._identity is not None:
             await self._cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
         # Only Page and Network are enabled — never Runtime/Console, which would
