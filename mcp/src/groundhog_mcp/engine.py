@@ -358,9 +358,15 @@ async def _start_chrome(cfg: Config) -> None:
             "Point CDP_URL at that Chrome's debugging port, stop it, or set "
             "GROUNDHOG_CHROME_PROFILE to another directory."
         )
-    os.makedirs(cfg.chrome_profile, mode=0o700, exist_ok=True)
-    os.chmod(cfg.chrome_profile, 0o700)
-    _disable_preloading(cfg.chrome_profile)
+    try:
+        os.makedirs(cfg.chrome_profile, mode=0o700, exist_ok=True)
+        os.chmod(cfg.chrome_profile, 0o700)
+        _disable_preloading(cfg.chrome_profile)
+    except OSError as exc:
+        raise BrowserUnavailableError(
+            f"The Chrome profile at {cfg.chrome_profile} could not be prepared "
+            f"({exc.strerror or exc}). Set GROUNDHOG_CHROME_PROFILE to a directory you can write."
+        ) from exc
     print(
         f"[groundhog] starting Chrome with its own profile at {cfg.chrome_profile}…",
         file=sys.stderr,

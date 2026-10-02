@@ -687,6 +687,23 @@ async def test_a_lock_whose_pid_was_reused_by_another_process_does_not_stop_a_la
     assert len(launched) == 1
 
 
+async def test_a_profile_that_cannot_be_created_is_reported_not_raised(monkeypatch, tmp_path):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    read_only = tmp_path / "read-only"
+    read_only.mkdir(mode=0o500)
+    profile = read_only / "chrome"
+    try:
+        with pytest.raises(engine.BrowserUnavailableError, match="GROUNDHOG_CHROME_PROFILE"):
+            await engine._start_browser(
+                _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+            )
+    finally:
+        read_only.chmod(0o700)
+
+    assert launched == []
+
+
 async def test_a_lock_left_by_a_chrome_that_has_exited_does_not_stop_a_launch(
     monkeypatch, tmp_path
 ):
