@@ -1,0 +1,15 @@
+{
+  "sessionId": "9766FDADB4DE118B86596BC4D7183806",
+  "targetInfo": {
+    "targetId": "C8B6EA013B952E447726C90F7406C827",
+    "type": "worker",
+    "title": "blob:http://localhost:58547/49174662-c1c2-4b88-ae04-12426b962f9b",
+    "url": "blob:http://localhost:58547/49174662-c1c2-4b88-ae04-12426b962f9b",
+    "attached": true,
+    "parentId": "5BC8D2ED315F04897576AE20BDAC7CF2",
+    "canAccessOpener": false,
+    "parentFrameId": "5BC8D2ED315F04897576AE20BDAC7CF2",
+    "browserContextId": "DFB931F4669688E12C03D87BA7D22DAA"
+  },
+  "waitingForDebugger": true
+}

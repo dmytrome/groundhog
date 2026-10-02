@@ -67,7 +67,7 @@ _FRAME_AUTO_ATTACH = {
     "autoAttach": True,
     "waitForDebuggerOnStart": True,
     "flatten": True,
-    "filter": [{"type": "iframe"}],
+    "filter": [{"type": "iframe"}, {"type": "worker"}],
 }
 _HINTS_PAGE = "chrome://version/"
 _HINTS_EXPR = (
@@ -785,7 +785,13 @@ class _ChildFrames:
 
     async def _adopt(self, cdp: CDPClient, params: dict) -> None:
         child = params.get("sessionId")
-        if not isinstance(child, str) or self._closed:
+        if not isinstance(child, str):
+            return
+        target = params.get("targetInfo")
+        if not isinstance(target, dict) or target.get("type") != "iframe":
+            await self._release(cdp, child)
+            return
+        if self._closed:
             return
         prepared = False
         try:
@@ -802,10 +808,14 @@ class _ChildFrames:
             pass
         finally:
             if prepared or not self._guarded:
-                try:
-                    await cdp.send("Runtime.runIfWaitingForDebugger", session_id=child)
-                except (CDPError, OSError, WebSocketException):
-                    pass
+                await self._release(cdp, child)
+
+    @staticmethod
+    async def _release(cdp: CDPClient, session_id: str) -> None:
+        try:
+            await cdp.send("Runtime.runIfWaitingForDebugger", session_id=session_id)
+        except (CDPError, OSError, WebSocketException):
+            pass
 
     def _watch(self, cdp: CDPClient, session_id: str) -> None:
         def on_attached(params: dict) -> None:

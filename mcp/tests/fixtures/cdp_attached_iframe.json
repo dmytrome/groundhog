@@ -1,0 +1,15 @@
+{
+  "sessionId": "A1A06255D59CBC8EB33327816C74E8E9",
+  "targetInfo": {
+    "targetId": "5BC8D2ED315F04897576AE20BDAC7CF2",
+    "type": "iframe",
+    "title": "",
+    "url": "",
+    "attached": true,
+    "parentId": "71956A7571FB4F18F05068EAFD2CC271",
+    "canAccessOpener": false,
+    "parentFrameId": "71956A7571FB4F18F05068EAFD2CC271",
+    "browserContextId": "DFB931F4669688E12C03D87BA7D22DAA"
+  },
+  "waitingForDebugger": true
+}

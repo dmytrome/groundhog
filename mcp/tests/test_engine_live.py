@@ -306,6 +306,31 @@ async def test_a_cross_site_frame_sees_the_same_identity_as_the_page():
     assert "HeadlessChrome" not in page.text and "Chrome/" in page.text
 
 
+@_LOCAL_PAGES
+@pytest.mark.parametrize("guarded", [True, False])
+async def test_a_page_built_by_a_dedicated_worker_is_read_whole(monkeypatch, guarded):
+    async def public(url, cfg):
+        return None
+
+    monkeypatch.setattr(safety, "check_url", public)
+    page_html = (
+        "<title>t</title><body>waiting<script>"
+        "const worker = new Worker(URL.createObjectURL(new Blob(['postMessage(\\'computed\\')'])));"
+        "worker.onmessage = e => { document.body.textContent = 'RESULT ' + e.data };"
+        "</script>"
+    )
+    srv = _serve_paths({"/": (200, page_html)})
+    provider = EngineProvider(dataclasses.replace(load_config(), block_private_ips=guarded))
+    await provider.start()
+    try:
+        page = await provider.fetch(f"http://127.0.0.1:{srv.server_address[1]}/")
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+
+    assert page.text.strip() == "RESULT computed"
+
+
 async def test_fetch_blocks_internal():
     provider = EngineProvider(load_config())
     await provider.start()

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 import websockets
@@ -526,6 +527,14 @@ def test_a_fresh_process_reports_an_unreachable_browser_instead_of_raising():
     assert done.stdout.split() == ["False", "False"]
 
 
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _attached(kind: str, session: str) -> dict:
+    captured = json.loads((_FIXTURES / f"cdp_attached_{kind}.json").read_text())
+    return {**captured, "sessionId": session}
+
+
 def _paused(url: str) -> dict:
     return {"requestId": "r1", "request": {"url": url}, "resourceType": "Document"}
 
@@ -821,7 +830,7 @@ async def test_a_cross_site_frame_is_prepared_then_released_and_its_own_frames_w
 
     frames = engine._ChildFrames(prepare, guarded=True)
     detach = frames.attach(cdp, "tab")
-    await frames._adopt(cdp, {"sessionId": "frame"})
+    await frames._adopt(cdp, _attached("iframe", "frame"))
     assert prepared == ["frame"]
     assert cdp.calls[0] == ("Target.setAutoAttach", engine._FRAME_AUTO_ATTACH, "frame")
     assert cdp.calls[-1] == ("Runtime.runIfWaitingForDebugger", None, "frame")
@@ -839,7 +848,7 @@ async def test_an_unguarded_frame_whose_preparation_fails_is_still_released():
     async def prepare(cdp, child):
         return []
 
-    await engine._ChildFrames(prepare, guarded=False)._adopt(cdp, {"sessionId": "frame"})
+    await engine._ChildFrames(prepare, guarded=False)._adopt(cdp, _attached("iframe", "frame"))
 
     assert cdp.methods()[-1] == "Runtime.runIfWaitingForDebugger"
 
@@ -852,7 +861,7 @@ async def test_a_guarded_frame_whose_preparation_fails_is_never_let_load(failing
         await cdp.send("Fetch.enable", {}, session_id=child)
         return []
 
-    await engine._ChildFrames(prepare, guarded=True)._adopt(cdp, {"sessionId": "frame"})
+    await engine._ChildFrames(prepare, guarded=True)._adopt(cdp, _attached("iframe", "frame"))
 
     assert "Runtime.runIfWaitingForDebugger" not in cdp.methods()
 
@@ -866,7 +875,7 @@ async def test_a_frame_prepared_after_the_fetch_ended_leaves_no_handlers_behind(
         return [cdp.on_event("Fetch.requestPaused", child, lambda params: None)]
 
     detach = engine._ChildFrames(prepare, guarded=True).attach(cdp, "tab")
-    cdp.fire("Target.attachedToTarget", "tab", {"sessionId": "frame"})
+    cdp.fire("Target.attachedToTarget", "tab", _attached("iframe", "frame"))
     await asyncio.sleep(0)
 
     detach[0]()
@@ -965,7 +974,7 @@ async def test_a_new_cross_site_frame_is_prepared_through_the_event_it_was_attac
 
     engine._ChildFrames(prepare, guarded=True).attach(cdp, "tab")
 
-    cdp.fire("Target.attachedToTarget", "tab", {"sessionId": "frame"})
+    cdp.fire("Target.attachedToTarget", "tab", _attached("iframe", "frame"))
     await cdp.until_sent("Runtime.runIfWaitingForDebugger")
 
     assert prepared == ["frame"]
@@ -1008,3 +1017,20 @@ def test_an_http_cdp_url_is_probed_with_its_query_kept():
 
     assert reachable is True
     assert asked == ["/json/version?token=abc"]
+
+
+async def test_a_dedicated_worker_is_released_without_waiting_on_frame_preparation():
+    cdp = _Frames(_HEADLESS_UA, _HINTS)
+    prepared: list[str] = []
+
+    async def prepare(cdp, child):
+        prepared.append(child)
+        return []
+
+    engine._ChildFrames(prepare, guarded=True).attach(cdp, "tab")
+
+    cdp.fire("Target.attachedToTarget", "tab", _attached("worker", "worker"))
+    await cdp.until_sent("Runtime.runIfWaitingForDebugger")
+
+    assert prepared == []
+    assert cdp.calls == [("Runtime.runIfWaitingForDebugger", None, "worker")]
