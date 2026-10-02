@@ -3,13 +3,14 @@ import base64
 import dataclasses
 import json
 import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import pytest
 
-from groundhog_mcp import document, engine, extract
+from groundhog_mcp import document, engine, extract, safety
 from groundhog_mcp.cdp import CDPClient
 from groundhog_mcp.config import load_config
 from groundhog_mcp.engine import EngineProvider
@@ -63,7 +64,19 @@ async def test_a_server_sees_chrome_with_its_client_hints_not_headless_chrome():
     assert '"Google Chrome"' in headers["Sec-Ch-Ua"]
 
 
-def _local_service() -> tuple[ThreadingHTTPServer, list[str]]:
+def _lan_address() -> str | None:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))
+        address = probe.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        probe.close()
+    return None if address.startswith("127.") else address
+
+
+def _local_service(host: str = "127.0.0.1") -> tuple[ThreadingHTTPServer, list[str]]:
     hits: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -74,10 +87,12 @@ def _local_service() -> tuple[ThreadingHTTPServer, list[str]]:
             self.end_headers()
             self.wfile.write(b"LOCAL-SECRET")
 
+        do_POST = do_GET
+
         def log_message(self, *args):
             pass
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    srv = ThreadingHTTPServer((host, 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, hits
 
@@ -130,6 +145,165 @@ async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
         srv.shutdown()
     assert result["result"]["value"] == "refused"
     assert hits == []
+
+
+_LOCAL_PAGES = pytest.mark.skipif(
+    PAGE_HOST != "127.0.0.1", reason="needs pages served on the browser's own loopback"
+)
+
+
+def _public(html: str) -> str:
+    return "https://httpbin.org/base64/" + base64.urlsafe_b64encode(html.encode()).decode()
+
+
+_SCRIPT = "<script>location = 'http://{h}:{v}/script'</script>"
+_META = "<meta http-equiv=refresh content='0;url=http://{h}:{v}/meta'>"
+_FORM = (
+    "<form method=post action='http://{h}:{v}/form'></form>"
+    "<script>document.forms[0].submit()</script>"
+)
+_OBJECT = "<object data='http://{h}:{v}/object'></object>"
+_FRAME = "<iframe src='http://{h}:{v}/frame'></iframe>"
+
+
+def _host(network: str) -> str:
+    host = "127.0.0.1" if network == "loopback" else _lan_address()
+    if host is None:
+        pytest.skip("no LAN address on this machine")
+    return host
+
+
+@pytest.mark.parametrize(
+    "route,network",
+    [
+        (_SCRIPT, "loopback"),
+        (_META, "loopback"),
+        (_FORM, "loopback"),
+        (_SCRIPT, "lan"),
+        (_META, "lan"),
+    ],
+    ids=["script-loopback", "meta-loopback", "form-loopback", "script-lan", "meta-lan"],
+)
+async def test_a_public_page_cannot_send_the_browser_to_a_local_service(route, network):
+    host = _host(network)
+    await _assert_unreached(route, host, host)
+
+
+@pytest.mark.parametrize(
+    "route,network",
+    [
+        (_OBJECT, "loopback"),
+        (_FRAME, "loopback"),
+        (_FORM, "lan"),
+        (_OBJECT, "lan"),
+        (_FRAME, "lan"),
+    ],
+    ids=["object-loopback", "frame-loopback", "form-lan", "object-lan", "frame-lan"],
+)
+async def test_chrome_refuses_a_public_page_embedding_a_local_service(route, network):
+    host = _host(network)
+    await _assert_unreached(route, host, host)
+
+
+@pytest.mark.parametrize(
+    "spelling", ["0x7f000001", "[::ffff:127.0.0.1]"], ids=["hex-address", "mapped-v6"]
+)
+async def test_no_spelling_of_loopback_reaches_a_local_service(spelling):
+    await _assert_unreached(
+        "<script>location = 'http://{h}:{v}/spelled'</script>", spelling, "127.0.0.1"
+    )
+
+
+async def _assert_unreached(route: str, host: str, bind: str) -> None:
+    victim, hits = _local_service(bind)
+    provider = EngineProvider(load_config())
+    await provider.start()
+    try:
+        await provider.fetch(_public("public" + route.format(h=host, v=victim.server_address[1])))
+        await asyncio.sleep(1.5)
+    except BlockedURLError:
+        pass
+    finally:
+        await provider.aclose()
+        victim.shutdown()
+    assert hits == []
+
+
+async def test_a_public_page_cannot_preload_a_local_service():
+    victim, hits = _local_service()
+    local = f"http://127.0.0.1:{victim.server_address[1]}"
+    rules = "".join(
+        "<script type=speculationrules>"
+        + json.dumps({kind: [{"source": "list", "urls": [f"{local}/{kind}"]}]})
+        + "</script>"
+        for kind in ("prefetch", "prerender")
+    )
+    provider = EngineProvider(load_config())
+    await provider.start()
+    try:
+        await provider.fetch(_public("public" + rules))
+        await asyncio.sleep(3)
+    finally:
+        await provider.aclose()
+        victim.shutdown()
+    assert hits == []
+
+
+@_LOCAL_PAGES
+async def test_a_cross_site_frame_cannot_navigate_itself_to_a_private_address(monkeypatch):
+    victim, hits = _local_service()
+    v = victim.server_address[1]
+
+    async def only_the_victim_is_private(url, cfg):
+        if urlparse(url).port == v:
+            raise BlockedURLError(f"blocked address: 127.0.0.1:{v}")
+
+    monkeypatch.setattr(safety, "check_url", only_the_victim_is_private)
+    routes: dict[str, tuple[int, str]] = {}
+    srv = _serve_paths(routes)
+    port = srv.server_address[1]
+    routes["/frame"] = (
+        200,
+        "frame<script>setTimeout(() => "
+        f"{{ location = 'http://127.0.0.1:{v}/inside' }}, 300)</script>",
+    )
+    routes["/"] = (
+        200,
+        f"<title>t</title>parent<iframe src='http://localhost:{port}/frame'></iframe>",
+    )
+    provider = EngineProvider(load_config())
+    await provider.start()
+    try:
+        await provider.fetch(f"http://127.0.0.1:{port}/")
+        await asyncio.sleep(1.5)
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+        victim.shutdown()
+    assert hits == []
+
+
+@_LOCAL_PAGES
+async def test_a_cross_site_frame_sees_the_same_identity_as_the_page():
+    routes: dict[str, tuple[int, str]] = {}
+    srv = _serve_paths(routes)
+    port = srv.server_address[1]
+    routes["/frame"] = (200, "<script>parent.postMessage(navigator.userAgent, '*')</script>")
+    routes["/"] = (
+        200,
+        f"<title>t</title><body>waiting<iframe src='http://localhost:{port}/frame'></iframe>"
+        "<script>addEventListener('message', "
+        "e => { document.body.textContent = 'FRAME ' + e.data })</script>",
+    )
+    provider = EngineProvider(dataclasses.replace(load_config(), block_private_ips=False))
+    await provider.start()
+    try:
+        page = await provider.fetch(f"http://127.0.0.1:{port}/")
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+    assert page.text.startswith("FRAME ")
+    assert "HeadlessChrome" not in page.text and "Chrome/" in page.text
 
 
 async def test_fetch_blocks_internal():
