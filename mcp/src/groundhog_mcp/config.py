@@ -72,7 +72,11 @@ def _search_backend() -> SearchBackend:
 
 
 def _browser() -> Browser:
-    value = (os.environ.get("GROUNDHOG_BROWSER") or "chrome").strip().lower()
+    chose_a_container = bool(
+        os.environ.get("GROUNDHOG_COMPOSE_FILE") or os.environ.get("GROUNDHOG_BROWSER_IMAGE")
+    )
+    default = "stealth" if chose_a_container else "chrome"
+    value = (os.environ.get("GROUNDHOG_BROWSER") or default).strip().lower()
     for browser in _BROWSERS:
         if value == browser:
             return browser

@@ -57,7 +57,13 @@ def test_search_backend_and_instance_from_env(monkeypatch):
 
 
 def test_the_installed_chrome_is_the_default_browser(monkeypatch):
-    for key in ("GROUNDHOG_BROWSER", "GROUNDHOG_CHROME_PATH", "GROUNDHOG_CHROME_PROFILE"):
+    for key in (
+        "GROUNDHOG_BROWSER",
+        "GROUNDHOG_CHROME_PATH",
+        "GROUNDHOG_CHROME_PROFILE",
+        "GROUNDHOG_COMPOSE_FILE",
+        "GROUNDHOG_BROWSER_IMAGE",
+    ):
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
     assert cfg.browser == "chrome"
@@ -81,3 +87,26 @@ def test_an_unknown_browser_is_refused(monkeypatch):
     monkeypatch.setenv("GROUNDHOG_BROWSER", "firefox")
     with pytest.raises(ValueError, match="GROUNDHOG_BROWSER"):
         load_config()
+
+
+@pytest.mark.parametrize(
+    "variable,value",
+    [
+        ("GROUNDHOG_COMPOSE_FILE", "/srv/docker-compose.yml"),
+        ("GROUNDHOG_BROWSER_IMAGE", "my/img:1"),
+    ],
+)
+def test_a_container_setting_without_a_browser_choice_keeps_the_container(
+    monkeypatch, variable, value
+):
+    monkeypatch.delenv("GROUNDHOG_BROWSER", raising=False)
+    monkeypatch.setenv(variable, value)
+
+    assert load_config().browser == "stealth"
+
+
+def test_an_explicit_browser_choice_wins_over_a_container_setting(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "chrome")
+    monkeypatch.setenv("GROUNDHOG_BROWSER_IMAGE", "my/img:1")
+
+    assert load_config().browser == "chrome"
