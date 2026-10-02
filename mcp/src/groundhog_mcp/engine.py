@@ -937,11 +937,16 @@ class EngineProvider:
             await cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
         if self._cfg.block_private_ips:
             unsubscribes += _PrivateDocuments(self._cfg).attach(cdp, sid)
-            await cdp.send(
-                "Fetch.enable",
-                {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
-                session_id=sid,
-            )
+            try:
+                await cdp.send(
+                    "Fetch.enable",
+                    {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
+                    session_id=sid,
+                )
+            except (CDPError, OSError, WebSocketException):
+                for unsubscribe in unsubscribes:
+                    unsubscribe()
+                raise
         return unsubscribes
 
     async def _fetch_in_target(self, url: str, strip_hidden: bool) -> RenderedPage:

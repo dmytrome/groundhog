@@ -1034,3 +1034,15 @@ async def test_a_dedicated_worker_is_released_without_waiting_on_frame_preparati
 
     assert prepared == []
     assert cdp.calls == [("Runtime.runIfWaitingForDebugger", None, "worker")]
+
+
+async def test_a_frame_whose_guard_cannot_be_enabled_leaves_no_listener(monkeypatch):
+    cdp = _Frames(_HEADLESS_UA, _HINTS, fail_on="Fetch.enable")
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
+    await provider.start()
+
+    with pytest.raises(engine.CDPError):
+        await provider._prepare_frame(cdp, "frame")
+
+    assert not cdp.listeners.get(("Fetch.requestPaused", "frame"))
