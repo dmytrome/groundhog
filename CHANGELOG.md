@@ -10,11 +10,14 @@ All notable changes to this project are documented here. The format is based on
 
 - The default browser is the Chrome you already have. Auto-start launches it headless, in
   Groundhog's own profile at `~/.groundhog/chrome`, so a first fetch needs no Docker and no
-  window ever opens over your work. Each tab carries the identity of the same Chrome with a
-  window: the `HeadlessChrome` token is replaced and the client hints are copied from the
-  browser, since overriding the user agent alone makes Chrome stop sending them. The 28-case
-  hidden-text benchmark and the three graded anti-bot detectors give the same results as
-  the stealth image. `GROUNDHOG_BROWSER=stealth` restores the container;
+  window ever opens over your work. Each tab, and each cross-site frame in it, carries the
+  identity of the same Chrome with a window: the `HeadlessChrome` token is replaced and the
+  client hints are copied from the browser, since overriding the user agent alone makes
+  Chrome stop sending them. A browser that will not report its client hints is still used,
+  without the identity. The 28-case hidden-text benchmark and the three graded anti-bot
+  detectors give the same results as the stealth image. A Chrome that is missing, not
+  executable, already running on the profile, or exits at launch is reported at once rather
+  than after a 30-second wait. `GROUNDHOG_BROWSER=stealth` restores the container;
   `GROUNDHOG_CHROME_PATH` and `GROUNDHOG_CHROME_PROFILE` override what is found.
 
 ### Fixed
@@ -23,8 +26,10 @@ All notable changes to this project are documented here. The format is based on
   only the URL Groundhog was given, so a public page that redirected to `127.0.0.1` had the
   request made before the result was refused — with Chrome on your own machine, that request
   reached whatever was listening there. Every document request is now checked as Chrome is
-  about to send it, redirect hops included, and one on a private address is stopped and
-  reported as blocked.
+  about to send it — redirect hops, form posts and navigations inside cross-site frames
+  included — and one on a private address, or one whose address cannot be checked, is
+  stopped. The Chrome Groundhog launches has page preloading off, since a speculative
+  prefetch or prerender into the local network was the one request Chrome still made.
 - `CDP_URL` is used as given. A `ws://` or `wss://` address is connected to directly, the
   form hosted browsers hand out, instead of being probed for `/json/version` first. An
   `http(s)://` address keeps its query string: the probe went to `?token=x/json/version`.

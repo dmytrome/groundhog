@@ -486,7 +486,7 @@ async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, he
     await provider._prepare_tab("tab")
     expected = ["Page.enable", "Network.enable"]
     if headless:
-        expected = ["Emulation.setUserAgentOverride", *expected]
+        expected = ["Emulation.setUserAgentOverride", *expected, "Target.setAutoAttach"]
         assert cdp.calls[0][1] == provider._identity
     assert cdp.methods() == expected
     assert all(session == "tab" for _, _, session in cdp.calls)
@@ -708,3 +708,79 @@ def test_a_browser_groundhog_does_not_start_gets_a_hint_about_that_browser(monke
         message = engine.remediation(_cfg(browser=browser, cdp_url=cdp_url))
         assert "not started automatically" in message
         assert "Install Google Chrome" not in message and "docker" not in message.lower()
+
+
+class _Frames(_ScriptedCDP):
+    def __init__(self, *args, fail_on: str | None = None) -> None:
+        super().__init__(*args)
+        self.fail_on = fail_on
+        self.listeners: dict[tuple[str, str], list] = {}
+
+    async def send(self, method, params=None, session_id=None):
+        if method == self.fail_on:
+            self.calls.append((method, params, session_id))
+            raise engine.CDPError(f"{method} failed")
+        return await super().send(method, params, session_id)
+
+    def on_event(self, method, session_id, callback):
+        self.listeners.setdefault((method, session_id), []).append(callback)
+        return lambda: self.listeners[(method, session_id)].remove(callback)
+
+
+async def test_a_cross_site_frame_is_prepared_then_released_and_its_own_frames_watched():
+    cdp = _Frames(_HEADLESS_UA, _HINTS)
+    prepared: list[str] = []
+
+    async def prepare(cdp, child):
+        prepared.append(child)
+        return []
+
+    frames = engine._ChildFrames(prepare)
+    detach = frames.attach(cdp, "tab")
+    await frames._adopt(cdp, {"sessionId": "frame"})
+    assert prepared == ["frame"]
+    assert cdp.calls[0] == ("Target.setAutoAttach", engine._FRAME_AUTO_ATTACH, "frame")
+    assert cdp.calls[-1] == ("Runtime.runIfWaitingForDebugger", None, "frame")
+    assert {key for key, callbacks in cdp.listeners.items() if callbacks} == {
+        ("Target.attachedToTarget", "tab"),
+        ("Target.attachedToTarget", "frame"),
+    }
+    detach[0]()
+    assert not any(cdp.listeners.values())
+
+
+async def test_a_frame_whose_preparation_fails_is_still_released():
+    cdp = _Frames(_HEADLESS_UA, _HINTS, fail_on="Target.setAutoAttach")
+
+    async def prepare(cdp, child):
+        return []
+
+    await engine._ChildFrames(prepare)._adopt(cdp, {"sessionId": "frame"})
+    assert cdp.methods()[-1] == "Runtime.runIfWaitingForDebugger"
+
+
+@pytest.mark.parametrize(
+    "block,headless", [(True, False), (False, True), (True, True), (False, False)]
+)
+async def test_frames_are_attached_whenever_they_need_a_guard_or_an_identity(
+    monkeypatch, block, headless
+):
+    user_agent = _HEADLESS_UA if headless else _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/")
+    cdp = _Frames(user_agent, _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(
+        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=block)
+    )
+    await provider.start()
+    await provider._prepare_tab("tab")
+    attached = ("Target.setAutoAttach", engine._FRAME_AUTO_ATTACH, "tab") in cdp.calls
+    assert attached is (block or headless)
+    cdp.calls.clear()
+    unsubscribes = await provider._prepare_frame(cdp, "frame")
+    methods = cdp.methods()
+    assert ("Emulation.setUserAgentOverride" in methods) is headless
+    assert ("Fetch.enable" in methods) is block
+    assert bool(cdp.listeners.get(("Fetch.requestPaused", "frame"))) is block
+    for unsubscribe in unsubscribes:
+        unsubscribe()
+    assert not cdp.listeners.get(("Fetch.requestPaused", "frame"))

@@ -6,7 +6,7 @@ import shlex
 import shutil
 import socket
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import NotRequired, TypedDict
 from urllib.parse import urlparse
@@ -63,6 +63,12 @@ _ISOLATED_WORLD = "groundhog"
 _HEADLESS_TOKEN = "HeadlessChrome/"
 _IDENTITY_TIMEOUT_S = 10.0
 _IDENTITY_ATTEMPTS = 3
+_FRAME_AUTO_ATTACH = {
+    "autoAttach": True,
+    "waitForDebuggerOnStart": True,
+    "flatten": True,
+    "filter": [{"type": "iframe"}],
+}
 _HINTS_PAGE = "chrome://version/"
 _HINTS_EXPR = (
     "navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', "
@@ -756,6 +762,47 @@ class _PrivateDocuments:
         return [cdp.on_event("Fetch.requestPaused", session_id, on_paused)]
 
 
+class _ChildFrames:
+    def __init__(
+        self, prepare: Callable[[CDPClient, str], Awaitable[list[Callable[[], None]]]]
+    ) -> None:
+        self._prepare = prepare
+        self._unsubscribes: list[Callable[[], None]] = []
+        self._pending: set[asyncio.Task[None]] = set()
+
+    async def _adopt(self, cdp: CDPClient, params: dict) -> None:
+        child = params.get("sessionId")
+        if not isinstance(child, str):
+            return
+        try:
+            self._watch(cdp, child)
+            self._unsubscribes += await self._prepare(cdp, child)
+            await cdp.send("Target.setAutoAttach", _FRAME_AUTO_ATTACH, session_id=child)
+        except (CDPError, OSError, WebSocketException):
+            pass
+        finally:
+            try:
+                await cdp.send("Runtime.runIfWaitingForDebugger", session_id=child)
+            except (CDPError, OSError, WebSocketException):
+                pass
+
+    def _watch(self, cdp: CDPClient, session_id: str) -> None:
+        def on_attached(params: dict) -> None:
+            task = asyncio.ensure_future(self._adopt(cdp, params))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+        self._unsubscribes.append(cdp.on_event("Target.attachedToTarget", session_id, on_attached))
+
+    def _detach(self) -> None:
+        for unsubscribe in self._unsubscribes:
+            unsubscribe()
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        self._watch(cdp, session_id)
+        return [self._detach]
+
+
 class EngineProvider:
     def __init__(self, cfg: Config):
         self._cfg = cfg
@@ -848,6 +895,21 @@ class EngineProvider:
                 {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
                 session_id=sid,
             )
+        if self._identity is not None or self._cfg.block_private_ips:
+            await self._cdp.send("Target.setAutoAttach", _FRAME_AUTO_ATTACH, session_id=sid)
+
+    async def _prepare_frame(self, cdp: CDPClient, sid: str) -> list[Callable[[], None]]:
+        unsubscribes: list[Callable[[], None]] = []
+        if self._identity is not None:
+            await cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
+        if self._cfg.block_private_ips:
+            unsubscribes += _PrivateDocuments(self._cfg).attach(cdp, sid)
+            await cdp.send(
+                "Fetch.enable",
+                {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
+                session_id=sid,
+            )
+        return unsubscribes
 
     async def _fetch_in_target(self, url: str, strip_hidden: bool) -> RenderedPage:
         assert self._cdp is not None
@@ -859,11 +921,13 @@ class EngineProvider:
         responses = _MainResponse()
         challenge_assets = _ChallengeAssets()
         private_documents = _PrivateDocuments(self._cfg)
+        child_frames = _ChildFrames(self._prepare_frame)
         unsubscribes = (
             inflight.attach(self._cdp, sid)
             + responses.attach(self._cdp, sid)
             + challenge_assets.attach(self._cdp, sid)
             + private_documents.attach(self._cdp, sid)
+            + child_frames.attach(self._cdp, sid)
         )
         try:
             await self._prepare_tab(sid)

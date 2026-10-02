@@ -140,10 +140,10 @@ pull and run the browser container and remove an **unreachable** container named
 - **A real fingerprint.** It's real Chrome — authentic TLS/HTTP2 fingerprint, real
   WebGL/canvas — not a Python HTTP client, so fingerprint-driven blocks go away and cheap
   proxies work where they otherwise wouldn't. Your own Chrome runs headless, and Groundhog
-  gives each tab the identity of the same Chrome with a window: the `HeadlessChrome` token is
-  replaced and the client hints are copied from the browser itself, because overriding the
-  user agent alone makes Chrome drop them. The stealth image instead runs Chrome headful
-  under Xvfb.
+  gives each tab and each cross-site frame in it the identity of the same Chrome with a
+  window: the `HeadlessChrome` token is replaced and the client hints are copied from the
+  browser itself, because overriding the user agent alone makes Chrome drop them. Shared and
+  service workers are not covered. The stealth image instead runs Chrome headful under Xvfb.
 - **No model, no API key.** `research` returns extracts, not summaries; your agent does the
   synthesis. Self-hosted and MIT — the pages you fetch never leave your infrastructure.
 
@@ -391,12 +391,15 @@ stealth image because Chrome's sandbox does not work in an unprivileged containe
 container isolated. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
 **Your local network.** A local Chrome shares your machine's network, so a page could try to
-reach services on `localhost` or your LAN. Groundhog checks the address of every document
-the browser is about to request — redirects, framed documents and later navigations, not only
-the URL it was given — and stops one on a private address before the request is sent.
-Requests a page makes for its own images, scripts and `fetch()` are left to Chrome, which
-already refuses a public page's requests into the local network. Both are covered by live
-tests. `GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the document check off.
+reach services on `localhost` or your LAN. Groundhog checks the address of every document the
+browser is about to request — redirects, form posts, script and meta-refresh navigations, and
+navigations inside cross-site frames, not only the URL it was given — and stops one on a
+private address before the request is sent. Chrome itself refuses a public page's images,
+scripts, `fetch()`, frames and embeds into the local network. The one request it would still
+make is a speculative prefetch or prerender, so the Chrome Groundhog launches has page
+preloading turned off. Each of these routes has a live test that fails when its protection is
+removed. A browser you point `CDP_URL` at keeps its own preloading setting.
+`GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the document check off.
 
 ### Limits of hidden-text detection
 
