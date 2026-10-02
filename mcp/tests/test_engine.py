@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -639,18 +640,51 @@ async def test_a_chrome_that_cannot_be_executed_is_reported_not_raised(monkeypat
         await engine._start_browser(_cfg(browser="chrome", chrome_path="/opt/chrome"))
 
 
-async def test_a_profile_another_chrome_holds_is_reported_without_launching(monkeypatch, tmp_path):
-    launched: list[list[str]] = []
-    _stub_chrome(monkeypatch, launched)
+def _locked_profile(tmp_path, *, chrome_listening: bool):
     profile = tmp_path / "chrome"
     profile.mkdir()
+    socket_dir = tempfile.mkdtemp(prefix="gh", dir="/tmp")
+    singleton = os.path.join(socket_dir, "SingletonSocket")
+    listener = engine.socket.socket(engine.socket.AF_UNIX, engine.socket.SOCK_STREAM)
+    if chrome_listening:
+        listener.bind(singleton)
+        listener.listen()
     (profile / "SingletonLock").symlink_to(f"{engine.socket.gethostname()}-{os.getpid()}")
-    with pytest.raises(engine.BrowserUnavailableError) as raised:
-        await engine._start_browser(
-            _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
-        )
+    (profile / "SingletonSocket").symlink_to(singleton)
+    return profile, listener
+
+
+async def test_a_profile_a_running_chrome_holds_is_reported_without_launching(
+    monkeypatch, tmp_path
+):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile, listener = _locked_profile(tmp_path, chrome_listening=True)
+    try:
+        with pytest.raises(engine.BrowserUnavailableError) as raised:
+            await engine._start_browser(
+                _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+            )
+    finally:
+        listener.close()
+
     assert launched == []
     assert str(profile) in str(raised.value) and str(os.getpid()) in str(raised.value)
+
+
+async def test_a_lock_whose_pid_was_reused_by_another_process_does_not_stop_a_launch(
+    monkeypatch, tmp_path
+):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile, listener = _locked_profile(tmp_path, chrome_listening=False)
+    listener.close()
+
+    await engine._start_browser(
+        _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+    )
+
+    assert len(launched) == 1
 
 
 async def test_a_lock_left_by_a_chrome_that_has_exited_does_not_stop_a_launch(

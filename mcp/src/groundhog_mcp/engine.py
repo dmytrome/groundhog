@@ -315,16 +315,18 @@ async def _await_ready(
 def _profile_owner(profile: str) -> int | None:
     try:
         host, _, pid = os.readlink(os.path.join(profile, "SingletonLock")).rpartition("-")
+        singleton = os.readlink(os.path.join(profile, "SingletonSocket"))
     except OSError:
         return None
     if host != socket.gethostname() or not pid.isdigit():
         return None
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        os.kill(int(pid), 0)
-    except (ProcessLookupError, OverflowError):
+        probe.connect(singleton)
+    except OSError:
         return None
-    except PermissionError:
-        pass
+    finally:
+        probe.close()
     return int(pid)
 
 
