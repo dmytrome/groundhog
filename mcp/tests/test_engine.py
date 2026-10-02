@@ -670,6 +670,35 @@ async def test_a_chrome_that_exits_at_launch_is_reported_at_once(monkeypatch):
     assert len(slept) <= 1
 
 
+async def test_the_launched_chrome_never_preloads_pages(monkeypatch, tmp_path):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile = tmp_path / "chrome"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "kept"}}))
+    await engine._start_browser(
+        _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+    )
+    prefs = json.loads((profile / "Default" / "Preferences").read_text())
+    assert prefs["net"]["network_prediction_options"] == 2
+    assert prefs["profile"]["name"] == "kept"
+
+
+async def test_unreadable_preferences_are_replaced_rather_than_failing_the_launch(
+    monkeypatch, tmp_path
+):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile = tmp_path / "chrome"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Preferences").write_text("{not json")
+    await engine._start_browser(
+        _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+    )
+    prefs = json.loads((profile / "Default" / "Preferences").read_text())
+    assert prefs == {"net": {"network_prediction_options": 2}}
+
+
 @pytest.mark.parametrize(
     "cdp_url", ["http://browser.internal:9222", "ws://127.0.0.1:9222/devtools/browser/abc"]
 )

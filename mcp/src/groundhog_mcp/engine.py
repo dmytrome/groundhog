@@ -322,6 +322,22 @@ def _profile_owner(profile: str) -> int | None:
     return int(pid)
 
 
+def _disable_preloading(profile: str) -> None:
+    path = os.path.join(profile, "Default", "Preferences")
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            prefs = json.load(handle)
+    except (OSError, ValueError):
+        prefs = {}
+    if not isinstance(prefs, dict):
+        prefs = {}
+    net = prefs.get("net")
+    prefs["net"] = {**(net if isinstance(net, dict) else {}), "network_prediction_options": 2}
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(prefs, handle)
+
+
 async def _start_chrome(cfg: Config) -> None:
     binary = _chrome_binary(cfg)
     if binary is None:
@@ -336,6 +352,7 @@ async def _start_chrome(cfg: Config) -> None:
         )
     os.makedirs(cfg.chrome_profile, mode=0o700, exist_ok=True)
     os.chmod(cfg.chrome_profile, 0o700)
+    _disable_preloading(cfg.chrome_profile)
     print(
         f"[groundhog] starting Chrome with its own profile at {cfg.chrome_profile}…",
         file=sys.stderr,
