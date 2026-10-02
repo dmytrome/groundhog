@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import subprocess
 import sys
 
@@ -273,6 +274,7 @@ def _stub_chrome(monkeypatch, launched, ready=True):
         pytest.fail(f"the chrome backend ran {cmd}")
 
     monkeypatch.setattr(engine, "_launch_detached", fake_launch)
+    monkeypatch.setattr(engine, "_is_executable", lambda path: True)
     monkeypatch.setattr(engine, "check_browser", answers)
     monkeypatch.setattr(engine, "_run", no_docker)
     real_sleep = asyncio.sleep
@@ -590,3 +592,90 @@ async def test_documents_are_intercepted_only_while_private_addresses_are_blocke
     assert fetch == (
         [{"patterns": [{"urlPattern": "*", "resourceType": "Document"}]}] if block else []
     )
+
+
+def test_a_chrome_path_that_is_not_an_executable_is_reported_as_not_found(tmp_path):
+    missing = tmp_path / "no-chrome"
+    not_executable = tmp_path / "chrome.txt"
+    not_executable.write_text("")
+    for path in (missing, not_executable):
+        cfg = _cfg(browser="chrome", chrome_path=str(path))
+        assert engine._chrome_binary(cfg) is None
+        message = engine.remediation(cfg)
+        assert str(path) in message and "--remote-debugging-port" not in message
+
+
+async def test_a_chrome_that_cannot_be_executed_is_reported_not_raised(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+
+    async def refused(argv):
+        raise PermissionError(13, "Permission denied", argv[0])
+
+    monkeypatch.setattr(engine, "_launch_detached", refused)
+    with pytest.raises(engine.BrowserUnavailableError, match="could not be started"):
+        await engine._start_browser(_cfg(browser="chrome", chrome_path="/opt/chrome"))
+
+
+async def test_a_profile_another_chrome_holds_is_reported_without_launching(monkeypatch, tmp_path):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile = tmp_path / "chrome"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to(f"{engine.socket.gethostname()}-{os.getpid()}")
+    with pytest.raises(engine.BrowserUnavailableError) as raised:
+        await engine._start_browser(
+            _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+        )
+    assert launched == []
+    assert str(profile) in str(raised.value) and str(os.getpid()) in str(raised.value)
+
+
+async def test_a_lock_left_by_a_chrome_that_has_exited_does_not_stop_a_launch(
+    monkeypatch, tmp_path
+):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+    profile = tmp_path / "chrome"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to(f"{engine.socket.gethostname()}-999999999")
+    await engine._start_browser(
+        _cfg(browser="chrome", chrome_path="/opt/chrome", chrome_profile=str(profile))
+    )
+    assert len(launched) == 1
+
+
+async def test_a_chrome_that_exits_at_launch_is_reported_at_once(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched, ready=False)
+
+    class Exited:
+        returncode = 21
+
+    async def exits(argv):
+        launched.append(argv)
+        return Exited()
+
+    monkeypatch.setattr(engine, "_launch_detached", exits)
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def counting_sleep(seconds):
+        slept.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(engine.asyncio, "sleep", counting_sleep)
+    with pytest.raises(engine.BrowserUnavailableError, match="exited"):
+        await engine._start_browser(_cfg(browser="chrome", chrome_path="/opt/chrome"))
+    assert len(slept) <= 1
+
+
+@pytest.mark.parametrize(
+    "cdp_url", ["http://browser.internal:9222", "ws://127.0.0.1:9222/devtools/browser/abc"]
+)
+def test_a_browser_groundhog_does_not_start_gets_a_hint_about_that_browser(monkeypatch, cdp_url):
+    monkeypatch.setattr(engine, "_chrome_binary", lambda cfg: None)
+    for browser in ("chrome", "stealth"):
+        message = engine.remediation(_cfg(browser=browser, cdp_url=cdp_url))
+        assert "not started automatically" in message
+        assert "Install Google Chrome" not in message and "docker" not in message.lower()

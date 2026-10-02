@@ -129,11 +129,15 @@ def _run_argv(runtime: str, cfg: Config) -> list[str]:
     ]
 
 
+def _is_executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
 def _chrome_binary(cfg: Config) -> str | None:
     if cfg.chrome_path:
-        return cfg.chrome_path
+        return cfg.chrome_path if _is_executable(cfg.chrome_path) else None
     for path in _CHROME_PATHS.get(sys.platform, ()):
-        if os.path.isfile(path) and os.access(path, os.X_OK):
+        if _is_executable(path):
             return path
     for name in _CHROME_COMMANDS:
         found = shutil.which(name)
@@ -156,6 +160,12 @@ def _chrome_argv(binary: str, cfg: Config) -> list[str]:
 
 
 def _chrome_remediation(cfg: Config) -> str:
+    if cfg.chrome_path and _chrome_binary(cfg) is None:
+        return (
+            f"GROUNDHOG_CHROME_PATH is {cfg.chrome_path}, which is not an executable file. "
+            "Point it at Chrome's executable, unset it to use the installed Chrome, or set "
+            "GROUNDHOG_BROWSER=stealth to run the stealth image in Docker."
+        )
     if _chrome_binary(cfg) is None:
         return (
             "Chrome was not found. Install Google Chrome, set GROUNDHOG_CHROME_PATH to its "
@@ -169,6 +179,12 @@ def _chrome_remediation(cfg: Config) -> str:
 
 
 def remediation(cfg: Config) -> str:
+    if _is_websocket(cfg.cdp_url) or not _is_local(cfg.cdp_url):
+        return (
+            f"Cannot reach the browser at {safety.redacted_url(cfg.cdp_url)}. A browser "
+            "Groundhog does not launch itself is not started automatically: check that it "
+            "is running and that CDP_URL is its current address."
+        )
     if cfg.browser == "chrome":
         return _chrome_remediation(cfg)
     runtime = _container_runtime()
@@ -263,8 +279,8 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     return proc.returncode or 0, detail or ""
 
 
-async def _launch_detached(argv: list[str]) -> None:
-    await asyncio.create_subprocess_exec(
+async def _launch_detached(argv: list[str]) -> asyncio.subprocess.Process:
+    return await asyncio.create_subprocess_exec(
         *argv,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
@@ -273,28 +289,64 @@ async def _launch_detached(argv: list[str]) -> None:
     )
 
 
-async def _await_ready(cfg: Config, what: str) -> None:
+async def _await_ready(
+    cfg: Config, what: str, process: asyncio.subprocess.Process | None = None
+) -> None:
     for _ in range(_AUTOSTART_READY_TRIES):
         if await check_browser(cfg.cdp_url):
             return
+        if process is not None and process.returncode is not None:
+            raise BrowserUnavailableError(
+                f"{what} exited at launch (code {process.returncode}) before "
+                f"{safety.redacted_url(cfg.cdp_url)} answered."
+            )
         await asyncio.sleep(1)
     raise BrowserUnavailableError(
         f"{what} started but {safety.redacted_url(cfg.cdp_url)} did not become ready in time."
     )
 
 
+def _profile_owner(profile: str) -> int | None:
+    try:
+        host, _, pid = os.readlink(os.path.join(profile, "SingletonLock")).rpartition("-")
+    except OSError:
+        return None
+    if host != socket.gethostname() or not pid.isdigit():
+        return None
+    try:
+        os.kill(int(pid), 0)
+    except (ProcessLookupError, OverflowError):
+        return None
+    except PermissionError:
+        pass
+    return int(pid)
+
+
 async def _start_chrome(cfg: Config) -> None:
     binary = _chrome_binary(cfg)
     if binary is None:
         raise BrowserUnavailableError(_chrome_remediation(cfg))
+    owner = _profile_owner(cfg.chrome_profile)
+    if owner is not None:
+        raise BrowserUnavailableError(
+            f"The Chrome profile at {cfg.chrome_profile} is in use by another Chrome "
+            f"(pid {owner}) that is not answering at {safety.redacted_url(cfg.cdp_url)}. "
+            "Point CDP_URL at that Chrome's debugging port, stop it, or set "
+            "GROUNDHOG_CHROME_PROFILE to another directory."
+        )
     os.makedirs(cfg.chrome_profile, mode=0o700, exist_ok=True)
     os.chmod(cfg.chrome_profile, 0o700)
     print(
         f"[groundhog] starting Chrome with its own profile at {cfg.chrome_profile}…",
         file=sys.stderr,
     )
-    await _launch_detached(_chrome_argv(binary, cfg))
-    await _await_ready(cfg, "Chrome")
+    try:
+        process = await _launch_detached(_chrome_argv(binary, cfg))
+    except OSError as exc:
+        raise BrowserUnavailableError(
+            f"Chrome at {binary} could not be started: {exc.strerror or exc}"
+        ) from exc
+    await _await_ready(cfg, "Chrome", process)
 
 
 async def _start_browser(cfg: Config) -> None:
