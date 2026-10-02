@@ -307,6 +307,8 @@ async def _await_ready(
                 f"{safety.redacted_url(cfg.cdp_url)} answered."
             )
         await asyncio.sleep(1)
+    if process is not None and process.returncode is None:
+        process.kill()
     raise BrowserUnavailableError(
         f"{what} started but {safety.redacted_url(cfg.cdp_url)} did not become ready in time."
     )
@@ -350,6 +352,12 @@ async def _start_chrome(cfg: Config) -> None:
     binary = _chrome_binary(cfg)
     if binary is None:
         raise BrowserUnavailableError(_chrome_remediation(cfg))
+    if urlparse(cfg.cdp_url).hostname not in ("127.0.0.1", "localhost"):
+        raise BrowserUnavailableError(
+            f"Chrome only listens for DevTools on 127.0.0.1, so it cannot be started for "
+            f"{safety.redacted_url(cfg.cdp_url)}. Set CDP_URL=http://127.0.0.1:"
+            f"{_port_of(cfg.cdp_url)}."
+        )
     owner = _profile_owner(cfg.chrome_profile)
     if owner is not None:
         raise BrowserUnavailableError(

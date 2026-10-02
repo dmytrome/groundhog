@@ -1,7 +1,13 @@
 import pytest
 
 from groundhog_mcp.config import load_config
-from groundhog_mcp.safety import BlockedURLError, check_url, is_blocked_ip, safe_detail
+from groundhog_mcp.safety import (
+    BlockedURLError,
+    check_url,
+    is_blocked_ip,
+    redacted_url,
+    safe_detail,
+)
 
 
 @pytest.mark.parametrize(
@@ -62,3 +68,7 @@ def test_a_failure_detail_a_page_can_choose_is_bounded():
     detail = safe_detail(page_chosen)
 
     assert detail == "ValueError: " + "x" * 188
+
+
+def test_an_ipv6_address_keeps_its_brackets_when_redacted():
+    assert redacted_url("http://[::1]:9222/?token=secret") == "http://[::1]:9222"

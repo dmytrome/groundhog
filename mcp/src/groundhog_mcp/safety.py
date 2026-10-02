@@ -66,7 +66,8 @@ def redacted_url(url: str) -> str:
     except ValueError:
         host = port = None
     if host and parts.scheme:
-        return f"{parts.scheme}://{host}{f':{port}' if port else ''}"
+        shown = f"[{host}]" if ":" in host else host
+        return f"{parts.scheme}://{shown}{f':{port}' if port else ''}"
     # No scheme, or unparseable — `CDP_URL=127.0.0.1:9222` is a common misconfiguration
     # and `urlparse` reads the host as the scheme. Show it, since the operator has to
     # fix it, but drop anything before an `@` so a credential cannot ride along.

@@ -1046,3 +1046,41 @@ async def test_a_frame_whose_guard_cannot_be_enabled_leaves_no_listener(monkeypa
         await provider._prepare_frame(cdp, "frame")
 
     assert not cdp.listeners.get(("Fetch.requestPaused", "frame"))
+
+
+async def test_a_chrome_that_never_answers_is_stopped_before_the_error(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched, ready=False)
+
+    class StillRunning:
+        returncode = None
+        killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+    chrome = StillRunning()
+
+    async def runs_but_never_answers(argv):
+        return chrome
+
+    monkeypatch.setattr(engine, "_launch_detached", runs_but_never_answers)
+
+    with pytest.raises(engine.BrowserUnavailableError, match="did not become ready"):
+        await engine._start_browser(_cfg(browser="chrome", chrome_path="/opt/chrome"))
+
+    assert chrome.killed
+
+
+async def test_an_ipv6_loopback_cdp_url_is_refused_before_launching(monkeypatch):
+    launched: list[list[str]] = []
+    _stub_chrome(monkeypatch, launched)
+
+    with pytest.raises(engine.BrowserUnavailableError) as raised:
+        await engine._start_browser(
+            _cfg(browser="chrome", chrome_path="/opt/chrome", cdp_url="http://[::1]:9222")
+        )
+
+    assert launched == []
+    assert "http://[::1]:9222" in str(raised.value)
+    assert "CDP_URL=http://127.0.0.1:9222" in str(raised.value)
