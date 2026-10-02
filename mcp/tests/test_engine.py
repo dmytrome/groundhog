@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import websockets
@@ -727,6 +729,17 @@ class _Frames(_ScriptedCDP):
         self.listeners.setdefault((method, session_id), []).append(callback)
         return lambda: self.listeners[(method, session_id)].remove(callback)
 
+    def fire(self, method, session_id, params):
+        for callback in list(self.listeners.get((method, session_id), [])):
+            callback(params)
+
+    async def until_sent(self, method):
+        async def sent():
+            while method not in self.methods():
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(sent(), timeout=5)
+
 
 async def test_a_cross_site_frame_is_prepared_then_released_and_its_own_frames_watched():
     cdp = _Frames(_HEADLESS_UA, _HINTS)
@@ -824,3 +837,70 @@ def test_a_single_dropped_span_is_reported(make_page):
     page = dataclasses.replace(make_page(), spans_dropped=1)
 
     assert page.spans_dropped == 1
+
+
+async def test_a_paused_private_document_is_failed_through_the_event_the_guard_subscribed_to():
+    cdp = _Frames(_HEADLESS_UA, _HINTS)
+    engine._PrivateDocuments(_cfg()).attach(cdp, "tab")
+
+    cdp.fire("Fetch.requestPaused", "tab", _paused("http://127.0.0.1:8080/admin"))
+    await cdp.until_sent("Fetch.failRequest")
+
+    assert cdp.calls == [
+        ("Fetch.failRequest", {"requestId": "r1", "errorReason": "AddressUnreachable"}, "tab")
+    ]
+
+
+async def test_a_new_cross_site_frame_is_prepared_through_the_event_it_was_attached_by():
+    cdp = _Frames(_HEADLESS_UA, _HINTS)
+    prepared: list[str] = []
+
+    async def prepare(cdp, child):
+        prepared.append(child)
+        return []
+
+    engine._ChildFrames(prepare).attach(cdp, "tab")
+
+    cdp.fire("Target.attachedToTarget", "tab", {"sessionId": "frame"})
+    await cdp.until_sent("Runtime.runIfWaitingForDebugger")
+
+    assert prepared == ["frame"]
+    assert ("Runtime.runIfWaitingForDebugger", None, "frame") in cdp.calls
+
+
+async def test_a_private_address_is_refused_before_any_browser_is_contacted(monkeypatch):
+    def no_browser(ws_url):
+        pytest.fail("a browser was contacted for a refused URL")
+
+    monkeypatch.setattr(engine, "CDPClient", no_browser)
+    provider = engine.EngineProvider(_cfg())
+
+    with pytest.raises(engine.safety.BlockedURLError, match="127.0.0.1"):
+        await provider.fetch("http://127.0.0.1:8080/admin")
+
+
+def test_an_http_cdp_url_is_probed_with_its_query_kept():
+    asked: list[str] = []
+
+    class VersionOnlyWithToken(BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append(self.path)
+            body = b'{"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/x"}'
+            self.send_response(200 if self.path == "/json/version?token=abc" else 404)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), VersionOnlyWithToken)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        reachable = asyncio.run(
+            engine.check_browser(f"http://127.0.0.1:{server.server_address[1]}/?token=abc")
+        )
+    finally:
+        server.shutdown()
+
+    assert reachable is True
+    assert asked == ["/json/version?token=abc"]
