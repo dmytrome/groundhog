@@ -1,9 +1,9 @@
 import random
-import time
+from collections.abc import Iterator
 
 from markdown_it import MarkdownIt
 
-from groundhog_mcp import extract
+from groundhog_mcp import extract, retrieval
 from groundhog_mcp.retrieval import (
     _HEADING_RE,
     Chunk,
@@ -236,13 +236,23 @@ def test_a_paragraph_opening_with_an_inline_code_span_is_not_a_fence():
     assert [c.heading for c in chunk_document(markdown)] == ["Backticks", "Install"]
 
 
-def test_openers_that_can_never_close_are_not_each_scanned_to_the_end():
+def test_openers_that_can_never_close_are_not_each_scanned_to_the_end(monkeypatch):
     lines: list[str] = []
-    for width in range(6000, 2, -1):
+    for width in range(400, 2, -1):
         lines += ["~" * width, "prose about cats"]
-    start = time.perf_counter()
-    assert _fenced_lines(lines) == set()
-    assert time.perf_counter() - start < 0.5
+    steps = [0]
+
+    def counted_range(*bounds: int) -> Iterator[int]:
+        for index in range(*bounds):
+            steps[0] += 1
+            yield index
+
+    monkeypatch.setattr(retrieval, "range", counted_range, raising=False)
+
+    fenced = _fenced_lines(lines)
+
+    assert fenced == set()
+    assert steps[0] <= 2 * len(lines)
 
 
 def test_a_shell_comment_inside_a_fence_is_not_a_heading():

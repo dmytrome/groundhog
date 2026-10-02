@@ -195,16 +195,19 @@ def test_inputs_are_hostile_shapes_not_trusted_types():
     assert _classify({"status": 200, "mimeType": _HTML, "headers": {12: "x"}}, "", "") == "ok"
 
 
-def test_a_pathological_title_is_bounded_before_it_is_lowercased():
-    # `classify` runs on the collector's raw title, before `RenderedPage` caps it, and a
-    # page chooses that string. Unbounded, this took seconds and hundreds of MB
-    # *synchronously* inside the fetch — stalling every concurrent call, not just this one.
-    import time
+class _RecordsLowering(str):
+    def lower(self) -> str:
+        self.lowered_whole = True
+        return super().lower()
 
-    started = time.perf_counter()
-    assert _classify(_response(), "x" * 2_000_000, "") == "ok"
-    elapsed = time.perf_counter() - started
-    assert elapsed < 0.5, f"pathological title took {elapsed:.2f}s — the bound is gone"
+
+def test_a_pathological_title_is_never_lowercased_whole():
+    page_chosen_title = _RecordsLowering("x" * 2_000_000)
+
+    verdict = _classify(_response(), page_chosen_title, "")
+
+    assert verdict == "ok"
+    assert not hasattr(page_chosen_title, "lowered_whole")
 
 
 def test_a_body_challenge_phrase_past_the_scan_window_is_not_matched():
