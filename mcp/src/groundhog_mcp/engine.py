@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import socket
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -285,29 +286,29 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     return proc.returncode or 0, detail or ""
 
 
-async def _launch_detached(argv: list[str]) -> asyncio.subprocess.Process:
-    return await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+def _launch_detached(argv: list[str]) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
 
 
 async def _await_ready(
-    cfg: Config, what: str, process: asyncio.subprocess.Process | None = None
+    cfg: Config, what: str, process: subprocess.Popen[bytes] | None = None
 ) -> None:
     for _ in range(_AUTOSTART_READY_TRIES):
         if await check_browser(cfg.cdp_url):
             return
-        if process is not None and process.returncode is not None:
+        if process is not None and process.poll() is not None:
             raise BrowserUnavailableError(
                 f"{what} exited at launch (code {process.returncode}) before "
                 f"{safety.redacted_url(cfg.cdp_url)} answered."
             )
         await asyncio.sleep(1)
-    if process is not None and process.returncode is None:
+    if process is not None and process.poll() is None:
         process.kill()
     raise BrowserUnavailableError(
         f"{what} started but {safety.redacted_url(cfg.cdp_url)} did not become ready in time."
@@ -380,7 +381,7 @@ async def _start_chrome(cfg: Config) -> None:
         file=sys.stderr,
     )
     try:
-        process = await _launch_detached(_chrome_argv(binary, cfg))
+        process = _launch_detached(_chrome_argv(binary, cfg))
     except OSError as exc:
         raise BrowserUnavailableError(
             f"Chrome at {binary} could not be started: {exc.strerror or exc}"

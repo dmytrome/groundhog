@@ -44,11 +44,14 @@ def _no_real_browser_launch(monkeypatch, tmp_path):
         return
     monkeypatch.setenv("GROUNDHOG_CHROME_PROFILE", str(tmp_path / "chrome"))
 
-    async def refuse(argv):
+    def refuse(argv):
         pytest.fail(f"a unit test tried to launch a real browser: {argv[0]}")
 
+    async def refuse_container(argv):
+        refuse(argv)
+
     monkeypatch.setattr(engine, "_launch_detached", refuse)
-    monkeypatch.setattr(engine, "_run", refuse)
+    monkeypatch.setattr(engine, "_run", refuse_container)
 
 
 class _FakeProvider:

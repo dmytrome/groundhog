@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -269,7 +270,7 @@ def test_a_websocket_endpoint_that_cannot_be_reached_is_reported_without_its_cre
 
 
 def _stub_chrome(monkeypatch, launched, ready=True):
-    async def fake_launch(argv):
+    def fake_launch(argv):
         launched.append(argv)
 
     async def answers(url, timeout=engine._PROBE_TIMEOUT_S):
@@ -641,7 +642,7 @@ async def test_a_chrome_that_cannot_be_executed_is_reported_not_raised(monkeypat
     launched: list[list[str]] = []
     _stub_chrome(monkeypatch, launched)
 
-    async def refused(argv):
+    def refused(argv):
         raise PermissionError(13, "Permission denied", argv[0])
 
     monkeypatch.setattr(engine, "_launch_detached", refused)
@@ -734,7 +735,10 @@ async def test_a_chrome_that_exits_at_launch_is_reported_at_once(monkeypatch):
     class Exited:
         returncode = 21
 
-    async def exits(argv):
+        def poll(self) -> int:
+            return self.returncode
+
+    def exits(argv):
         launched.append(argv)
         return Exited()
 
@@ -1053,15 +1057,17 @@ async def test_a_chrome_that_never_answers_is_stopped_before_the_error(monkeypat
     _stub_chrome(monkeypatch, launched, ready=False)
 
     class StillRunning:
-        returncode = None
         killed = False
+
+        def poll(self) -> None:
+            return None
 
         def kill(self) -> None:
             self.killed = True
 
     chrome = StillRunning()
 
-    async def runs_but_never_answers(argv):
+    def runs_but_never_answers(argv):
         return chrome
 
     monkeypatch.setattr(engine, "_launch_detached", runs_but_never_answers)
@@ -1084,3 +1090,24 @@ async def test_an_ipv6_loopback_cdp_url_is_refused_before_launching(monkeypatch)
     assert launched == []
     assert "http://[::1]:9222" in str(raised.value)
     assert "CDP_URL=http://127.0.0.1:9222" in str(raised.value)
+
+
+def test_a_launched_browser_outlives_the_process_that_launched_it(tmp_path):
+    marker = tmp_path / "still-running"
+    launcher = (
+        "import asyncio\n"
+        "from groundhog_mcp import engine\n"
+        "async def main():\n"
+        f"    launched = engine._launch_detached(['sh', '-c', 'sleep 1; touch {marker}'])\n"
+        "    if asyncio.iscoroutine(launched):\n"
+        "        await launched\n"
+        "asyncio.run(main())\n"
+    )
+
+    subprocess.run([sys.executable, "-c", launcher], check=True, timeout=30)
+    for _ in range(50):
+        if marker.exists():
+            break
+        time.sleep(0.1)
+
+    assert marker.exists()
