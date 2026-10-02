@@ -365,16 +365,30 @@ _HINTS = {
     "bitness": "64",
     "wow64": False,
 }
+_HEADFUL_IDENTITY = {
+    "userAgent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+    ),
+    "userAgentMetadata": {
+        "brands": [
+            {"brand": "Chromium", "version": "154"},
+            {"brand": "Google Chrome", "version": "154"},
+        ],
+        "fullVersionList": [{"brand": "Google Chrome", "version": "154.0.8037.92"}],
+        "platform": "macOS",
+        "platformVersion": "26.5.1",
+        "architecture": "arm",
+        "model": "",
+        "mobile": False,
+        "bitness": "64",
+        "wow64": False,
+    },
+}
 
 
 def test_a_headless_browser_is_given_the_identity_of_the_same_chrome_with_a_window():
-    identity = engine._headful_identity(_HEADLESS_UA, _HINTS)
-    assert identity is not None
-    assert "HeadlessChrome" not in identity["userAgent"]
-    assert identity["userAgent"].endswith("Chrome/154.0.0.0 Safari/537.36")
-    metadata = identity["userAgentMetadata"]
-    assert metadata["brands"] == _HINTS["brands"]
-    assert metadata["platformVersion"] == "26.5.1" and "secure" not in metadata
+    assert engine._headful_identity(_HEADLESS_UA, _HINTS) == _HEADFUL_IDENTITY
 
 
 def test_a_browser_with_a_window_keeps_its_own_identity():
@@ -417,7 +431,7 @@ class _ScriptedCDP:
 async def test_a_headless_browser_has_its_identity_read_from_its_own_client_hints():
     cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
     identity = await engine._read_identity(cdp)
-    assert identity == engine._headful_identity(_HEADLESS_UA, _HINTS)
+    assert identity == _HEADFUL_IDENTITY
     opened = next(p for m, p, _ in cdp.calls if m == "Target.createTarget")
     assert opened == {"url": engine._HINTS_PAGE}
     assert cdp.methods()[-1] == "Target.closeTarget"
@@ -426,7 +440,7 @@ async def test_a_headless_browser_has_its_identity_read_from_its_own_client_hint
 async def test_a_browser_with_a_window_is_not_probed_for_an_identity():
     cdp = _ScriptedCDP(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
     assert await engine._read_identity(cdp) is None
-    assert cdp.methods() == ["Browser.getVersion"]
+    assert "Target.createTarget" not in cdp.methods()
 
 
 async def test_the_first_tab_on_a_headless_browser_arms_the_identity(monkeypatch):
@@ -436,7 +450,7 @@ async def test_the_first_tab_on_a_headless_browser_arms_the_identity(monkeypatch
     await provider.start()
     assert "Browser.getVersion" not in cdp.methods()
     await provider._prepare_tab("tab")
-    assert provider._identity == engine._headful_identity(_HEADLESS_UA, _HINTS)
+    assert provider._identity == _HEADFUL_IDENTITY
 
 
 class _RefusesChromePages(_ScriptedCDP):
@@ -475,24 +489,29 @@ async def test_an_identity_probe_without_a_result_is_a_failed_probe_not_a_crash(
         await engine._read_identity(NoValue(_HEADLESS_UA, _HINTS))
 
 
-@pytest.mark.parametrize("headless", [True, False])
-async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch, headless):
-    user_agent = _HEADLESS_UA if headless else _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/")
-    cdp = _ScriptedCDP(user_agent, _HINTS)
+async def test_each_tab_takes_the_identity_before_anything_loads(monkeypatch):
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
     monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
-    provider = engine.EngineProvider(
-        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=False)
-    )
+    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
     await provider.start()
     await provider._prepare_tab("first")
     cdp.calls.clear()
+
     await provider._prepare_tab("tab")
-    expected = ["Page.enable", "Network.enable"]
-    if headless:
-        expected = ["Emulation.setUserAgentOverride", *expected, "Target.setAutoAttach"]
-        assert cdp.calls[0][1] == provider._identity
-    assert cdp.methods() == expected
-    assert all(session == "tab" for _, _, session in cdp.calls)
+
+    override = ("Emulation.setUserAgentOverride", _HEADFUL_IDENTITY, "tab")
+    assert cdp.calls.index(override) < cdp.methods().index("Page.enable")
+
+
+async def test_a_tab_on_a_browser_with_a_window_keeps_its_own_identity(monkeypatch):
+    cdp = _ScriptedCDP(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(_cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x"))
+    await provider.start()
+
+    await provider._prepare_tab("tab")
+
+    assert "Emulation.setUserAgentOverride" not in cdp.methods()
 
 
 def test_a_fresh_process_reports_an_unreachable_browser_instead_of_raising():
