@@ -74,3 +74,14 @@ async def test_with_chrome_missing_the_default_says_how_to_get_a_browser(monkeyp
             await provider.start()
     finally:
         await provider.aclose()
+
+
+async def test_a_unit_test_cannot_start_a_real_container(monkeypatch):
+    monkeypatch.setenv("CDP_URL", _UNREACHABLE)
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "stealth")
+    monkeypatch.delenv("GROUNDHOG_AUTO_START_BROWSER", raising=False)
+    monkeypatch.setattr(engine, "_container_runtime", lambda: "no-such-container-runtime")
+    provider = EngineProvider(load_config())
+
+    with pytest.raises(pytest.fail.Exception, match="real browser: no-such-container-runtime"):
+        await provider.start()

@@ -48,6 +48,7 @@ def _no_real_browser_launch(monkeypatch, tmp_path):
         pytest.fail(f"a unit test tried to launch a real browser: {argv[0]}")
 
     monkeypatch.setattr(engine, "_launch_detached", refuse)
+    monkeypatch.setattr(engine, "_run", refuse)
 
 
 class _FakeProvider:
