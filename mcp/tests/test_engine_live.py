@@ -61,7 +61,8 @@ async def test_a_server_sees_chrome_with_its_client_hints_not_headless_chrome():
     headers = json.loads(page.text)["headers"]
     assert "HeadlessChrome" not in headers["User-Agent"]
     assert "Chrome/" in headers["User-Agent"]
-    assert '"Google Chrome"' in headers["Sec-Ch-Ua"]
+    assert '"Chromium"' in headers["Sec-Ch-Ua"]
+    assert "HeadlessChrome" not in headers["Sec-Ch-Ua"]
 
 
 def _lan_address() -> str | None:
