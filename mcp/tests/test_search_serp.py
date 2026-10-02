@@ -38,12 +38,29 @@ def test_dangerous_schemes_in_the_redirect_are_dropped():
         assert serp._real_url(f"//duckduckgo.com/l/?uddg={payload}") is None
 
 
+_SECOND_SNIPPET = (
+    "MCP (Model Context Protocol) is an open-source standard for connecting AI applications "
+    "to external systems. Using MCP, AI applications like Claude or ChatGPT can connect to "
+    "data sources (e.g. local files, databases), tools (e.g. search engines, calculators) and "
+    "workflows (e.g. specialized prompts)\u2014enabling them to access key information and "
+    "perform tasks. Think of MCP like a USB-C port for ..."
+)
+
+
+def test_each_result_carries_its_own_snippet():
+    hits = serp.parse(_SERP_HTML)
+
+    assert hits[0]["snippet"] == "Model Context Protocol"
+    assert hits[1]["snippet"] == _SECOND_SNIPPET
+
+
 def test_a_missing_snippet_does_not_shift_later_snippets():
-    # Drop the first result's snippet; hit 2 must keep its own text.
-    html = _SERP_HTML.replace('class="result__snippet"', "class=gone", 1)
-    hits = serp.parse(html)
+    without_first = _SERP_HTML.replace('class="result__snippet"', "class=gone", 1)
+
+    hits = serp.parse(without_first)
+
     assert hits[0]["snippet"] == ""
-    assert hits[1]["snippet"] == serp.parse(_SERP_HTML)[1]["snippet"]
+    assert hits[1]["snippet"] == _SECOND_SNIPPET
 
 
 def test_stale_selectors_raise_instead_of_reporting_no_results():

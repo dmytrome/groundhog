@@ -21,6 +21,19 @@ def test_parses_a_real_response():
     assert first["engine"]
 
 
+def test_a_result_carries_its_title_and_snippet():
+    first = searxng.parse(_FIXTURE)[0]
+
+    assert first["title"] == "Python (programming language) - Wikipedia"
+    assert first["snippet"] == (
+        "Python supports multiple programming paradigms but with an emphasis on "
+        "object-oriented programming and dynamic typing. Guido van Rossum began working on "
+        "Python in the late 1980s as a successor to the ABC programming language. Python 3.0, "
+        "released in 2008, was a major revision and not completely backward-compatible with "
+        "earlier versions."
+    )
+
+
 def test_keeps_result_order():
     hits = searxng.parse(_FIXTURE)
     assert [h["url"] for h in hits] == [r["url"] for r in _FIXTURE["results"]]
