@@ -764,27 +764,40 @@ class _PrivateDocuments:
 
 class _ChildFrames:
     def __init__(
-        self, prepare: Callable[[CDPClient, str], Awaitable[list[Callable[[], None]]]]
+        self,
+        prepare: Callable[[CDPClient, str], Awaitable[list[Callable[[], None]]]],
+        *,
+        guarded: bool,
     ) -> None:
         self._prepare = prepare
+        self._guarded = guarded
+        self._closed = False
         self._unsubscribes: list[Callable[[], None]] = []
         self._pending: set[asyncio.Task[None]] = set()
 
     async def _adopt(self, cdp: CDPClient, params: dict) -> None:
         child = params.get("sessionId")
-        if not isinstance(child, str):
+        if not isinstance(child, str) or self._closed:
             return
+        prepared = False
         try:
             self._watch(cdp, child)
-            self._unsubscribes += await self._prepare(cdp, child)
+            added = await self._prepare(cdp, child)
+            if self._closed:
+                for unsubscribe in added:
+                    unsubscribe()
+                return
+            self._unsubscribes += added
             await cdp.send("Target.setAutoAttach", _FRAME_AUTO_ATTACH, session_id=child)
+            prepared = True
         except (CDPError, OSError, WebSocketException):
             pass
         finally:
-            try:
-                await cdp.send("Runtime.runIfWaitingForDebugger", session_id=child)
-            except (CDPError, OSError, WebSocketException):
-                pass
+            if prepared or not self._guarded:
+                try:
+                    await cdp.send("Runtime.runIfWaitingForDebugger", session_id=child)
+                except (CDPError, OSError, WebSocketException):
+                    pass
 
     def _watch(self, cdp: CDPClient, session_id: str) -> None:
         def on_attached(params: dict) -> None:
@@ -795,7 +808,9 @@ class _ChildFrames:
         self._unsubscribes.append(cdp.on_event("Target.attachedToTarget", session_id, on_attached))
 
     def _detach(self) -> None:
-        for unsubscribe in self._unsubscribes:
+        self._closed = True
+        unsubscribes, self._unsubscribes = self._unsubscribes, []
+        for unsubscribe in unsubscribes:
             unsubscribe()
 
     def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
@@ -921,7 +936,7 @@ class EngineProvider:
         responses = _MainResponse()
         challenge_assets = _ChallengeAssets()
         private_documents = _PrivateDocuments(self._cfg)
-        child_frames = _ChildFrames(self._prepare_frame)
+        child_frames = _ChildFrames(self._prepare_frame, guarded=self._cfg.block_private_ips)
         unsubscribes = (
             inflight.attach(self._cdp, sid)
             + responses.attach(self._cdp, sid)

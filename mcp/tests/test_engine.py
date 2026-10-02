@@ -768,7 +768,7 @@ async def test_a_cross_site_frame_is_prepared_then_released_and_its_own_frames_w
         prepared.append(child)
         return []
 
-    frames = engine._ChildFrames(prepare)
+    frames = engine._ChildFrames(prepare, guarded=True)
     detach = frames.attach(cdp, "tab")
     await frames._adopt(cdp, {"sessionId": "frame"})
     assert prepared == ["frame"]
@@ -782,14 +782,48 @@ async def test_a_cross_site_frame_is_prepared_then_released_and_its_own_frames_w
     assert not any(cdp.listeners.values())
 
 
-async def test_a_frame_whose_preparation_fails_is_still_released():
+async def test_an_unguarded_frame_whose_preparation_fails_is_still_released():
     cdp = _Frames(_HEADLESS_UA, _HINTS, fail_on="Target.setAutoAttach")
 
     async def prepare(cdp, child):
         return []
 
-    await engine._ChildFrames(prepare)._adopt(cdp, {"sessionId": "frame"})
+    await engine._ChildFrames(prepare, guarded=False)._adopt(cdp, {"sessionId": "frame"})
+
     assert cdp.methods()[-1] == "Runtime.runIfWaitingForDebugger"
+
+
+@pytest.mark.parametrize("failing", ["Fetch.enable", "Target.setAutoAttach"])
+async def test_a_guarded_frame_whose_preparation_fails_is_never_let_load(failing):
+    cdp = _Frames(_HEADLESS_UA, _HINTS, fail_on=failing)
+
+    async def prepare(cdp, child):
+        await cdp.send("Fetch.enable", {}, session_id=child)
+        return []
+
+    await engine._ChildFrames(prepare, guarded=True)._adopt(cdp, {"sessionId": "frame"})
+
+    assert "Runtime.runIfWaitingForDebugger" not in cdp.methods()
+
+
+async def test_a_frame_prepared_after_the_fetch_ended_leaves_no_handlers_behind():
+    cdp = _Frames(_HEADLESS_UA, _HINTS)
+    preparing = asyncio.Event()
+
+    async def prepare(cdp, child):
+        await preparing.wait()
+        return [cdp.on_event("Fetch.requestPaused", child, lambda params: None)]
+
+    detach = engine._ChildFrames(prepare, guarded=True).attach(cdp, "tab")
+    cdp.fire("Target.attachedToTarget", "tab", {"sessionId": "frame"})
+    await asyncio.sleep(0)
+
+    detach[0]()
+    preparing.set()
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    assert not any(cdp.listeners.values())
 
 
 @pytest.mark.parametrize(
@@ -878,7 +912,7 @@ async def test_a_new_cross_site_frame_is_prepared_through_the_event_it_was_attac
         prepared.append(child)
         return []
 
-    engine._ChildFrames(prepare).attach(cdp, "tab")
+    engine._ChildFrames(prepare, guarded=True).attach(cdp, "tab")
 
     cdp.fire("Target.attachedToTarget", "tab", {"sessionId": "frame"})
     await cdp.until_sent("Runtime.runIfWaitingForDebugger")
