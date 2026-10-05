@@ -11,14 +11,20 @@
   "settings": [
     {
       "name": "CDP URL",
-      "description": "CDP endpoint of a stealth browser you already run, e.g. http://127.0.0.1:9222. Leave unset and Groundhog pulls and starts the container itself (needs Docker or Podman).",
+      "description": "CDP endpoint of a browser you already run, e.g. http://127.0.0.1:9222. Leave unset and Groundhog starts your installed Chrome itself, headless and in its own profile.",
       "envVar": "CDP_URL",
       "sensitive": false
     },
     {
       "name": "Auto-start the browser",
-      "description": "Set to false to manage the stealth Chrome container yourself. Defaults to true.",
+      "description": "Set to false to manage the browser yourself. Defaults to true.",
       "envVar": "GROUNDHOG_AUTO_START_BROWSER",
+      "sensitive": false
+    },
+    {
+      "name": "Browser",
+      "description": "chrome (default: your installed Chrome, no Docker needed) or stealth (the hardened browser container, needs Docker or Podman).",
+      "envVar": "GROUNDHOG_BROWSER",
       "sensitive": false
     },
     {

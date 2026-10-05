@@ -504,11 +504,14 @@ content you read. There is no account to create.
 
 **How data is used and stored.** Pages are fetched by a browser running on your own machine
 and returned to the MCP client that asked for them. The server keeps no database, writes no
-logs to disk, and persists nothing between calls — with one exception worth knowing: fetches
-share the browser container's profile, so cookies and storage set by one fetched page remain
-in that container and are visible to later fetches. Removing the container discards them
-(`docker rm -f groundhog-browser`), and the container is removed automatically if you started
-it with `--rm`.
+logs of its own to disk, and persists nothing between calls — with one exception worth knowing:
+fetches share the browser's profile, so cookies and storage set by one fetched page are visible
+to later fetches. With the default local Chrome, that profile is the folder
+`~/.groundhog/chrome` (or `GROUNDHOG_CHROME_PROFILE`), and it persists on your disk between
+sessions — that is what lets a login you make there stick. Delete the folder to discard it.
+With `GROUNDHOG_BROWSER=stealth`, the profile lives in the container instead: removing the
+container discards it (`docker rm -f groundhog-browser`), and that happens automatically if you
+started it with `--rm`.
 
 **Third parties your traffic reaches.** Only those you direct it to, plus two you should know
 about:

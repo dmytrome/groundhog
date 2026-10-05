@@ -24,13 +24,17 @@ Add this to your MCP client (Claude Desktop / Claude Code / Cursor / Windsurf):
 }
 ```
 
-That's the whole setup — no repo checkout, no manual steps. On the first fetch Groundhog
-starts the stealth browser for you by running `ghcr.io/dmytrome/groundhog:latest` under
-Docker or Podman, pulling it if it isn't already local. The first pull takes a few minutes;
-everything after is instant. That means a mutable `:latest` tag is pulled and run on your
-machine, Chrome runs `--no-sandbox` inside it, and any stale container named
-`groundhog-browser` is removed first on that path (a reachable browser is never touched) —
-set `GROUNDHOG_AUTO_START_BROWSER=false` to manage the browser yourself.
+That's the whole setup — no Docker, no repo checkout, no manual steps. On the first fetch
+Groundhog starts the Chrome you already have, headless and in its own profile at
+`~/.groundhog/chrome`, so no window ever opens over your work. Your own browsing, tabs and
+logins are never touched. Set `GROUNDHOG_AUTO_START_BROWSER=false` to manage the browser
+yourself.
+
+**Prefer the hardened stealth browser?** Set `GROUNDHOG_BROWSER=stealth` and Groundhog runs
+`ghcr.io/dmytrome/groundhog:latest` under Docker or Podman instead, pulling it if it isn't
+already local. The first pull takes a few minutes. That means a mutable `:latest` tag is pulled
+and run on your machine, Chrome runs `--no-sandbox` inside it, and any stale container named
+`groundhog-browser` is removed first on that path (a reachable browser is never touched).
 
 **Prefer to manage the browser yourself?** Start it and Groundhog will just use it — the
 default `CDP_URL` already points there, so there is nothing else to configure:
