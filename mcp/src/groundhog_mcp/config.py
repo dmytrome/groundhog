@@ -55,11 +55,6 @@ def load_config() -> Config:
 
 
 def token_budget(requested: int | None, default: int) -> int:
-    """Resolve a caller-supplied token budget.
-
-    MCP arguments are model-supplied, and a non-positive budget would otherwise
-    reach truncation and yield a meaningless fragment.
-    """
     return requested if requested and requested > 0 else default
 
 
@@ -93,7 +88,5 @@ def _searxng_url() -> str | None:
         return None
     scheme = urlparse(value).scheme
     if scheme not in ALLOWED_SCHEMES:
-        # Report the scheme only: the full value is an internal address that
-        # would otherwise land in model context and transcripts.
         raise ValueError(f"SEARXNG_URL must be http(s), got scheme {scheme!r}")
     return value
