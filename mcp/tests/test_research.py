@@ -8,7 +8,7 @@ from typing import Protocol
 import pytest
 
 from groundhog_mcp import cdp, document, engine, extract, retrieval, safety, search as search_module
-from groundhog_mcp.search import SearchHit, serp
+from groundhog_mcp.search import SearchHit, searxng, serp
 from groundhog_mcp.tools import research as research_mod
 from groundhog_mcp.tools.research import research
 
@@ -883,3 +883,16 @@ async def test_the_captured_news_date_decides_on_both_sides_of_it(
 
     assert result["sources"][0]["filtered"] == filtered
     assert bool(result["passages"]) is (filtered is None)
+
+
+async def test_captured_searxng_dates_leave_out_the_older_hits_before_fetching(
+    fake_web: FakeWeb,
+) -> None:
+    captured = json.loads((_FIXTURES / "searxng_news_response.json").read_text())
+    hits = searxng.parse(captured)
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten eats meat", max_sources=10, published_after="2026-01-01")
+
+    assert result["receipt"]["hits_before_date"] == 3
+    assert "en.wikinews.org" not in {s["url"].split("/")[2] for s in result["sources"]}
