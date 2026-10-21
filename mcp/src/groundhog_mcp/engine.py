@@ -1056,7 +1056,8 @@ class EngineProvider:
         finally:
             for unsubscribe in unsubscribes:
                 unsubscribe()
-            await self._cdp.send("Target.closeTarget", {"targetId": tid})
+            if not self._cdp.closed:
+                await self._cdp.send("Target.closeTarget", {"targetId": tid})
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         """Wait until the network is quiet and the DOM stops changing.

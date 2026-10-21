@@ -8,10 +8,15 @@ import websockets
 
 _T = TypeVar("_T")
 _MAX_FRAME_BYTES = 64 * 1024 * 1024  # generous for real pages, fatal for a memory bomb
+_COMMAND_TIMEOUT_S = 90.0
 
 
 class CDPError(Exception):
     """A CDP command returned an error or the page raised during evaluate."""
+
+
+class CommandTimeout(CDPError, TimeoutError):
+    pass
 
 
 class CDPClient:
@@ -99,7 +104,11 @@ class CDPClient:
             # while suspended here would otherwise strand the entry for the life of
             # the connection, once per wedged page.
             await self._ws.send(json.dumps(msg))
-            return await fut
+            try:
+                return await asyncio.wait_for(fut, timeout=_COMMAND_TIMEOUT_S)
+            except TimeoutError as exc:
+                await self.close()
+                raise CommandTimeout(f"{method} got no reply in {_COMMAND_TIMEOUT_S:g}s") from exc
         finally:
             self._pending.pop(mid, None)
 

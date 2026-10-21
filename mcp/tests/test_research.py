@@ -4,7 +4,7 @@ from typing import Protocol
 
 import pytest
 
-from groundhog_mcp import document, engine, safety, search as search_module
+from groundhog_mcp import cdp, document, engine, safety, search as search_module
 from groundhog_mcp.search import SearchHit
 from groundhog_mcp.tools import research as research_mod
 from groundhog_mcp.tools.research import research
@@ -345,6 +345,16 @@ async def test_cancelling_research_cancels_its_fetches_and_retrieves_their_error
 
     assert cancelled == ["https://slow.com/1"]
     assert unretrieved == []
+
+
+async def test_a_source_whose_browser_stopped_answering_is_reported_as_a_timeout(
+    fake_web: FakeWeb,
+) -> None:
+    fake_web([_hit("https://hung.com/1")], {}, {"https://hung.com/1": cdp.CommandTimeout("x")})
+
+    result = await research("cats")
+
+    assert [s["status"] for s in result["sources"]] == ["timeout"]
 
 
 async def test_a_blocked_source_is_reported_as_blocked_without_leaking_the_address(fake_web):

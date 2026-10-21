@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import websockets
 
-from groundhog_mcp import engine
+from groundhog_mcp import cdp, engine
 from groundhog_mcp.config import Config
 
 
@@ -1169,3 +1169,54 @@ async def test_a_fetch_waiting_out_its_domain_delay_leaves_the_page_free_for_oth
     assert started["https://other.com/"] - started["https://same.com/a"] < 0.25
     assert started["https://same.com/b"] - started["https://same.com/a"] >= 0.45
 
+
+async def test_a_command_the_browser_never_answers_fails_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def silent(ws: websockets.ServerConnection) -> None:
+        await ws.wait_closed()
+
+    monkeypatch.setattr(cdp, "_COMMAND_TIMEOUT_S", 0.2)
+
+    async with websockets.serve(silent, "127.0.0.1", 0) as server:
+        client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await client.connect()
+        try:
+            with pytest.raises(TimeoutError, match="Target.closeTarget"):
+                await client.send("Target.closeTarget", {"targetId": "t"})
+            closed_after_timeout = client.closed
+        finally:
+            await client.close()
+
+    assert closed_after_timeout
+
+
+class _WedgedOnNavigate(_ScriptedCDP):
+    def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
+        return lambda: None
+
+    async def send(self, method, params=None, session_id=None):
+        if self.closed:
+            raise cdp.CDPError("CDP client is not connected")
+        if method == "Page.navigate":
+            self.closed = True
+            raise cdp.CommandTimeout("Page.navigate got no reply in 90s")
+        return await super().send(method, params, session_id)
+
+
+async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def public(url: str, cfg: Config) -> None:
+        return None
+
+    async def prepared(sid: str) -> None:
+        return None
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    provider = engine.EngineProvider(_cfg())
+    provider._cdp = _WedgedOnNavigate(_HEADLESS_UA, _HINTS)
+    monkeypatch.setattr(provider, "_prepare_tab", prepared)
+
+    with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+        await provider._fetch_in_target("https://example.com/", True)
