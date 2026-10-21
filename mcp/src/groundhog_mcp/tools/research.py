@@ -149,10 +149,10 @@ def _within(url: str, domains: list[str]) -> str | None:
     return max(found, key=len, default=None)
 
 
-def _per_domain(min_delay_ms: int) -> int:
+def _per_domain(min_delay_ms: int, pages: int) -> int:
     if min_delay_ms <= 0:
-        return _MAX_SOURCES
-    return 1 + int(_STARTS_WITHIN_S * 1000 / min_delay_ms)
+        return min(_MAX_SOURCES, pages)
+    return min(1 + int(_STARTS_WITHIN_S * 1000 / min_delay_ms), pages)
 
 
 def _round_robin(
@@ -372,7 +372,8 @@ async def research(
         if not (after and (dated := _date(hit["published"])) and dated < after)
     ]
     if included:
-        chosen, same_domain = _round_robin(kept, included, capped, _per_domain(cfg.min_delay_ms))
+        per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
+        chosen, same_domain = _round_robin(kept, included, capped, per_domain)
     else:
         chosen, same_domain = _diverse(kept, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
