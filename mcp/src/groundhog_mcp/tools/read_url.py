@@ -91,7 +91,11 @@ async def read_url(
     body, truncated, set_aside = doc.markdown, False, 0
     if query and query.strip():
         selected, selected_matches, selected_truncated, selected_set_aside = retrieval.select(
-            doc.markdown, query, limit, source_url=doc.final_url
+            doc.markdown,
+            query,
+            limit,
+            source_url=doc.final_url,
+            content_hash=doc.provenance["content_hash"],
         )
         if selected_matches:
             body, matches, truncated = selected, selected_matches, selected_truncated

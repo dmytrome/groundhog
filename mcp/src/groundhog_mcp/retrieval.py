@@ -320,7 +320,7 @@ def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
 
 
 def select(
-    markdown: str, query: str, max_tokens: int, *, source_url: str = ""
+    markdown: str, query: str, max_tokens: int, *, source_url: str = "", content_hash: str = ""
 ) -> tuple[str, list[Match], bool, int]:
     chunks = chunk_document(markdown)
     ranked, left_out, set_aside = rank(chunks, query, max_tokens, floor=RELEVANCE_FLOOR)
@@ -329,7 +329,6 @@ def select(
     # Within one document, offset order is reading order — what a caller wants to
     # read back, unlike the relevance order `rank` returns.
     spans = _spans(chunks, ranked)
-    content_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     matches: list[Match] = [
         {
             "id": passage_id(source_url, content_hash, span.chunk.offset, span.end),
