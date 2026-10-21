@@ -508,3 +508,16 @@ def test_one_piece_of_a_long_fenced_block_comes_back_fenced() -> None:
     assert code_part.startswith("```python\n") and code_part.endswith("\n```")
     assert "needle = find_the_kitten()" in code_part
     assert after in ("", "After the code, kitten prose.")
+
+
+def test_a_passage_too_long_for_the_budget_is_skipped_for_the_next_that_fits() -> None:
+    chunks = [
+        Chunk(heading=None, offset=0, text="kitten eats meat, kitten eats meat"),
+        Chunk(heading=None, offset=1, text="kitten eats meat " + "and more words " * 6),
+        Chunk(heading=None, offset=2, text="a kitten eats"),
+    ]
+
+    ranked = rank(chunks, "kitten eats meat", max_tokens=20)
+
+    assert [s.chunk.offset for s in ranked.chosen] == [0, 2]
+    assert ranked.left_out == 1

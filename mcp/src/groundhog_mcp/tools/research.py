@@ -230,7 +230,8 @@ async def research(
 
     # One BM25 pass over every passage from every source, so a passage from the
     # last source is directly comparable to one from the first.
-    ranked, truncated, _ = retrieval.rank(chunks, query, limit)
+    ranked, left_out, _ = retrieval.rank(chunks, query, limit, floor=retrieval.RELEVANCE_FLOOR)
+    truncated = left_out > 0
     passages: list[Passage] = []
     for scored in ranked:
         if not scored.chunk.source:

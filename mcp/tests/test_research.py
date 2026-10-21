@@ -398,3 +398,24 @@ async def test_error_details_are_stripped_of_invisible_text(fake_web):
     result = await research("cats")
     detail = result["sources"][0]["error"]
     assert not any(ch in detail for ch in (ZERO_WIDTH, TAG_I))
+
+
+async def test_a_fragment_scoring_under_the_floor_is_not_returned(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://a.com/x"), _hit("https://b.com/y")],
+        {
+            "https://a.com/x": _doc(
+                "https://a.com/x",
+                "# Diet\n\nA kitten eats meat several times a day while the kitten grows.",
+            ),
+            "https://b.com/y": _doc(
+                "https://b.com/y",
+                "# Footer\n\n" + "Site map, contact, careers, press and the legal notice. " * 4
+                + "Kitten.\n",
+            ),
+        },
+    )
+
+    result = await research("what does a kitten eat")
+
+    assert [p["source_url"] for p in result["passages"]] == ["https://a.com/x"]
