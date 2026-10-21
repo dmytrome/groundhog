@@ -1111,3 +1111,61 @@ def test_a_launched_browser_outlives_the_process_that_launched_it(tmp_path):
         time.sleep(0.1)
 
     assert marker.exists()
+
+
+async def test_same_domain_fetches_queued_behind_a_busy_page_still_start_spaced_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def public(url: str, cfg: Config) -> None:
+        return None
+
+    async def connected() -> None:
+        return None
+
+    started: dict[str, float] = {}
+
+    async def load(url: str, strip_hidden: bool) -> None:
+        started[url] = time.monotonic()
+        if "other.com" in url:
+            await asyncio.sleep(0.5)
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    provider = engine.EngineProvider(_cfg(min_delay_ms=300, max_concurrent_pages=1))
+    monkeypatch.setattr(provider, "_ensure_connected", connected)
+    monkeypatch.setattr(provider, "_fetch_in_target", load)
+
+    busy = asyncio.create_task(provider.fetch("https://other.com/"))
+    await asyncio.sleep(0.05)
+    await asyncio.gather(provider.fetch("https://same.com/a"), provider.fetch("https://same.com/b"))
+    await busy
+
+    assert started["https://same.com/b"] - started["https://same.com/a"] >= 0.25
+
+
+async def test_a_fetch_waiting_out_its_domain_delay_leaves_the_page_free_for_other_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def public(url: str, cfg: Config) -> None:
+        return None
+
+    async def connected() -> None:
+        return None
+
+    started: dict[str, float] = {}
+
+    async def load(url: str, strip_hidden: bool) -> None:
+        started[url] = time.monotonic()
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    provider = engine.EngineProvider(_cfg(min_delay_ms=500, max_concurrent_pages=1))
+    monkeypatch.setattr(provider, "_ensure_connected", connected)
+    monkeypatch.setattr(provider, "_fetch_in_target", load)
+
+    same = [asyncio.create_task(provider.fetch(f"https://same.com/{p}")) for p in ("a", "b")]
+    await asyncio.sleep(0.05)
+    await provider.fetch("https://other.com/")
+    await asyncio.gather(*same)
+
+    assert started["https://other.com/"] - started["https://same.com/a"] < 0.25
+    assert started["https://same.com/b"] - started["https://same.com/a"] >= 0.45
+

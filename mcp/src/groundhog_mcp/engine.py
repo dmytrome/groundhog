@@ -918,9 +918,12 @@ class EngineProvider:
     async def fetch(self, url: str, strip_hidden: bool = True) -> RenderedPage:
         await safety.check_url(url, self._cfg)
         await self._ensure_connected()
-        await self._rl.acquire(registrable_domain(url))
-        async with self._pages:
+        async with self._rl.turn(registrable_domain(url)):
+            await self._pages.acquire()
+        try:
             return await self._fetch_in_target(url, strip_hidden)
+        finally:
+            self._pages.release()
 
     async def _prepare_tab(self, sid: str) -> None:
         assert self._cdp is not None

@@ -1,5 +1,7 @@
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 
 class RateLimiter:
@@ -11,6 +13,7 @@ class RateLimiter:
         self._sleep = sleep
         self._last: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._users: dict[str, int] = {}
 
     def _lock(self, key: str) -> asyncio.Lock:
         lock = self._locks.get(key)
@@ -18,28 +21,37 @@ class RateLimiter:
             lock = self._locks[key] = asyncio.Lock()
         return lock
 
-    def _evict_expired(self, now: float, keep: str | None = None) -> None:
+    def _evict_expired(self, now: float) -> None:
         """Drop keys whose delay has already elapsed.
 
         A long-lived server driven by search results sees unboundedly many domains,
         and an entry older than the delay can no longer postpone anything.
         """
-        stale = [k for k, seen in self._last.items() if k != keep and now - seen > self._min_delay]
+        stale = [
+            key
+            for key, seen in self._last.items()
+            if now - seen > self._min_delay and key not in self._users
+        ]
         for key in stale:
-            lock = self._locks.get(key)
-            if lock is None or not lock.locked():
-                self._last.pop(key, None)
-                self._locks.pop(key, None)
+            self._last.pop(key, None)
+            self._locks.pop(key, None)
 
-    async def acquire(self, key: str) -> None:
-        async with self._lock(key):
-            # Swept while holding this key's lock, and never for this key: the
-            # `locked()` test for other keys then cannot straddle the gap between
-            # another caller fetching its Lock and entering it.
-            self._evict_expired(self._clock(), keep=key)
-            last = self._last.get(key)
-            if last is not None:
-                wait = self._min_delay - (self._clock() - last)
-                if wait > 0:
-                    await self._sleep(wait)
-            self._last[key] = self._clock()
+    @asynccontextmanager
+    async def turn(self, key: str) -> AsyncIterator[None]:
+        self._users[key] = self._users.get(key, 0) + 1
+        try:
+            async with self._lock(key):
+                self._evict_expired(self._clock())
+                last = self._last.get(key)
+                if last is not None:
+                    wait = self._min_delay - (self._clock() - last)
+                    if wait > 0:
+                        await self._sleep(wait)
+                yield
+                self._last[key] = self._clock()
+        finally:
+            self._users[key] -= 1
+            if not self._users[key]:
+                del self._users[key]
+                if key not in self._last:
+                    self._locks.pop(key, None)
