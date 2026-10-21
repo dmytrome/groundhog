@@ -1021,3 +1021,4 @@ async def test_two_pages_that_extract_to_nothing_are_not_content(
     assert [s["filtered"] for s in result["sources"]] == [None, None]
     assert result["receipt"]["not_content"] == 2
     assert result["receipt"]["usable"] == 0
+    assert result["passages"] == []

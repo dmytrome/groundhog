@@ -368,7 +368,6 @@ async def research(
     }
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
-    used: set[str] = set()
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
             # Infrastructure, not a property of this source: every source would
@@ -401,7 +400,7 @@ async def research(
         elif after and dated and dated < after:
             filtered = "published_before"
         elif not empty and (
-            outcome.final_url in hashes or outcome.provenance["content_hash"] in used
+            outcome.final_url in hashes or outcome.provenance["content_hash"] in hashes.values()
         ):
             filtered = "duplicate"
         sources.append(
@@ -417,10 +416,6 @@ async def research(
             }
         )
         if empty:
-            # A challenge, a 404 or a non-HTML body is not this source's content, and
-            # ranking it would let "Checking your browser before accessing…" compete
-            # for the caller's token budget against real passages. The source still
-            # appears above, carrying the `page_status` that says why it contributed none.
             counts["not_content"] += 1
             continue
         counts["outside"] += outside
@@ -430,7 +425,6 @@ async def research(
         counts["usable"] += 1
         counts["undated"] += dated is None
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
-        used.add(outcome.provenance["content_hash"])
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the
