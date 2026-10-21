@@ -1378,6 +1378,17 @@ def test_a_canonical_metadata_url_longer_than_a_byline_is_not_shortened(
     assert result["canonical"] == canonical
 
 
+@pytest.mark.parametrize(
+    "canonical", ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000]
+)
+def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
+    make_page: Callable[..., engine.RenderedPage], canonical: str
+) -> None:
+    page = make_page(meta={"meta": {"canonical": canonical}, "lang": None, "canonical": None})
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] is None
+
+
 async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     async def silent(ws: websockets.ServerConnection) -> None:
         await ws.wait_closed()

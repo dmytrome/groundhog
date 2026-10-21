@@ -443,7 +443,11 @@ class RenderedPage:
                 key: cleaned
                 for key, value in (meta_pairs if isinstance(meta_pairs, dict) else {}).items()
                 if isinstance(key, str) and isinstance(value, str)
-                if (cleaned := sanitize.clean_field(value, sanitize.MAX_URL_CHARS))
+                if (
+                    cleaned := safety.safe_url(value)
+                    if key.lower() == "canonical"
+                    else sanitize.clean_field(value, sanitize.MAX_URL_CHARS)
+                )
             },
             "lang": sanitize.clean_field(raw_meta.get("lang"), sanitize.MAX_LANG_CHARS),
             "canonical": safety.safe_url(raw_meta.get("canonical")),
