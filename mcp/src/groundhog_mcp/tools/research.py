@@ -23,8 +23,6 @@ from ..search import SearchHit
 
 _DEFAULT_MAX_SOURCES = 5
 _MAX_SOURCES = 10
-# One page per registrable domain: source diversity, and it sidesteps the
-# per-domain rate limiter, which would otherwise serialise same-domain fetches.
 _OVERFETCH = 3  # headroom for the same-domain hits that dedupe discards
 _DEADLINE_S = 90.0
 _CANCEL_DRAIN_S = 5.0
@@ -34,13 +32,14 @@ _MAX_THREATS_PER_SOURCE = 10
 _MAX_AIM_CHARS = 200
 _MAX_DOMAINS = 50
 _FILTERED_HITS = 50
+_SITE_TERMS = 8
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$"
 )
 
 SourceStatus = Literal["ok", "blocked", "timeout", "error"]
-Filter = Literal["excluded_domain", "published_before"]
+Filter = Literal["excluded_domain", "outside_domains", "published_before", "duplicate"]
 
 
 class Passage(TypedDict):
@@ -127,19 +126,27 @@ def _domains(values: list[str] | None, name: str) -> list[str]:
 
 def _within(url: str, domains: list[str]) -> str | None:
     try:
-        host = (urlsplit(url).hostname or "").encode("idna").decode("ascii")
-    except UnicodeError:
+        host = (urlsplit(url).hostname or "").rstrip(".").encode("idna").decode("ascii")
+    except ValueError:
         return None
     found = [d for d in domains if host == d or host.endswith("." + d)]
     return max(found, key=len, default=None)
 
 
-def _round_robin(hits: list[SearchHit], domains: list[str], max_sources: int) -> list[SearchHit]:
+def _per_domain(min_delay_ms: int) -> int:
+    return _MAX_SOURCES if not min_delay_ms else 1 + int(_DEADLINE_S * 1000 / 3 / min_delay_ms)
+
+
+def _round_robin(
+    hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
+) -> list[SearchHit]:
     queues: dict[str, list[SearchHit]] = {}
     for hit in dict((hit["url"], hit) for hit in hits).values():
         domain = _within(hit["url"], domains)
         if domain:
-            queues.setdefault(domain, []).append(hit)
+            queue = queues.setdefault(engine.registrable_domain(hit["url"]), [])
+            if len(queue) < per_domain:
+                queue.append(hit)
     picked: list[SearchHit] = []
     while len(picked) < max_sources and any(queues.values()):
         for queue in queues.values():
@@ -304,9 +311,10 @@ async def research(
     included = _domains(include_domains, "include_domains")
     excluded = _domains(exclude_domains, "exclude_domains")
     executed = query
-    if included:
-        executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
-    executed += "".join(f" -site:{d}" for d in excluded)
+    sites = included if len(included) <= _SITE_TERMS else []
+    if sites:
+        executed += " (" + " OR ".join(f"site:{d}" for d in sites) + ")"
+    executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(sites)])
     cfg = load_config()
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
@@ -336,7 +344,8 @@ async def research(
         if not (after and (dated := _date(hit["published"])) and dated < after)
     ]
     if included:
-        chosen, same_domain = _round_robin(kept, included, capped), 0
+        chosen = _round_robin(kept, included, capped, _per_domain(cfg.min_delay_ms))
+        same_domain = 0
     else:
         chosen, same_domain = _diverse(kept, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
@@ -375,12 +384,16 @@ async def research(
             )
             continue
         dated = _date(outcome.provenance["published"]) or _date(hit["published"])
+        outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
         if _within(outcome.final_url, excluded):
             filtered = "excluded_domain"
+        elif outside:
+            filtered = "outside_domains"
         elif after and dated and dated < after:
             filtered = "published_before"
-        outside = bool(included) and not _within(outcome.final_url, included)
+        elif outcome.final_url in hashes:
+            filtered = "duplicate"
         sources.append(
             {
                 "url": outcome.final_url,
@@ -401,11 +414,11 @@ async def research(
             # appears above, carrying the `page_status` that says why it contributed none.
             counts["not_content"] += 1
             continue
+        counts["outside"] += outside
         if filtered:
             counts["filtered"] += 1
             continue
         counts["usable"] += 1
-        counts["outside"] += outside
         counts["undated"] += dated is None
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
