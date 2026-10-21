@@ -1,5 +1,7 @@
 import asyncio
+import re
 from typing import Annotated, Literal, TypedDict
+from urllib.parse import urlsplit
 
 from pydantic import Field
 
@@ -29,8 +31,14 @@ _CANCEL_DRAIN_S = 5.0
 # and `threats` sits outside the caller's token budget.
 _MAX_THREATS_PER_SOURCE = 10
 _MAX_AIM_CHARS = 200
+_MAX_DOMAINS = 50
+_FILTERED_HITS = 50
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$"
+)
 
 SourceStatus = Literal["ok", "blocked", "timeout", "error"]
+Filter = Literal["excluded_domain"]
 
 
 class Passage(TypedDict):
@@ -56,16 +64,24 @@ class Source(TypedDict):
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance | None
     error: str | None
+    filtered: Filter | None
+    outside_domains: bool
 
 
 class Receipt(TypedDict):
     executed_query: str
     aim: str | None
+    include_domains: list[str]
+    exclude_domains: list[str]
     hits: int
+    hits_by_domain: dict[str, int]
+    hits_outside_domains: int
     hits_same_domain: int
     failed: int
     not_content: int
+    filtered: int
     usable: int
+    outside_domains: int
     omitted: int
     set_aside: int
     clamped: bool
@@ -78,6 +94,45 @@ class ResearchResult(TypedDict):
     sources: list[Source]
     truncated: bool
     receipt: Receipt
+
+
+def _domain(value: str) -> str:
+    try:
+        domain = value.strip().lower().encode("idna").decode("ascii")
+    except UnicodeError:
+        domain = ""
+    if not _DOMAIN_RE.match(domain):
+        raise safety.InvalidArgument(f"not a domain name: {value[:80]!r}")
+    return domain
+
+
+def _domains(values: list[str] | None, name: str) -> list[str]:
+    if values and len(values) > _MAX_DOMAINS:
+        raise safety.InvalidArgument(f"{name} takes at most {_MAX_DOMAINS} domains")
+    return list(dict.fromkeys(_domain(value) for value in values or []))
+
+
+def _within(url: str, domains: list[str]) -> str | None:
+    try:
+        host = (urlsplit(url).hostname or "").encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    found = [d for d in domains if host == d or host.endswith("." + d)]
+    return max(found, key=len, default=None)
+
+
+def _round_robin(hits: list[SearchHit], domains: list[str], max_sources: int) -> list[SearchHit]:
+    queues: dict[str, list[SearchHit]] = {}
+    for hit in dict((hit["url"], hit) for hit in hits).values():
+        domain = _within(hit["url"], domains)
+        if domain:
+            queues.setdefault(domain, []).append(hit)
+    picked: list[SearchHit] = []
+    while len(picked) < max_sources and any(queues.values()):
+        for queue in queues.values():
+            if queue and len(picked) < max_sources:
+                picked.append(queue.pop(0))
+    return picked
 
 
 def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], int]:
@@ -180,6 +235,20 @@ async def research(
             )
         ),
     ] = None,
+    include_domains: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                f"Read only pages on these domains or their subdomains (at most "
+                f"{_MAX_DOMAINS}), e.g. a standards body or the vendor's docs. Several pages "
+                "from one domain may be read."
+            )
+        ),
+    ] = None,
+    exclude_domains: Annotated[
+        list[str] | None,
+        Field(description=f"Never read pages on these domains (at most {_MAX_DOMAINS})."),
+    ] = None,
     aim: Annotated[
         str | None,
         Field(
@@ -207,23 +276,43 @@ async def research(
         raise safety.InvalidArgument("query must not be empty")
     if aim is not None and len(aim) > _MAX_AIM_CHARS:
         raise safety.InvalidArgument(f"aim must be at most {_MAX_AIM_CHARS} characters")
+    included = _domains(include_domains, "include_domains")
+    excluded = _domains(exclude_domains, "exclude_domains")
+    executed = query
+    if included:
+        executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
+    executed += "".join(f" -site:{d}" for d in excluded)
     cfg = load_config()
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
 
     try:
-        hits, backend = await search_backend.search(query, cfg, capped * _OVERFETCH)
+        hits, backend = await search_backend.search(
+            executed, cfg, _FILTERED_HITS if included or excluded else capped * _OVERFETCH
+        )
     except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
         raise  # our own text, and the caller needs it to fix the backend
     except Exception as exc:
         # The same boundary `search` has: the SERP leg runs through the browser, so
         # its failures can name internal addresses or carry page-chosen text.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
-    chosen, same_domain = _diverse(hits, capped)
+    hits_by_domain = {d: 0 for d in included}
+    for hit in hits:
+        if domain := _within(hit["url"], included):
+            hits_by_domain[domain] += 1
+    kept = [
+        hit
+        for hit in hits
+        if not _within(hit["url"], excluded) and (not included or _within(hit["url"], included))
+    ]
+    if included:
+        chosen, same_domain = _round_robin(kept, included, capped), 0
+    else:
+        chosen, same_domain = _diverse(kept, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
 
     sources: list[Source] = []
-    counts = {"failed": 0, "not_content": 0, "usable": 0}
+    counts = {"failed": 0, "not_content": 0, "filtered": 0, "usable": 0, "outside": 0}
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
     for hit, outcome in zip(chosen, outcomes, strict=True):
@@ -243,9 +332,15 @@ async def research(
                     "threats": [],
                     "provenance": None,
                     "error": detail,
+                    "filtered": None,
+                    "outside_domains": False,
                 }
             )
             continue
+        filtered: Filter | None = (
+            "excluded_domain" if _within(outcome.final_url, excluded) else None
+        )
+        outside = bool(included) and not _within(outcome.final_url, included)
         sources.append(
             {
                 "url": outcome.final_url,
@@ -255,6 +350,8 @@ async def research(
                 "threats": outcome.threats,
                 "provenance": outcome.provenance,
                 "error": None,
+                "filtered": filtered,
+                "outside_domains": outside,
             }
         )
         if outcome.status in classify.NOT_CONTENT:
@@ -264,7 +361,11 @@ async def research(
             # appears above, carrying the `page_status` that says why it contributed none.
             counts["not_content"] += 1
             continue
+        if filtered:
+            counts["filtered"] += 1
+            continue
         counts["usable"] += 1
+        counts["outside"] += outside
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
@@ -308,13 +409,19 @@ async def research(
         "sources": sources,
         "truncated": left_out > 0 or clamped,
         "receipt": {
-            "executed_query": query,
+            "executed_query": executed,
             "aim": aim,
+            "include_domains": included,
+            "exclude_domains": excluded,
             "hits": len(hits),
+            "hits_by_domain": hits_by_domain,
+            "hits_outside_domains": len(hits) - len(kept),
             "hits_same_domain": same_domain,
             "failed": counts["failed"],
             "not_content": counts["not_content"],
+            "filtered": counts["filtered"],
             "usable": counts["usable"],
+            "outside_domains": counts["outside"],
             "omitted": left_out,
             "set_aside": set_aside,
             "clamped": clamped,
