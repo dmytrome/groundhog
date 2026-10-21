@@ -89,3 +89,18 @@ def test_canonical_with_a_dangerous_scheme_is_dropped(hostile):
     # model-facing — a citation must pass the same rules as any other URL.
     prov = build("text", ExtractMeta(None, None, hostile), _engine_meta())
     assert prov["canonical"] is None
+
+
+def test_an_author_over_eighty_characters_is_rejected() -> None:
+    prov = build("text", ExtractMeta("a" * 81, None, None), _engine_meta())
+    assert prov["author"] is None
+
+
+def test_extracted_author_and_publication_are_sanitized_and_bounded() -> None:
+    prov = build(
+        "text",
+        ExtractMeta("Jane\u200b Doe", "2026-01-01\u200b" + "x" * 100, None),
+        _engine_meta(),
+    )
+    assert prov["author"] == "Jane Doe"
+    assert prov["published"] == "2026-01-01" + "x" * 30
