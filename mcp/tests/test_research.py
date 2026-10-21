@@ -901,7 +901,7 @@ async def test_a_host_written_with_a_trailing_dot_is_still_excluded(fake_web: Fa
     result = await research("kitten eats meat", exclude_domains=["pypi.org"])
 
     assert result["sources"] == []
-    assert result["receipt"]["hits_outside_domains"] == 1
+    assert result["receipt"]["hits_excluded"] == 1
 
 
 async def test_a_hit_with_a_malformed_host_does_not_fail_the_call(fake_web: FakeWeb) -> None:
@@ -1067,6 +1067,40 @@ async def test_a_host_that_cannot_be_encoded_is_never_read(fake_web: FakeWeb) ->
     result = await research("kitten eats meat", exclude_domains=["evil.com"])
 
     assert result["sources"] == []
+
+
+async def test_a_redirect_to_an_excluded_domain_is_not_counted_as_outside(
+    fake_web: FakeWeb,
+) -> None:
+    fake_web([_hit("https://a.org/x")], {"https://a.org/x": _doc("https://b.com/x", _KITTEN)})
+
+    result = await research(
+        "kitten eats meat", include_domains=["a.org"], exclude_domains=["b.com"]
+    )
+
+    assert result["sources"][0]["filtered"] == "excluded_domain"
+    assert result["receipt"]["outside_domains"] == 0
+
+
+async def test_hits_on_an_excluded_domain_are_counted_apart(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://b.com/x")], {})
+
+    result = await research("kitten eats meat", exclude_domains=["b.com"])
+
+    assert result["receipt"]["hits_excluded"] == 1
+    assert result["receipt"]["hits_outside_domains"] == 0
+
+
+async def test_every_hit_lands_in_one_receipt_bucket(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://site{i}.com/x") for i in range(10)] + [_hit("https://site0.com/x")]
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten eats meat", max_sources=5)
+
+    receipt = result["receipt"]
+    assert receipt["hits"] == 10
+    assert receipt["hits_unread"] == 5
+    assert len(result["sources"]) + receipt["hits_unread"] == receipt["hits"]
 
 
 async def test_a_repeated_domain_counts_once_toward_the_limit(fake_web: FakeWeb) -> None:

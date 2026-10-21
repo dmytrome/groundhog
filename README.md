@@ -171,8 +171,9 @@ domains; further excluded ones are filtered after the search. `aim` (up to 200 c
 says what the evidence must show and is echoed back without changing the search or the
 ranking.
 
-`receipt` holds the `executed_query`, the hits and `hits_by_domain`, the hits dropped before
-fetching (`hits_outside_domains`, `hits_before_date`, `hits_same_domain`), each source counted
+`receipt` holds the `executed_query`, the distinct hits and `hits_by_domain`, the hits not
+fetched (`hits_excluded`, `hits_outside_domains`, `hits_before_date`, `hits_same_domain`,
+`hits_unread` past the source limit), each source counted
 once as `failed`, `not_content`, `filtered` or `usable`, `outside_domains`, `unknown_dates`,
 and the passages `omitted`, `set_aside` or `clamped`. Read it before concluding the web has
 no answer.
