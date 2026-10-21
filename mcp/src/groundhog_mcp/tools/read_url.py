@@ -47,8 +47,11 @@ async def read_url(
         str | None,
         Field(
             description=(
-                "When set, `matches` carries the passages most relevant to it, each with "
-                "its heading and offset for citation."
+                "When set, the content is built from the passages most relevant to it, and "
+                "`matches` lists each one's heading, offset and score for citation; it carries "
+                "no text. If nothing matches, `matches` is empty and the whole page is returned. "
+                "On a long page the relevant passages can still be most of it, so set "
+                "`max_tokens` to bound the read."
             )
         ),
     ] = None,
