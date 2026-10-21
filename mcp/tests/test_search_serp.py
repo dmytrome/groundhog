@@ -71,3 +71,14 @@ def test_stale_selectors_raise_instead_of_reporting_no_results():
 
 def test_genuine_no_results_page_is_empty_not_an_error():
     assert serp.parse('<html><body><div class="no-results">No results.</div></body></html>') == []
+
+
+def test_hits_keep_the_result_pages_order() -> None:
+    page = (
+        '<div><div class="result__body"><a class="result__a" '
+        'href="https://ex.com/first">First</a></div>'
+        '<div class="result__body"><a class="result__a" '
+        'href="https://ex.com/second">Second</a></div></div>'
+    )
+    hits = serp.parse(page)
+    assert [hit["url"] for hit in hits] == ["https://ex.com/first", "https://ex.com/second"]

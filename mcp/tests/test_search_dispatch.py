@@ -172,3 +172,30 @@ async def test_a_hit_url_with_a_malformed_host_is_dropped(
     monkeypatch.setattr(search.serp, "search", _serp)
     hits, _ = await search.search("q", _cfg(search_backend="serp"), limit=5)
     assert [h["url"] for h in hits] == ["https://ex.com/ok"]
+
+
+async def test_every_hit_text_field_is_sanitized_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hit: SearchHit = {
+        "title": "T\u200b" * 900,
+        "url": "https://ex.com/",
+        "snippet": "S\u200b" * 900,
+        "engine": "E\u200b" * 900,
+        "score": 1.0,
+        "published": "P\u200b" * 900,
+    }
+
+    async def _serp(query: str) -> list[SearchHit]:
+        return [hit]
+
+    monkeypatch.setattr(search.serp, "search", _serp)
+    hits, _ = await search.search("q", _cfg(search_backend="serp"), limit=5)
+    assert hits == [{
+        "title": "T" * 300,
+        "url": "https://ex.com/",
+        "snippet": "S" * 500,
+        "engine": "E" * 60,
+        "score": 1.0,
+        "published": "P" * 40,
+    }]

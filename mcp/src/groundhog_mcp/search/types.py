@@ -13,4 +13,4 @@ class SearchHit(TypedDict):
 
 
 class SearchUnavailableError(CallerFacingError, RuntimeError):
-    """The search backend could not answer, with a hint for how to fix it."""
+    pass

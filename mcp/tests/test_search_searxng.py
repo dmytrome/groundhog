@@ -102,3 +102,23 @@ def test_a_non_numeric_score_does_not_raise():
         ]
     }
     assert [hit["score"] for hit in searxng.parse(payload)] == [0.0, 0.0, 0.0, 2.5]
+
+
+@pytest.mark.parametrize("extra", ["answers", "infoboxes"])
+def test_only_results_are_returned_as_fetchable_hits(extra: str) -> None:
+    payload = {"results": [], extra: [{"url": "https://ex.com/extra", "title": "Extra"}]}
+    assert searxng.parse(payload) == []
+
+
+async def test_request_error_details_are_sanitized_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail(url: str, timeout: float) -> dict[str, object]:
+        raise ValueError("bad\u200b\n" + "x" * 500)
+
+    monkeypatch.setattr(searxng.http, "read_json_async", fail)
+    with pytest.raises(SearchUnavailableError) as caught:
+        await searxng.search("http://sx:8080", "q")
+    assert str(caught.value) == (
+        "SearXNG request failed (bad " + "x" * 196 + "). " + searxng._SETUP_HINT
+    )
