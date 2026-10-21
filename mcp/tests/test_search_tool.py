@@ -1,7 +1,11 @@
 import pytest
 
-from groundhog_mcp import engine, search as search_module
+from groundhog_mcp import engine, safety, sanitize, search as search_module
+from groundhog_mcp.config import Config
+from groundhog_mcp.search import SearchHit
 from groundhog_mcp.tools.search import search
+
+from .conftest import TAG_I, ZERO_WIDTH
 
 
 def _hit(url: str) -> dict:
@@ -58,3 +62,28 @@ async def test_browser_remediation_reaches_the_caller_intact(monkeypatch):
     with pytest.raises(engine.BrowserUnavailableError) as excinfo:
         await search("cats")
     assert str(excinfo.value) == hint
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        safety.BlockedURLError("blocked address: metadata.internal -> 169.254.169.254"),
+        RuntimeError(f"boom{ZERO_WIDTH}{TAG_I}" + "x" * 4000),
+    ],
+)
+async def test_backend_errors_are_cleaned_and_bounded(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    async def _boom(query: str, cfg: Config, limit: int) -> tuple[list[SearchHit], str]:
+        raise failure
+
+    monkeypatch.setattr(search_module, "search", _boom)
+
+    with pytest.raises(safety.CallerFacingError) as excinfo:
+        await search("cats")
+
+    detail = str(excinfo.value)
+    assert detail
+    assert "169.254.169.254" not in detail and "metadata.internal" not in detail
+    assert ZERO_WIDTH not in detail and TAG_I not in detail
+    assert len(detail) <= sanitize.MAX_ERROR_CHARS
