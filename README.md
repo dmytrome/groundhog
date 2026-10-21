@@ -3,12 +3,11 @@
 [![Conformance](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml/badge.svg)](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml)
 [![Glama](https://glama.ai/mcp/servers/dmytrome/groundhog/badges/score.svg)](https://glama.ai/mcp/servers/dmytrome/groundhog)
 
-**Web search, read and research for AI agents — through a real, stealth-patched Chrome.**
-Groundhog is an [MCP](https://modelcontextprotocol.io) server that finds pages, reads them,
-and researches across them, returning clean Markdown a model can trust: text no human could
-see is **stripped by default before the model reads it**, every source comes back with a
-**provenance receipt**, and a real browser reads pages that block plain fetchers — without
-the SSRF holes of naive fetch tools.
+Web search, read and research for AI agents, through a real, stealth-patched Chrome.
+Groundhog is an [MCP](https://modelcontextprotocol.io) server that returns clean Markdown a
+model can trust: text no human could see is **stripped before the model reads it and
+reported**, every source comes with a provenance receipt, and a real browser reads pages
+that block plain fetchers.
 
 ```text
 agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ──CDP──▶  stealth Chrome  ──▶  the web
@@ -16,9 +15,8 @@ agent / crawler  ──MCP──▶  Groundhog (search, read_url, research)  ─
 
 ## Measured against other fetch layers
 
-Twenty-eight pages, each carrying text a human reader cannot see, plus three controls
-carrying none. A case passes when the payload does not reach the model **and** the article
-text still does — a fetcher that returns nothing contains every payload and is useless.
+Twenty-eight pages carry text a human can't see, and three controls carry none. A case
+passes when the payload doesn't reach the model and the article text still does.
 
 | | contained | kept the article | reported it | false positives |
 | --- | --- | --- | --- | --- |
@@ -28,34 +26,13 @@ text still does — a fetcher that returns nothing contains every payload and is
 | Firecrawl | 7/28 | 28/28 | 0/28 | 0/3 |
 | **Groundhog** | **28/28** | **28/28** | **25/28** | **0/3** |
 
-Groundhog reports 25 of the 28 rather than all of them. The other three — a hidden input
-value, a meta description, an `iframe srcdoc` — are contained because no extractor ever
-collected them, and naming text that was never on its way to the model would describe work
-nothing did.
-
-Containment happens by accident all the time — an article extractor prunes a hidden `<div>`
-because its heuristics dislike it, not because anything asked whether a reader could see
-it. That is why the last column matters: **nothing else tested tells the caller that
-anything was removed**, so an empty threat list and a page with nothing hidden look
-identical.
-
-The corpus is published at
-[dmytrome.github.io/groundhog](https://dmytrome.github.io/groundhog/), so any fetcher can
-be measured against the same pages. Harness, per-case results and the limits of what this
-proves are in [`benchmark/`](benchmark/) — including that hosted services are a snapshot of
-the date recorded in [`RESULTS.md`](benchmark/RESULTS.md).
+Other extractors often drop hidden text by accident, but none of them tells the caller
+anything was removed. The three cases Groundhog doesn't report (a hidden input value, a meta
+description, an `iframe srcdoc`) never reach any extractor. The corpus is public at
+[dmytrome.github.io/groundhog](https://dmytrome.github.io/groundhog/); the harness and its
+limits are in [`benchmark/`](benchmark/).
 
 ## Quick start
-
-Add Groundhog to your MCP client — that's it. On the first fetch, Groundhog starts the
-Chrome you already have, headless and in its own profile at `~/.groundhog/chrome`: no
-Docker, no repo checkout, and no window, so it never takes focus while you work. It stays
-running for the next fetch. Chrome refuses remote control of your everyday profile (since
-Chrome 136), so your own browsing, tabs and logins are never touched.
-
-Prefer the hardened browser? `GROUNDHOG_BROWSER=stealth` pulls and starts the stealth-browser
-container instead (Docker or Podman required). When that path has to run, any stale container
-named `groundhog-browser` is removed first; a reachable browser is never touched.
 
 Claude Code:
 
@@ -63,7 +40,7 @@ Claude Code:
 claude mcp add groundhog -- uvx groundhog-mcp
 ```
 
-Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
+Claude Desktop, Cursor, Windsurf:
 
 ```json
 {
@@ -76,298 +53,167 @@ Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 }
 ```
 
-`uvx` fetches `groundhog-mcp` from PyPI on first run. The first fetch starts your installed
-Chrome; with `GROUNDHOG_BROWSER=stealth` it pulls the browser image instead (once, a few
-minutes). No Chrome or container runtime? The `status` tool and any error say what to
-install — or point `CDP_URL` at a hosted browser for zero-install use.
+On the first fetch Groundhog starts the Chrome you already have, headless, in its own
+profile at `~/.groundhog/chrome`. Your own browsing, tabs and logins are never touched. If
+Chrome is missing, `status` and the error say what to install.
 
-**Prefer to manage the browser yourself?** Start it and Groundhog will just use it:
+`GROUNDHOG_BROWSER=stealth` runs the hardened browser container instead (Docker or Podman;
+the first pull takes a few minutes). To run it yourself:
 
 ```bash
 docker run -d --rm --name groundhog-browser --shm-size 512m \
   -p 127.0.0.1:9222:9222 -- ghcr.io/dmytrome/groundhog:latest
-# or, from a repo checkout: docker compose up --build -d
-curl -s http://localhost:9222/json/version    # CDP is live
 ```
 
-Set `GROUNDHOG_AUTO_START_BROWSER=false` to disable auto-start. To run the MCP server from
-source: `cd mcp && uv sync && uv run groundhog-mcp`.
+`CDP_URL` points Groundhog at any browser and is used as given: `http://` is probed for
+`/json/version`, `ws://` or `wss://` (what hosted browsers hand out) is connected to directly.
+Auto-start only runs for a local address that isn't answering, and
+`GROUNDHOG_AUTO_START_BROWSER=false` turns it off. From source: `cd mcp && uv sync && uv run groundhog-mcp`.
 
-### Use any CDP browser
-
-`CDP_URL` takes the address a browser gives you, used exactly as given. An `http://` address
-is probed for `/json/version`; a `ws://` or `wss://` address — what hosted browsers hand out,
-often with a key in the query — is connected to directly.
-
-```bash
-CDP_URL=http://127.0.0.1:9222                      # a Chrome you started yourself
-CDP_URL="$(agent-browser get cdp-url)"             # a browser agent-browser opened
-CDP_URL="wss://<provider host>/?token=<your key>"  # a hosted browser
-```
-
-Auto-start only ever runs for a local address that isn't answering, so a browser you point
-`CDP_URL` at is yours to manage. `status` reports the address without its query or
-credentials.
-
-All four tools are annotated `readOnlyHint`, which is what lets a client run them without a
-per-call confirmation. That describes what they do to *your data*: nothing is written, and no
-remote state is changed. Worth knowing, because it is the one exception: with auto-start on,
-the first call may start Chrome in Groundhog's own profile — or, with `GROUNDHOG_BROWSER=stealth`,
-pull and run the browser container and remove an **unreachable** container named
-`groundhog-browser` first. A reachable browser is never touched, and
-`GROUNDHOG_AUTO_START_BROWSER=false` turns the whole path off.
+All four tools are annotated `readOnlyHint`: they write nothing and change no remote state.
+The one side effect is auto-start, which may launch Chrome or, with `stealth`, run the
+container after removing an unreachable one named `groundhog-browser`.
 
 ## What makes it different
 
-- **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it
-  can judge what a *human* would actually see and strip what they could not, reporting each
-  occurrence in `threats`. A strong heuristic, not a proof — see
-  [the limits of hidden-text detection](#limits-of-hidden-text-detection), and
-  [the benchmark](#measured-against-other-fetch-layers) for how that compares. The twelve signals,
-  the `threats` caveat and the `include_hidden` exception are documented under `read_url`.
-- **Every source carries a receipt.** SHA-256 hash of the extracted content, canonical URL,
-  language, word count, and author/date when the page declares them — so a downstream claim
-  traces back to exactly what was read. `read_url` returns the fetch time alongside it as
-  `fetched_at`.
-- **Safe by default.** The SSRF guard resolves each host before navigating and refuses to
-  return content from a URL that redirects into a private address. Read-only, with per-domain
-  rate limiting. This matters most in `research`, where a *third party* chooses the URLs.
-  See [Security](#security) for the full blocklist and the guard's limits.
-- **No automation tell.** Puppeteer/Playwright/Selenium enable the CDP `Runtime` domain,
-  which anti-bots detect (`isAutomatedWithCDP`). Groundhog drives the browser over raw CDP
-  and never enables `Runtime`/`Console`, so that signal is absent — a clean session that
-  full automation libraries can't produce over `connect_over_cdp`.
-- **A real fingerprint.** It's real Chrome — authentic TLS/HTTP2 fingerprint, real
-  WebGL/canvas — not a Python HTTP client, so fingerprint-driven blocks go away and cheap
-  proxies work where they otherwise wouldn't. Your own Chrome runs headless, and Groundhog
-  gives each tab and each cross-site frame in it the identity of the same Chrome with a
-  window: the `HeadlessChrome` token is replaced and the client hints are copied from the
-  browser itself, because overriding the user agent alone makes Chrome drop them. Shared and
-  service workers are not covered. The stealth image instead runs Chrome headful under Xvfb.
-- **No model, no API key.** `research` returns extracts, not summaries; your agent does the
-  synthesis. Self-hosted and MIT — the pages you fetch never leave your infrastructure.
+- **Hidden text is stripped and reported.** A rendered DOM shows what a human would see;
+  everything else goes, and each removal is listed in `threats`. It's a strong heuristic, not
+  a proof: see [the limits](#limits-of-hidden-text-detection).
+- **Every source carries a receipt**: a SHA-256 of the extracted content, canonical URL,
+  language, word count, and author and date when the page declares them.
+- **Safe by default.** An SSRF guard checks every document request, redirects and frames
+  included, with per-domain rate limiting. See [Security](#security).
+- **No automation tell.** Groundhog drives Chrome over raw CDP and never enables the
+  `Runtime` domain that anti-bots detect in Puppeteer, Playwright and Selenium.
+- **A real fingerprint.** Real Chrome means real TLS, HTTP/2, WebGL and canvas. In headless
+  mode the `HeadlessChrome` token is replaced and client hints are copied from the browser;
+  shared and service workers aren't covered. The stealth image runs headful under Xvfb.
+- **No model, no API key.** `research` returns extracts and your agent does the synthesis.
 
 ## Tools
 
 ### `read_url(url, format="markdown", max_tokens=None, query=None, include_hidden=False)`
 
-Fetches a page and returns clean content plus provenance.
+| Key          | Meaning |
+| ------------ | ------- |
+| `markdown`   | Extracted content, article first, falling back to full text; `format` may be `markdown` or `text` |
+| `title`      | Page title |
+| `url`        | The URL you asked for |
+| `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
+| `fetched_at` | UTC ISO-8601 timestamp |
+| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
+| `http_status`| The top-level HTTP status, or `null` |
+| `truncated`  | Whether the token budget cut the content |
+| `threats`    | What was stripped; empty when nothing was found |
+| `matches`    | With `query`: ranked passages with `id`, `heading`, `offset`, `end` and `score` |
+| `set_aside`  | With `query`: scoring passages the relevance floor dropped |
+| `provenance` | Content hash, canonical URL, language, word count, author and date |
 
-| Key          | Meaning                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| `markdown`   | Extracted content (article-first, falls back to full text); `format` may be `markdown` or `text` |
-| `title`      | Page title                                                                                       |
-| `url`        | The URL you asked for                                                                            |
-| `final_url`  | The URL after redirects (re-checked against the SSRF guard). Never rewritten: if the page's own final URL is unusable, the requested URL is reported and a `final_url_suppressed` threat says so |
-| `fetched_at` | UTC ISO-8601 timestamp                                                                           |
-| `status`     | What actually came back: `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when the content is not the page you asked for — so a Cloudflare interstitial, a 403, or a PDF is not read as if it were the real page. `blocked` covers `401`/`403` and every other 4xx that serves an error page (`451`, `400`, `405`…), with the exact code in `http_status`. `unknown` means no response — or no usable status — was observed for the document that was read: it is reported rather than assumed to be fine. A `challenge` is recognised from vendor **mitigation markers** — a header that exists only to announce it, or a request for an asset only a challenge loads — so it works whatever language the page is in; page wording is a last resort and only counts on a page too empty to be content. See [the limits of block detection](#limits-of-block-detection) The verdict describes the document the text came from, so a page that redirects client-side (meta-refresh, `location.href`) is judged on where it landed, not where it started |
-| `http_status`| The top-level response's HTTP status code, or `null` when it could not be observed              |
-| `truncated`  | Whether the content was cut to fit the token budget                                              |
-| `threats`    | Signals detected: hidden-CSS nodes and invisible-character classes; empty when none found |
-| `matches`    | When `query` is set: ranked passages with `id`, `heading`, `offset`, `end`, and `score`         |
-| `set_aside`  | When `query` is set: how many scoring passages the relevance floor dropped; `0` otherwise        |
-| `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present         |
+Stripped by default: `display:none`, `visibility:hidden`, `content-visibility:hidden`,
+`opacity ≤ 0.05`, `font-size < 4px`, zero-size and `display:contents` boxes that render
+nothing, `.sr-only`-style sub-pixel boxes, `clip: rect(...)`, transparent or
+background-coloured text, off-page positioning, collapsed `<details>`, `<template>` content,
+long `alt` / `aria-label` / `aria-description` / `title` text, and zero-width, bidi and
+Unicode Tag characters. HTML comments are reported too. `include_hidden=True` keeps the text
+but still reports it.
 
-Because Groundhog renders a real DOM, it can evaluate computed styles. Text invisible to
-humans is **stripped by default** and each occurrence reported in `threats` with its signal
-type and a short excerpt: `display:none`/`visibility:hidden`, `content-visibility: hidden`
-(the subtree is skipped from layout while the element keeps an ordinary box, so no other
-signal sees it), `opacity ≤ 0.05`, `font-size < 4 px`, zero-size elements, an element that generates no box
-of its own (`display: contents`) whose contents render nothing, the sub-pixel box
-used by `.sr-only`/`.visually-hidden` accessibility utility classes (a pattern attackers now
-mimic), the legacy `clip: rect(...)` hiding technique, fully transparent text color, text
-color matching the background color (near-1:1 contrast), elements positioned entirely
-outside the rendered page (e.g. `left: -9999px`), and content the browser lays out but
-refuses to render — a collapsed `<details>`, whose hiding lives on a pseudo-element no
-per-element style read can see. Non-trivial HTML comments are reported too — they never reach the
-extracted content either way, but a page embedding instructions this way is worth knowing
-about. `<template>` content is treated the same and for a sharper reason: it never renders,
-so no reader and no computed style sees it, yet it *is* serialized into the markup the
-extractor reads, and what a component actually shows is the copy it clones into its shadow
-tree — which is read from the live page instead. Text carried in an `alt`, `aria-label`, `aria-description` or `title` attribute is
-cleared from the markup at any length and reported above a length threshold: no computed
-style hides it, so the signals above cannot see it, and every image on a page carries an
-`alt` — reporting each one would spend the cap on captions. A second, character-level class is stripped and reported alongside these: zero-width
-characters, bidi marks and RTL overrides, and the Unicode Tag block — an invisible ASCII
-mirror that is the canonical prompt-injection smuggling channel. Pass `include_hidden=True`
-to keep the stripped text in the output; `threats` is still populated so you know it was
-there.
-
-**Treat `threats` as untrusted.** Entries come in eight shapes (the character classes share one):
+Treat `threats` as untrusted: its excerpts are page-authored text, cleaned and length-capped.
 
 | `type` | Carries |
 | ------ | ------- |
-| `hidden_css` | The hiding `reason`, an 80-char `excerpt` of the removed text, and the DOM `location`. All three are page-authored, so all three are stripped of invisible characters and length-capped — but they remain attacker-*chosen* text |
-| `hidden_attribute` | The same three fields, for text carried in an `alt`, `aria-label`, `aria-description` or `title` attribute rather than hidden by style. Reported above a length threshold, since every image carries an `alt`; cleared from the markup at any length |
-| `hidden_template` | The same three fields, for text inside a `<template>`. Inert markup: it never renders, never reaches `innerText`, and no computed style applies to it — but it is serialized into the markup the extractor reads. Reported above a length threshold; emptied from the markup either way |
-| `zero_width` / `bidi` / `tag` | A codepoint and count in `reason`, no excerpt. Detected on the text the page actually served — the extractor removes these characters on its way to Markdown, so scanning the extracted output would report none of them |
-| `report_truncated` | How many entries were dropped when the cap was hit. Its own type, so it cannot be miscounted as a finding |
-| `final_url_suppressed` | The page's own final URL was unusable (over-long, or carrying invisible characters) and was not returned; `final_url` reports the URL you requested instead |
-| `detection_degraded` | The collector had to run in the page's own JavaScript world, where the page can replace the DOM APIs it uses. A short list proves nothing on that page |
-| `strip_incomplete` | The rendered text was rebuilt from markup rather than read from layout. Either a flagged node could not be removed outright — it won the cascade against the hiding stylesheet (an inline `!important` does) or its recorded position did not resolve — or the page renders through open shadow roots, whose content has no layout to read. The second is by far the more common, and is routine rather than adversarial |
+| `hidden_css` | The hiding `reason`, an 80-character `excerpt` and the DOM `location` |
+| `hidden_attribute` | The same, for text in an `alt`, `aria-label`, `aria-description` or `title` attribute |
+| `hidden_template` | The same, for text inside a `<template>` |
+| `zero_width` / `bidi` / `tag` | A codepoint and count in `reason`, detected on the served text |
+| `report_truncated` | How many entries the cap dropped |
+| `final_url_suppressed` | The page's final URL was unusable and not returned |
+| `detection_degraded` | Detection ran in the page's own JavaScript world, which the page can tamper with |
+| `strip_incomplete` | The text was rebuilt from markup rather than layout, usually because of open shadow roots |
 
-The value of stripping is that the payload is out of the content being reasoned over, not
-that it is invisible to the model. At most **50 findings per page** are returned (**10 per
-source** in `research`, since the fan-out multiplies the report); beyond that a
-`report_truncated` entry is appended stating how many were dropped, rather than truncating
-silently. The two classes are capped independently, so a page cannot bury the findings that
-carry its injection excerpt by flooding the report with decoys of the other kind. Notices are
-appended after the cap — so they can never themselves be dropped, and a capped list is up to
-50 findings plus at most two notices.
+At most 50 findings per page are returned (10 per source in `research`), with the two classes
+capped separately so decoys can't bury a real payload. Notices are appended after the cap.
 
-Pass `query` to replace blunt head-truncation with relevance-ranked passage selection:
-content is chunked on markdown structure, ranked by lexical (BM25) relevance, and the
-passages scoring within half of the best one are returned, up to the token budget — so a
-question narrows a page to what answers it rather than to whatever fits the budget, and two
-different questions about one page come back with different content. `matches` gives each
-passage's heading, character offset, and score for downstream citation, and `set_aside`
-counts the scoring passages the floor dropped, so a narrowed page is never mistaken for a
-whole one: `truncated` still means only that the budget cut the content. Ranking runs on the
-sanitized content,
-so hidden-text injection payloads cannot influence which passages surface — with the one
-exception of `include_hidden=True`, which leaves the hidden text in the document and ranks it
-along with everything else.
+`query` swaps head-truncation for BM25 passage ranking on the sanitized content, keeping
+passages within half the best score up to the budget.
 
 ### `search(query, limit=10)`
 
-Finds pages for a query and returns ranked hits — `title`, `url`, `snippet`, `engine`,
-`score`, `published` — plus the `backend` that answered. Hits are links only: nothing is
-fetched until you pass a URL to `read_url`.
-
-Two backends, chosen automatically. Set `SEARXNG_URL` to use your own
-[SearXNG](https://docs.searxng.org) instance (best results; needs `formats: [html, json]`
-in its `settings.yml`, since JSON is off by default upstream). With no instance configured,
-Groundhog renders a search page through the stealth browser instead — no extra
-infrastructure, at the cost of depending on that page's layout. Force one with
-`GROUNDHOG_SEARCH_BACKEND=searxng|serp`.
-
-Every text field of a hit is attacker-influenceable — a poisoned page controls how it describes
-itself — so each passes through the same invisible-character stripping as page content, and
-each is length-capped. The URL is treated differently: it is what a model cites, so it is
-never rewritten. A hit is dropped outright if cleaning would change its URL at all, if that
-URL is not `http`/`https`, if it carries credentials, or if it exceeds 2048 characters. Both matter on the DuckDuckGo path, which percent-decodes
-the redirect wrapper and can therefore turn `%E2%80%8B` back into a real zero-width
-character inside the link. A backend that is unreachable, has JSON disabled, or whose every upstream engine
-is rate-limited raises an actionable error rather than reporting an empty web.
+Returns hits (`title`, `url`, `snippet`, `engine`, `score`, `published`) and the `backend`
+that answered. Nothing is fetched. With `SEARXNG_URL` set it uses your
+[SearXNG](https://docs.searxng.org) instance, which needs `formats: [html, json]`; otherwise
+it renders a search page through the browser. Hit text is cleaned and capped, and a hit whose
+URL would change under cleaning, isn't `http(s)`, carries credentials or exceeds 2048
+characters is dropped. A backend that can't answer raises an error instead of returning an
+empty web.
 
 ### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None)`
 
-One call for "find out about X": searches, reads the top sources through the stealth
-browser, and returns the passages most relevant to `query` — ranked across **all** sources
-in a single pass, so a passage from source 4 competes fairly with one from source 1.
+Searches, reads the top sources and ranks passages from all of them in one pass.
 
-Returns `passages` (each with `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`,
-`clamped`, `fence`) and `sources` (each with `url`, `title`, `status`, `page_status`,
-`threats`, `provenance`, `filtered`, `outside_domains`). `start` and `end` locate the passage in
-the source's markdown, and `text` is exactly that slice unless `clamped` says the top passage was
-cut to the budget; a passage cut from a long code block carries the block's opening line in
-`fence`. `id` is stable for the same page snapshot and span, and changes when the page does. `status` is the fetch
-outcome (`ok` / `blocked` / `timeout` / `error`); `page_status` is what a page that loaded
-actually was — the same classification `read_url` reports, so a source that returned a
-bot-challenge or a non-HTML body is visible rather than passing as `ok` — and is `null` when
-the fetch never produced a page. A source whose `page_status` says its body is an interstitial
-or an error page contributes **no passages**: it would otherwise compete for your token budget
-against real content. It still appears in `sources`, saying why it contributed nothing. At most
-one page per registrable domain, for source diversity. Passages are extracts, not summaries — nothing is generated,
-and no model or API key is involved. When a passage isn't enough, `read_url` its
-`source_url` for the whole page.
+- `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
+  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`; `fence` holds the opening
+  line of a code block a passage was cut from. `id` stays stable while the page doesn't change.
+- `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
+  (as in `read_url`), `threats`, `provenance`, `filtered`, `outside_domains`. A failed source
+  doesn't fail the call, and a challenge or error page contributes no passages.
+- One page per registrable domain, `max_sources` up to 10.
 
-A source that fails doesn't fail the call: it appears in `sources` with a status of
-`blocked` (SSRF guard), `timeout`, or `error`, so a partial answer is still usable and you
-can see what was missed. Because search results are chosen by a third party — and
-SEO-poisoned results are a documented in-the-wild attack — every fetched URL goes through
-the same SSRF guard and hidden-text stripping as `read_url`, and each source reports what
-was stripped from it.
+`include_domains` reads only those domains and their subdomains, `exclude_domains` never
+reads them, and `published_after` (`YYYY-MM-DD`) drops pages dated earlier; up to 50 domains
+per list. A page that redirects into an excluded domain or is dated too early is marked
+`filtered`; one that redirects out of the included domains is kept and marked
+`outside_domains`. `aim` (up to 200 characters) says what the evidence must show and is
+echoed back without changing the search or the ranking.
 
-`include_domains` reads only pages on those domains or their subdomains (several pages per
-domain are allowed then), `exclude_domains` never reads them, and `published_after`
-(`YYYY-MM-DD`) leaves out pages dated before that day; up to 50 domains per list. A page whose
-redirect lands in an excluded domain, or that is dated too early, is listed with `filtered` and
-contributes no passages; one that redirects out of the included domains is kept and marked
-`outside_domains`. `aim` (at most 200 characters) states what the evidence must show; it is
-echoed back and changes neither the search nor the ranking.
-
-`receipt` says what happened: the `executed_query` sent to the backend, the hits it returned and
-how many each included domain had (`hits_by_domain`), the hits dropped before fetching
-(`hits_outside_domains`, `hits_before_date`, `hits_same_domain`), each source counted once as
-`failed`, `not_content`, `filtered` or `usable`, sources that left the included domains
-(`outside_domains`) or had no date (`unknown_dates`), and the passages `omitted` for the budget,
-`set_aside` as weak, or `clamped`. Read it before concluding the web has no answer. A source that failed carries `provenance: null` — only sources that
-were actually read are hashed. `threats` is per-source here and capped at 10 entries per
-source, lower than `read_url`'s 50, because the fan-out multiplies it. `max_sources` is
-capped at 10.
-
-It's slower than an API-backed research tool: a real browser renders every source. That's
-the trade for reading pages that block plain fetchers, and for being able to tell you what
-was hidden in them.
+`receipt` holds the `executed_query`, the hits and `hits_by_domain`, the hits dropped before
+fetching (`hits_outside_domains`, `hits_before_date`, `hits_same_domain`), each source counted
+once as `failed`, `not_content`, `filtered` or `usable`, `outside_domains`, `unknown_dates`,
+and the passages `omitted`, `set_aside` or `clamped`. Read it before concluding the web has
+no answer.
 
 ### `status()`
 
-Reports whether Groundhog can reach the stealth browser. Returns `browser_reachable`,
-`cdp_url` and a `hint` with remediation steps when it isn't reachable. The endpoint is
-reported as scheme, host and port only — a hosted browser often carries a credential in
-its URL, and this value reaches the model.
+Returns `browser_reachable`, `cdp_url` (scheme, host and port only) and a `hint` when the
+browser can't be reached.
 
 ## Configuration
 
-**MCP server** (`mcp/`):
+**MCP server:**
 
-| Env var                          | Default                 | Purpose                                                                                  |
-| -------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint, used as given: `http(s)://` is probed for `/json/version`, `ws(s)://` is connected to directly. May be remote; auto-start is skipped for non-local values. A local endpoint is unauthenticated — keep it on a private network or a tunnel. |
-| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` (your installed Chrome, headless, own profile) or `stealth` (the browser container). Defaults to `stealth` when `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is set, so an existing container setup keeps its container. Chrome is started only for a `127.0.0.1` or `localhost` `CDP_URL`, the one address it listens on |
-| `GROUNDHOG_CHROME_PATH`          | _(found)_               | Chrome executable for `chrome`; found in the standard install locations when unset       |
-| `GROUNDHOG_CHROME_PROFILE`       | `~/.groundhog/chrome`   | Profile directory for `chrome`, created `0700`. Log into a site here once and Groundhog reuses that session |
-| `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | Enforce the SSRF guard (resolve + block private ranges)                                  |
-| `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Minimum delay between requests to the same domain                                        |
-| `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget before truncation                                                           |
-| `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Cap on concurrent open tabs                                                              |
-| `SEARXNG_URL`                    | _(unset)_               | Your SearXNG instance for `search`, e.g. `http://searxng:8080`. Needs `formats: [html, json]`. Unset → SERP via the stealth browser. |
-| `GROUNDHOG_SEARCH_BACKEND`       | `auto`                  | `auto` (SearXNG when `SEARXNG_URL` is set, else SERP), or force `searxng` / `serp`        |
-| `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Start the browser named by `GROUNDHOG_BROWSER` when a local `CDP_URL` isn't reachable; `false` to manage it yourself |
-| `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image used when `GROUNDHOG_BROWSER=stealth`                                    |
-| `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Use `docker compose -f <file> up -d` for auto-start instead of `docker run` (local repo) |
-
-**Dependencies:** `py3langid` (which pulls in numpy) is used for language detection in the
-`provenance` result. It is installed in the MCP server package only — not in the browser
-container.
+| Env var                          | Default                 | Purpose |
+| -------------------------------- | ----------------------- | ------- |
+| `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint, local or remote. Unauthenticated, so keep it private |
+| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` or `stealth`. Defaults to `stealth` when `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is set |
+| `GROUNDHOG_CHROME_PATH`          | _(found)_               | Chrome executable |
+| `GROUNDHOG_CHROME_PROFILE`       | `~/.groundhog/chrome`   | Profile directory; a login made here is reused |
+| `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | The SSRF guard |
+| `GROUNDHOG_MIN_DELAY_MS`         | `5000`                  | Delay between requests to one domain |
+| `GROUNDHOG_MAX_TOKENS`           | `20000`                 | Token budget |
+| `GROUNDHOG_MAX_CONCURRENT_PAGES` | `4`                     | Concurrent tabs |
+| `SEARXNG_URL`                    | _(unset)_               | SearXNG instance for `search` |
+| `GROUNDHOG_SEARCH_BACKEND`       | `auto`                  | `auto`, `searxng` or `serp` |
+| `GROUNDHOG_AUTO_START_BROWSER`   | `true`                  | Start the browser when a local `CDP_URL` isn't answering |
+| `GROUNDHOG_BROWSER_IMAGE`        | `ghcr.io/dmytrome/groundhog:latest` | Image for `stealth` |
+| `GROUNDHOG_COMPOSE_FILE`         | _(none)_                | Start with `docker compose -f <file> up -d` instead |
 
 **Browser container:**
 
-| Env var       | Default                       | Purpose                                                           |
-| ------------- | ----------------------------- | ----------------------------------------------------------------- |
-| `USER_AGENT`  | derived from installed Chrome | UA set at launch, so it is clean in every scope including workers        |
-| `PROXY`       | _(none)_                      | Upstream proxy (`http://user:pass@host:port`); auth is relayed and timezone/locale auto-align to the exit IP |
-| `TZ`          | `UTC`                         | Fallback timezone; auto-derived from the exit IP when `PROXY` is set     |
-| `WINDOW_SIZE` | `1920,1080`                   | Initial Chrome window size                                               |
-| `XVFB_WHD`    | `1920x1080x24`                | Virtual display geometry                                                 |
+| Env var       | Default                       | Purpose |
+| ------------- | ----------------------------- | ------- |
+| `USER_AGENT`  | derived from installed Chrome | UA set at launch, clean in every scope |
+| `PROXY`       | _(none)_                      | Upstream proxy `http://user:pass@host:port`; timezone and locale follow the exit IP |
+| `TZ`          | `UTC`                         | Fallback timezone |
+| `WINDOW_SIZE` | `1920,1080`                   | Chrome window size |
+| `XVFB_WHD`    | `1920x1080x24`                | Virtual display |
 
-## Under the hood: the stealth Chrome container
+## The stealth Chrome container
 
-A minimal Docker container running **headful Chrome under Xvfb** with a remote CDP
-endpoint. Any CDP-speaking client (Puppeteer, Playwright, Selenium, chromedp, raw
-DevTools) can drive it — Groundhog is one such client.
+Headful Chrome under Xvfb with a CDP endpoint, usable by any CDP client. It reports `Chrome`
+rather than `HeadlessChrome`, sets `navigator.webdriver` to `false`, and sets the UA at launch.
+With `PROXY`, timezone and locale match the exit IP, credentials go through a local tinyproxy,
+and WebRTC is pinned to the proxy. WebGL uses a detected GPU, else Mesa `llvmpipe`.
 
-- **Headful under Xvfb**, not `--headless=new` — the browser reports `Chrome`, not
-  `HeadlessChrome`, avoids headless-specific tells, and engages the real GPU path.
-- **`--disable-blink-features=AutomationControlled`** — `navigator.webdriver` reads
-  `false`.
-- **UA set at launch** from the installed Chrome version (`USER_AGENT`), so it is clean
-  in every scope — main frame, network, and Web/Service Worker globals.
-- **Proxy geo-coherence.** When `PROXY` is set, the entrypoint geolocates the exit IP and
-  aligns the browser timezone and locale to it — a timezone or locale that disagrees with
-  the IP is itself a block signal. The country→locale table is CLDR likely-subtags. Chrome
-  can't authenticate to a proxy over `--proxy-server`, so credentials are relayed through a
-  local tinyproxy; WebRTC is pinned to the proxy path so the real IP can't leak.
-- **GPU-aware WebGL.** The entrypoint auto-detects a GPU (NVIDIA via the Container
-  Toolkit, or Intel/AMD via `/dev/dri`) and uses hardware acceleration; without one it
-  runs Mesa `llvmpipe`, a coherent software renderer that VMs and servers legitimately
-  emit. See the `gpus`/`devices` hints in [`docker-compose.yml`](docker-compose.yml).
-
-### Verified results
-
-Measured against a freshly built container (Chrome 151, headful under Xvfb, no proxy),
-driven over raw CDP:
+Against a fresh container (Chrome 151, no proxy), over raw CDP:
 
 | Detector                                                               | Result                                  |
 | ---------------------------------------------------------------------- | --------------------------------------- |
@@ -375,184 +221,78 @@ driven over raw CDP:
 | [browserscan](https://www.browserscan.net/bot-detection)               | Normal                                  |
 | [bot.sannysoft.com](https://bot.sannysoft.com/)                        | 31 / 31 checks pass                     |
 
-[iphey](https://iphey.com/) is tracked informationally, not pass/fail: its one recurring
-flag is Location ("looks like you're trying to hide your location"), which fires on any
-datacenter/hosting exit IP regardless of browser fingerprint or `TZ` correctness — it
-passes on a residential IP and fails in CI (a cloud runner) and behind most proxies alike.
-
-See [`RESULTS.md`](RESULTS.md) for the full live table (regenerated by
-[`tests/antibot.py`](tests/antibot.py) and the Conformance workflow).
-
-These reflect the raw-CDP client. Full automation libraries (Puppeteer/Playwright/Selenium)
-enable the CDP `Runtime` domain and are flagged as automated even against this container —
-see [`examples/`](examples/) for which need patched (rebrowser) variants.
-
-### Examples
-
-| Client              | Path                                                       |
-| ------------------- | ---------------------------------------------------------- |
-| Puppeteer (Node)    | [`examples/puppeteer`](examples/puppeteer)                 |
-| Playwright (Node)   | [`examples/playwright-node`](examples/playwright-node)     |
-| Playwright (Python) | [`examples/playwright-python`](examples/playwright-python) |
-| Selenium (Python)   | [`examples/selenium-python`](examples/selenium-python)     |
-| chromedp (Go)       | [`examples/go-chromedp`](examples/go-chromedp)             |
-| Raw CDP (Python)    | [`examples/python-raw-cdp`](examples/python-raw-cdp)       |
-
-See [`examples/OTHER_TOOLS.md`](examples/OTHER_TOOLS.md) for crawl4ai, Scrapy +
-Playwright, go-rod, Crawlee, and nodriver pointers.
+[iphey](https://iphey.com/) flags any datacenter IP, so it's tracked but not scored. The live
+table is in [`RESULTS.md`](RESULTS.md). Puppeteer, Playwright and Selenium are still flagged
+because they enable `Runtime`; [`examples/`](examples/) has clients for each, and
+[`OTHER_TOOLS.md`](examples/OTHER_TOOLS.md) covers more.
 
 ## Security
 
-The CDP endpoint is **unauthenticated** — anyone who can reach the port has full control
-of the browser. Bind it to localhost or a trusted private network; never expose it to the
-public internet. The local Chrome listens on `127.0.0.1` only. `--no-sandbox` is used in the
-stealth image because Chrome's sandbox does not work in an unprivileged container; keep the
-container isolated. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
+The CDP endpoint is unauthenticated: anyone who reaches the port controls the browser. Keep it
+on localhost or a private network. The stealth image runs `--no-sandbox`, so keep the
+container isolated. Report vulnerabilities via [`SECURITY.md`](SECURITY.md).
 
-**Your local network.** A local Chrome shares your machine's network, so a page could try to
-reach services on `localhost` or your LAN. Groundhog checks the address of every document the
-browser is about to request — redirects, form posts, script and meta-refresh navigations, and
-navigations inside cross-site frames, not only the URL it was given — and stops one on a
-private address before the request is sent. Chrome itself refuses a public page's images,
-scripts, `fetch()`, frames and embeds into the local network. The one request it would still
-make is a speculative prefetch or prerender, so the local Chrome Groundhog launches
-(`GROUNDHOG_BROWSER=chrome`) has page preloading turned off. Each of these routes has a live
-test that fails when its protection is removed. The stealth container, and a browser you point
-`CDP_URL` at, keep their own preloading setting.
-`GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the document check off.
+The SSRF guard resolves each host and refuses loopback, private, link-local (including
+`169.254.169.254`), reserved, multicast, unspecified, CGNAT and IPv4-mapped IPv6 addresses,
+non-`http(s)` schemes, and URLs with credentials. It checks every document request Chrome is
+about to send, redirects and cross-site frames included, and `final_url` once more.
+Sub-resources are left to Chrome's Local Network Access rule, and the Chrome that Groundhog
+launches has preloading turned off.
+
+Limits of the guard:
+
+- Only documents are checked. An older Chrome, or a site granted local-network access in the
+  profile, isn't covered for sub-resources.
+- Preloading stays on in the stealth container and in a browser you supply.
+- Groundhog and Chrome resolve DNS separately, so a short-TTL rebinding window remains.
+- Fetches share one profile, so cookies set by one page persist into later fetches, and page
+  JavaScript can make its own requests from it.
+
+`GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the guard off; use it only where reaching internal
+addresses is intended.
 
 ### Limits of hidden-text detection
 
-Worth knowing before treating an empty `threats` list as a clean bill of health. Nothing is
-removed from the live page — the markup is stripped inside a separate inert document, which
-is imported rather than cloned (`cloneNode` is itself `[CEReactions]`), and the rendered text
-comes from the live page with the flagged nodes hidden by an adopted stylesheet. So a page
-gets no synchronous hook to react to the strip. What that does *not* cover:
+An empty `threats` list isn't a clean bill of health. Detection runs in an isolated world the
+page can't tamper with, and the live page is never modified. But:
 
-- **The style signals are thresholds, and the character set is a denylist.** Those are the
-  real limits — see below. The detector itself runs in an isolated world
-  (`Page.createIsolatedWorld`), so a page cannot suppress it by replacing the DOM APIs it
-  uses; if the browser ever declines to provide one, the result carries a
-  `detection_degraded` threat rather than quietly weaker detection.
-- **Thresholds can be sat just inside.** `opacity: 0.06`, `font-size: 4px`, a contrast ratio
-  just above 1.15 — all pass, as do hiding techniques the twelve signals don't model
-  (`clip-path`, `text-indent`, `transform: scale(0)`).
-- **Invisible-character coverage is a set, not a rule.** Zero-width, bidi and the Unicode Tag
-  block are stripped and reported; codepoints outside that set are not.
-- **When the text is rebuilt, line breaks are guessed from tag names.** In the two cases
-  above the rendered text is taken from the stripped markup, which has no layout — so an
-  element the page styled `display:inline` still gets a break, and a block-level tag outside
-  the list gets none. Word boundaries are preserved; exact line structure is not.
-- **Closed shadow roots are not read.** Open ones are: their content is scanned for hidden
-  text and composed into the output as the flat tree a reader sees, slots included. A
-  closed root is unreachable from the isolated world, so it cannot be scanned — and what
-  cannot be scanned is not composed in. Its content stays out of the result entirely rather
-  than arriving unexamined.
-- **A page can win the cascade against the hiding sheet, or hide its own `<body>`.** An
-  inline `!important` beats an author stylesheet, and `innerText` returns raw text when
-  nothing renders at all. In either case the rendered text is abandoned for the stripped
-  markup, which is a weaker guarantee than reading real layout — reported as
-  `strip_incomplete` rather than left to look like a clean strip.
+- Thresholds can be sat just inside (`opacity: 0.06`), and unmodelled techniques such as
+  `clip-path`, `text-indent` or `transform: scale(0)` pass.
+- The invisible-character set is a denylist.
+- Closed shadow roots can't be read, so their content is left out entirely.
+- When the page wins the cascade against the hiding stylesheet or hides its own `<body>`, text
+  is rebuilt from markup, line breaks are guessed, and `strip_incomplete` says so.
 
 ### Limits of block detection
 
-`status` tells you a fetch returned a challenge or an error page rather than the content
-you asked for. Worth knowing what it does and does not cover.
-
-- **Mitigation markers are a list, and the list is not exhaustive.** A challenge is called
-  with certainty when the response carries a header that exists only to announce it
-  (`cf-mitigated`, `x-vercel-mitigated`, `x-amzn-waf-action`, `x-dd-b`, `x-datadome-cid`) or
-  when the page requests an asset only a challenge loads (Cloudflare's orchestrator,
-  DataDome, PerimeterX, Imperva). A vendor absent from that list, or one that changes its
-  endpoint, falls through to the weaker signals below.
-- **The wording fallback is English, and only fires on an empty page.** A challenge with no
-  recognised marker is caught only if it renders almost no text *and* matches a known
-  phrase. A localized interstitial from an unlisted vendor is the gap — it is why the
-  markers exist, and why they are preferred over any amount of phrase tuning.
-- **A soft block is undetectable here.** A page that returns 200 with a plausible body but
-  the data quietly withheld looks exactly like content. Nothing in this classification sees
-  it; only comparing against what the page *should* contain would.
-- **`unknown` is not `ok`.** It means no response, or no usable status, was observed for the
-  document that was read. It is reported rather than assumed fine, and it is not treated as
-  a block — a source carrying it still contributes passages in `research`.
-- **Vendor *presence* is not a block.** `server: cloudflare`, `cf-ray` and `__cf_bm` are on
-  a large share of the web on every page it serves normally, so they are deliberately not
-  used; nor is `cf_clearance`, which is issued when a challenge is *passed*.
-
-**What the SSRF guard blocks.** Each host is resolved and rejected if it lands in loopback,
-RFC-1918 private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,
-CGNAT `100.64.0.0/10`, or IPv4-mapped IPv6 ranges. Only `http` and `https` are allowed, and
-credentials in URLs are rejected. The check runs before navigation, on every document
-request Chrome is about to send (each redirect hop and each frame, cross-site frames
-included), and once more against `final_url`. A hop that fails the check, or whose host
-cannot be resolved, is refused before Chrome sends it.
-
-**Limits of the SSRF guard.** It is a strong default, not a sandbox. Know these before
-pointing it at untrusted URLs:
-
-- Groundhog checks documents only. Sub-resources a page issues (`img`, `fetch`,
-  `object`) are not intercepted; what stops them reaching loopback or your LAN is Chrome's
-  own Local Network Access rule, which the Chrome versions the live tests run against
-  enforce. Groundhog checks neither the Chrome version nor the profile's permissions, so an
-  older Chrome, or a site granted local-network access in that profile, is not covered.
-- Preloading is off only in the local Chrome Groundhog launches. The stealth container and a
-  browser you supply through `CDP_URL` keep their own preloading settings.
-- Groundhog resolves DNS in its own process while Chrome resolves independently, so a
-  short-TTL rebinding window remains open between the check and the request.
-- Fetches share one profile, so cookies and storage set by one page persist into later
-  fetches. That is `GROUNDHOG_CHROME_PROFILE` (`~/.groundhog/chrome` by default), the
-  container's for `stealth`, or the profile of a browser you supply through `CDP_URL`. "Read-only" describes
-  Groundhog's own API, not the JavaScript on a fetched page, which can issue requests of its
-  own from that profile.
-
-Set `GROUNDHOG_BLOCK_PRIVATE_IPS=false` only on a network where reaching internal addresses
-is intended.
+- A challenge is called with certainty from vendor headers (`cf-mitigated`,
+  `x-vercel-mitigated`, `x-amzn-waf-action`, `x-dd-b`, `x-datadome-cid`) or challenge assets
+  (Cloudflare, DataDome, PerimeterX, Imperva). Other vendors fall back to English wording on a
+  near-empty page.
+- A soft block, a 200 with the data quietly withheld, looks like content.
+- `unknown` isn't `ok`, but it isn't treated as a block either.
+- Vendor presence (`server: cloudflare`, `cf-ray`) is deliberately ignored.
 
 ## A note on "stealth"
 
-Best-effort, not a guarantee. It defeats common open-source detectors and lets cheap
-proxies work on many mid-tier targets, but it does not beat sophisticated commercial
-anti-bot systems that gate on IP reputation, TLS/HTTP2 fingerprints, and behavioral
-analysis. Use it for legitimate, authorized automation and testing.
+Best effort. It beats common open-source detectors, not commercial anti-bot systems that gate
+on IP reputation and behaviour. Use it for legitimate, authorized automation.
 
 ## Privacy Policy
 
-Groundhog is self-hosted software, not a service. It runs on your machine, and the project
-operates no servers that it talks to.
+Groundhog is self-hosted software and talks to no servers the project runs. It collects
+nothing: no telemetry, analytics, crash reports or accounts.
 
-**What is collected: nothing.** There is no telemetry, no analytics, no crash reporting and
-no licence check. The maintainers receive no data about you, the URLs you fetch, or the
-content you read. There is no account to create.
+Pages are fetched by a browser on your machine and returned to your MCP client. The server
+keeps no database and writes no logs. The browser profile does persist cookies and storage:
+`~/.groundhog/chrome` for local Chrome (delete the folder to discard it), or the container for
+`stealth` (`docker rm -f groundhog-browser`).
 
-**How data is used and stored.** Pages are fetched by a browser running on your own machine
-and returned to the MCP client that asked for them. The server keeps no database, writes no
-logs of its own to disk, and persists nothing between calls — with one exception worth knowing:
-fetches share the browser's profile, so cookies and storage set by one fetched page are visible
-to later fetches. With the default local Chrome, that profile is the folder
-`~/.groundhog/chrome` (or `GROUNDHOG_CHROME_PROFILE`), and it persists on your disk between
-sessions — that is what lets a login you make there stick. Delete the folder to discard it.
-With `GROUNDHOG_BROWSER=stealth`, the profile lives in the container instead: removing the
-container discards it (`docker rm -f groundhog-browser`), and that happens automatically if you
-started it with `--rm`.
+Your traffic reaches the sites you fetch, your search backend (your SearXNG, or a public search
+engine without one), an IP-geolocation service for the proxy's exit IP only when `PROXY` is
+set, and PyPI and GHCR at install time.
 
-**Third parties your traffic reaches.** Only those you direct it to, plus two you should know
-about:
-
-- **The sites you fetch**, which see the request as an ordinary browser visit from your IP —
-  or from your proxy's exit IP if `PROXY` is set.
-- **The search backend.** With `SEARXNG_URL` set, your queries go to the SearXNG instance you
-  chose. Without it, `search` renders a public search engine's results page through the
-  browser, so that engine sees the query.
-- **An IP-geolocation lookup, only when `PROXY` is set.** The container asks an external
-  service for the proxy exit IP's country so it can align the browser's timezone and locale.
-  That request carries the exit IP and nothing else. It does not happen without a proxy.
-- **PyPI and GHCR at install time**, to download the package and browser image.
-
-**Retention.** Nothing is retained by the project. On your machine, the browser container
-holds cookies and cache for its lifetime; deleting the container deletes them.
-
-**Contact.** Questions and security reports: [`SECURITY.md`](SECURITY.md), or open an issue at
-<https://github.com/dmytrome/groundhog/issues>.
+Questions: [`SECURITY.md`](SECURITY.md) or <https://github.com/dmytrome/groundhog/issues>.
 
 ## License
 
