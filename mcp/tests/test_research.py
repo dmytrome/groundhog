@@ -520,3 +520,71 @@ async def test_a_captured_news_page_yields_passages_located_in_it(fake_web: Fake
         assert passage["id"] == retrieval.passage_id(
             news.final_url, news.provenance["content_hash"], passage["start"], passage["end"]
         )
+
+
+async def test_every_source_falls_in_exactly_one_receipt_bucket(fake_web: FakeWeb) -> None:
+    captured = [_captured(name) for name in ("news", "cross_domain_redirect", "not_found")]
+    fake_web(
+        [_hit(doc.url) for doc in captured] + [_hit("https://slow.com/1")],
+        {doc.url: doc for doc in captured},
+        failures={"https://slow.com/1": TimeoutError()},
+    )
+
+    result = await research("Crew-13 launch requests library", max_sources=4)
+
+    receipt = result["receipt"]
+    assert (receipt["failed"], receipt["not_content"], receipt["usable"]) == (1, 1, 2)
+    assert len(result["sources"]) == receipt["failed"] + receipt["not_content"] + receipt["usable"]
+    assert receipt["hits"] == 4
+
+
+async def test_hits_dropped_for_sharing_a_domain_are_counted(fake_web: FakeWeb) -> None:
+    hits = [_hit("https://same.com/1"), _hit("https://same.com/2"), _hit("https://other.com/1")]
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten", max_sources=3)
+
+    assert result["receipt"]["hits_same_domain"] == 1
+
+
+async def test_a_fragment_under_the_floor_is_counted_as_set_aside(fake_web: FakeWeb) -> None:
+    footer = "Site map, contact, careers, press and the legal notice. " * 4 + "Kitten."
+    fake_web(
+        [_hit("https://a.com/x"), _hit("https://b.com/y")],
+        {
+            "https://a.com/x": _doc("https://a.com/x", "A kitten eats meat while it grows."),
+            "https://b.com/y": _doc("https://b.com/y", footer),
+        },
+    )
+
+    result = await research("what does a kitten eat")
+
+    assert result["receipt"]["set_aside"] == 1
+
+
+async def test_an_aim_over_the_limit_is_refused() -> None:
+    with pytest.raises(safety.InvalidArgument, match="aim"):
+        await research("kitten", aim="x" * 201)
+
+
+async def test_the_aim_is_echoed_and_changes_no_passage(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", _KITTEN)})
+    aim = "Feeding guidance from a veterinary body, current edition"
+
+    plain = await research("kitten eats meat")
+    aimed = await research("kitten eats meat", aim=aim)
+
+    assert aimed["receipt"]["aim"] == aim
+    assert aimed["passages"] == plain["passages"]
+
+
+async def test_passages_left_out_for_the_budget_mark_the_result_truncated(
+    fake_web: FakeWeb,
+) -> None:
+    markdown = "\n\n".join(f"A kitten eats meat on day {i} of the week." for i in range(40))
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=30)
+
+    assert result["receipt"]["omitted"] > 0
+    assert result["truncated"] is True
