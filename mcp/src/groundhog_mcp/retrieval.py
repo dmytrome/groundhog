@@ -45,7 +45,7 @@ _UNSPACED_RE = re.compile(_UNSPACED_LETTER)
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t\r]*$")
-SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
+SCORE_DIGITS = 4
 RELEVANCE_FLOOR = 0.5
 _MAX_CHUNK_CHARS = 2400
 _LINE_RE = re.compile(r"[^\n]*\n|[^\n]+\Z")
@@ -72,8 +72,6 @@ class Chunk:
     heading: str | None
     offset: int
     text: str
-    # Optional because single-document ranking has no URL to attribute to;
-    # `research` sets it so pooled passages stay attributable to their source.
     source: str | None = None
     block: int = 0
     fence: str | None = None
@@ -155,9 +153,6 @@ def _pieces(text: str) -> list[str]:
 
 
 def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
-    # Scan line by line so a heading with no blank line before its body still
-    # splits into a heading + a searchable body chunk (a blank-line-delimited
-    # block would swallow the body into the heading and drop it).
     raws = _lines(markdown)
     fenced = _fenced_lines([raw.rstrip("\n") for raw in raws])
     chunks: list[Chunk] = []
@@ -209,10 +204,6 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
             flush()
         elif _HEADING_RE.match(line):
             flush()
-            # Repeated once per match/passage and never passed through the token
-            # budget, so it is bounded here. Only bounded: the text was already
-            # sanitized upstream, and re-stripping would quietly undo the caller's
-            # `include_hidden=True`.
             heading = _HEADING_RE.sub("", line).strip()[: sanitize.MAX_HEADING_CHARS]
         else:
             if not lines:
@@ -254,7 +245,6 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
 def rank(
     chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
 ) -> Ranked:
-    """Score passages against `query` and admit the best that fit the budget."""
     terms = _tokenize(query)
     scores = _bm25(chunks, terms)
     by_relevance = sorted(
@@ -332,8 +322,6 @@ def select(
     ranked, left_out, set_aside = rank(chunks, query, max_tokens, floor=RELEVANCE_FLOOR)
     if not ranked:
         return "", [], False, 0
-    # Within one document, offset order is reading order — what a caller wants to
-    # read back, unlike the relevance order `rank` returns.
     spans = _spans(chunks, ranked)
     matches: list[Match] = [
         {

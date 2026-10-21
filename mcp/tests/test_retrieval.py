@@ -602,3 +602,25 @@ def test_a_passage_too_long_for_the_budget_is_skipped_for_the_next_that_fits() -
 
     assert [s.chunk.offset for s in ranked.chosen] == [0, 2]
     assert ranked.left_out == 1
+
+
+def test_heading_text_preserves_invisible_characters_requested_by_the_caller() -> None:
+    _, matches, _, _ = _select("# A\u200bB\n\nsearchable body", "searchable", 1000)
+    assert matches[0]["heading"] == "A\u200bB"
+
+
+def test_chunking_and_ranking_preserve_each_passages_source() -> None:
+    chunks = chunk_document("# First\n\ncat eats fish", source="https://ex.com/one")
+    chunks += chunk_document("# Second\n\ncat eats meat", source="https://ex.com/two")
+    ranked, _, _ = rank(chunks, "cat eats", 1000)
+    assert {item.chunk.text: item.chunk.source for item in ranked} == {
+        "cat eats fish": "https://ex.com/one",
+        "cat eats meat": "https://ex.com/two",
+    }
+
+
+def test_passages_are_read_in_document_order_when_the_later_one_ranks_higher() -> None:
+    earlier = "cat walks slowly across a large green field"
+    body, matches, _, _ = _select(f"# Earlier\n\n{earlier}\n\n# Later\n\ncat", "cat", 1000)
+    assert body == f"{earlier}\n\ncat"
+    assert [match["heading"] for match in matches] == ["Earlier", "Later"]
