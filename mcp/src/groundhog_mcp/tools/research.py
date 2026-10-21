@@ -1,10 +1,12 @@
 import asyncio
+import functools
 import re
 from collections import Counter, deque
 from datetime import date
 from typing import Annotated, Literal, TypedDict
 from urllib.parse import urlsplit
 
+import idna
 from pydantic import Field
 
 from .. import (
@@ -109,26 +111,39 @@ def _date(value: str | None) -> date | None:
         return None
 
 
-def _domain(value: str) -> str:
+@functools.lru_cache(maxsize=1024)
+def _idna(name: str) -> str | None:
     try:
-        domain = value.strip().lower().encode("idna").decode("ascii")
-    except UnicodeError:
-        domain = ""
+        return idna.encode(name.strip().rstrip(".").lower(), uts46=True).decode("ascii")
+    except (idna.IDNAError, UnicodeError):
+        return None
+
+
+def _host(url: str) -> str | None:
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        return None
+    return _idna(hostname) if hostname else None
+
+
+def _domain(value: str) -> str:
+    domain = _idna(value) or ""
     if not _DOMAIN_RE.match(domain):
         raise safety.InvalidArgument(f"not a domain name: {value[:80]!r}")
     return domain
 
 
 def _domains(values: list[str] | None, name: str, most: int) -> list[str]:
-    if values and len(values) > most:
+    domains = list(dict.fromkeys(_domain(value) for value in values or []))
+    if len(domains) > most:
         raise safety.InvalidArgument(f"{name} takes at most {most} domains")
-    return list(dict.fromkeys(_domain(value) for value in values or []))
+    return domains
 
 
 def _within(url: str, domains: list[str]) -> str | None:
-    try:
-        host = (urlsplit(url).hostname or "").rstrip(".").encode("idna").decode("ascii")
-    except ValueError:
+    host = _host(url)
+    if host is None:
         return None
     found = [d for d in domains if host == d or host.endswith("." + d)]
     return max(found, key=len, default=None)
@@ -144,7 +159,7 @@ def _round_robin(
     hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
 ) -> tuple[list[SearchHit], int]:
     queues: dict[str, deque[SearchHit]] = {}
-    for hit in dict((hit["url"], hit) for hit in hits).values():
+    for hit in hits:
         if domain := _within(hit["url"], domains):
             queues.setdefault(domain, deque()).append(hit)
     taken: Counter[str] = Counter()
@@ -328,7 +343,7 @@ async def research(
     capped = max(1, min(max_sources, _MAX_SOURCES))
 
     try:
-        hits, backend = await search_backend.search(
+        found, backend = await search_backend.search(
             executed, cfg, _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH
         )
     except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
@@ -337,6 +352,11 @@ async def research(
         # The same boundary `search` has: the SERP leg runs through the browser, so
         # its failures can name internal addresses or carry page-chosen text.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
+    unique: dict[str, SearchHit] = {}
+    for hit in found:
+        if _host(hit["url"]) is not None:
+            unique.setdefault(hit["url"], hit)
+    hits = list(unique.values())
     hits_by_domain = {d: 0 for d in included}
     for hit in hits:
         if domain := _within(hit["url"], included):
@@ -393,7 +413,7 @@ async def research(
         empty = outcome.status in classify.NOT_CONTENT or not outcome.markdown.strip()
         outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
-        if _within(outcome.final_url, excluded):
+        if excluded and (_host(outcome.final_url) is None or _within(outcome.final_url, excluded)):
             filtered = "excluded_domain"
         elif outside:
             filtered = "outside_domains"

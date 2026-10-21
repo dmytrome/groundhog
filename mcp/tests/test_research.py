@@ -662,7 +662,6 @@ async def test_a_host_matches_a_domain_only_as_itself_or_a_subdomain(
         "isric.org OR site:evil.com",
         "a) OR (b",
         ".isric.org",
-        "isric.org.",
         "",
         "https://isric.org",
         "isric.org/x",
@@ -1032,3 +1031,31 @@ async def test_an_empty_page_that_is_filtered_is_counted_as_filtered(fake_web: F
     assert result["sources"][0]["filtered"] == "excluded_domain"
     assert result["receipt"]["filtered"] == 1
     assert result["receipt"]["not_content"] == 0
+
+
+async def test_a_german_sharp_s_domain_matches_the_browsers_host(fake_web: FakeWeb) -> None:
+    url = "https://xn--strae-oqa.de/x"
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN)})
+
+    result = await research("kitten eats meat", include_domains=["straße.de"])
+
+    assert result["receipt"]["include_domains"] == ["xn--strae-oqa.de"]
+    assert [s["url"] for s in result["sources"]] == [url]
+
+
+async def test_a_host_that_cannot_be_encoded_is_never_read(fake_web: FakeWeb) -> None:
+    url = "https://" + "a" * 64 + ".evil.com/x"
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN)})
+
+    result = await research("kitten eats meat", exclude_domains=["evil.com"])
+
+    assert result["sources"] == []
+
+
+async def test_a_repeated_domain_counts_once_toward_the_limit(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+    domains = [f"d{i}.com" for i in range(8)] + ["D0.com."]
+
+    result = await research("kitten", include_domains=domains)
+
+    assert result["receipt"]["include_domains"] == [f"d{i}.com" for i in range(8)]
