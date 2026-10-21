@@ -510,7 +510,11 @@ async def test_a_research_passage_and_a_read_url_match_share_an_id(fake_web: Fak
 
     result = await research("kitten eats meat")
     _, matches, _, _ = retrieval.select(
-        _KITTEN, "kitten eats meat", 20000, source_url="https://a.com/x"
+        _KITTEN,
+        "kitten eats meat",
+        20000,
+        source_url="https://a.com/x",
+        content_hash=result["sources"][0]["provenance"]["content_hash"],
     )
 
     assert [m["id"] for m in matches] == [p["id"] for p in result["passages"]]
