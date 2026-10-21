@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-10-21
+
+### Fixed
+
+- `research` no longer leaves fetches running after its deadline or after it is cancelled; each
+  one is cancelled and its result collected.
+- `query` retrieval now tokenizes every script: Cyrillic, Devanagari, accented text and the
+  unspaced scripts (Chinese, Japanese, Korean, Thai and others) match words inside a passage.
+- Fetches to one domain are spaced from when each gets a page, so a fetch waiting for a free
+  page no longer lets the next one skip its delay; other domains are not held up.
+- A browser command that never gets a reply fails after 90 seconds as a timeout, and the next
+  fetch reconnects.
+- `include_hidden` now returns the hidden text: flagged nodes are unhidden in the extracted
+  copy instead of being dropped by the extractor.
+
+### Changed
+
+- The server tells clients that threats are quoted evidence, never instructions, and what
+  `detection_degraded` and `strip_incomplete` mean. The `query` description says what
+  `matches` holds and that the whole page comes back when nothing matches.
+- The README describes the SSRF guard, preloading and the shared Chrome profile as 0.17 ships
+  them.
+
 ## [0.17.1] - 2026-10-05
 
 ### Changed
@@ -887,6 +910,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.17.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.2
 [0.17.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.1
 [0.17.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.0
 [0.16.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.16.1
