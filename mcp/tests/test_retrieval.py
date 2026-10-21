@@ -1,3 +1,4 @@
+import hashlib
 import random
 import sys
 import unicodedata
@@ -17,6 +18,13 @@ from groundhog_mcp.retrieval import (
     select,
 )
 
+
+def _select(
+    markdown: str, query: str, max_tokens: int
+) -> tuple[str, list[retrieval.Match], bool, int]:
+    content_hash = hashlib.sha256(markdown.encode()).hexdigest()
+    return select(markdown, query, max_tokens, content_hash=content_hash)
+
 DOC = """# Intro
 
 Cats are small carnivorous mammals kept as pets around the world.
@@ -32,7 +40,7 @@ The cat is a crepuscular hunter that stalks prey using acute night vision.
 
 
 def test_returns_only_relevant_passages_in_document_order():
-    body, matches, truncated, _ = select(DOC, "cat hunting vision", max_tokens=10000)
+    body, matches, truncated, _ = _select(DOC, "cat hunting vision", max_tokens=10000)
     assert "crepuscular hunter" in body
     assert "loyal domesticated" not in body  # dog paragraph is irrelevant
     # matches are ordered by document offset, not by score
@@ -41,26 +49,26 @@ def test_returns_only_relevant_passages_in_document_order():
 
 
 def test_match_carries_nearest_heading():
-    _, matches, _, _ = select(DOC, "crepuscular night vision", max_tokens=10000)
+    _, matches, _, _ = _select(DOC, "crepuscular night vision", max_tokens=10000)
     assert matches[0]["heading"] == "Feline behavior"
 
 
 def test_no_match_returns_empty_for_caller_fallback():
-    body, matches, truncated, _ = select(DOC, "quantum chromodynamics lattice", max_tokens=10000)
+    body, matches, truncated, _ = _select(DOC, "quantum chromodynamics lattice", max_tokens=10000)
     assert body == ""
     assert matches == []
     assert truncated is False
 
 
 def test_budget_drops_lowest_ranked_and_marks_truncated():
-    body, matches, truncated, _ = select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
+    body, matches, truncated, _ = _select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
     assert truncated is True
     assert len(matches) >= 1
 
 
 def test_ranking_is_deterministic():
-    a = select(DOC, "cat hunter vision", max_tokens=10000)
-    b = select(DOC, "cat hunter vision", max_tokens=10000)
+    a = _select(DOC, "cat hunter vision", max_tokens=10000)
+    b = _select(DOC, "cat hunter vision", max_tokens=10000)
     assert a == b
 
 
@@ -68,7 +76,7 @@ def test_body_without_blank_line_after_heading_is_searchable():
     # A heading directly followed by its body (no blank line) must still yield a
     # searchable body chunk, not be swallowed whole into the heading.
     doc = "# Dogs\nLoyal domesticated animals trained for companionship and work."
-    body, matches, _, _ = select(doc, "loyal domesticated companionship", max_tokens=10000)
+    body, matches, _, _ = _select(doc, "loyal domesticated companionship", max_tokens=10000)
     assert "Loyal domesticated" in body
     assert matches and matches[0]["heading"] == "Dogs"
 
@@ -97,25 +105,25 @@ _ABOUT_CATS = "\n\n".join(
 
 
 def test_two_different_questions_do_not_return_the_same_passages():
-    feeding, _, _, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
-    litter, _, _, _ = select(_ABOUT_CATS, "how often is the litter tray cleaned", 20000)
+    feeding, _, _, _ = _select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    litter, _, _, _ = _select(_ABOUT_CATS, "how often is the litter tray cleaned", 20000)
     assert feeding != litter
     assert "eats meat" in feeding and "litter tray" not in feeding
     assert "litter tray" in litter and "eats meat" not in litter
 
 
 def test_a_question_does_not_bring_back_the_whole_document():
-    body, _, _, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    body, _, _, _ = _select(_ABOUT_CATS, "what does a kitten eat", 20000)
     assert len(body) < len(_ABOUT_CATS) / 2
 
 
 def test_narrowing_to_the_question_is_not_reported_as_a_budget_truncation():
-    _, _, truncated, _ = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    _, _, truncated, _ = _select(_ABOUT_CATS, "what does a kitten eat", 20000)
     assert truncated is False
 
 
 def test_the_count_of_passages_the_floor_set_aside_is_reported():
-    _, matches, truncated, set_aside = select(_ABOUT_CATS, "what does a kitten eat", 20000)
+    _, matches, truncated, set_aside = _select(_ABOUT_CATS, "what does a kitten eat", 20000)
     scoring, _, _ = rank(chunk_document(_ABOUT_CATS), "what does a kitten eat", 20000)
     assert truncated is False
     assert set_aside == len(scoring) - len(matches) > 0
@@ -145,7 +153,7 @@ def test_a_short_page_is_narrowed_like_any_other():
             "vaccinations are due at twelve weeks",
         ]
     )
-    _, matches, _, _ = select(markdown, "what does a kitten eat", 20000)
+    _, matches, _, _ = _select(markdown, "what does a kitten eat", 20000)
     assert [m["heading"] for m in matches] == ["A"]
 
 
@@ -158,7 +166,7 @@ def test_a_one_word_chunk_does_not_set_the_bar_for_the_paragraph_that_answers():
         "After that the daemon starts on its own and the browser image is pulled on first use. " * 5
     )
     markdown = "# Page\n\nInstall\n\n" + filler + "\n\n" + paragraph + "\n"
-    body, matches, _, set_aside = select(markdown, "install", 20000)
+    body, matches, _, set_aside = _select(markdown, "install", 20000)
     assert "run the installer" in body
     assert len(matches) == 2 and set_aside == 0
 
@@ -173,7 +181,7 @@ def test_a_passage_matching_every_term_the_best_one_matches_is_not_set_aside_for
         "After that the daemon starts on its own and the browser image is pulled on first use. " * 5
     )
     markdown = "# Page\n\n" + nav + "\n\n" + filler + "\n\n" + paragraph + "\n"
-    body, _, _, set_aside = select(markdown, "install guide", 20000)
+    body, _, _, set_aside = _select(markdown, "install guide", 20000)
     assert "run the installer" in body and set_aside == 0
 
 
@@ -188,7 +196,7 @@ def test_two_sections_that_both_answer_the_question_both_survive():
             "The tray wants cleaning daily, which is the part that nobody enjoys.",
         ]
     )
-    body, matches, _, _ = select(markdown, "what does a kitten eat", 20000)
+    body, matches, _, _ = _select(markdown, "what does a kitten eat", 20000)
     assert len(matches) == 2
     assert "several times a day" in body and "small meals" in body
 
@@ -398,7 +406,7 @@ def test_a_fence_line_in_a_real_page_body_costs_no_heading_after_it():
 def test_passages_in_a_non_latin_script_are_ranked_against_the_query(
     doc: str, query: str, kept: str, dropped: str
 ) -> None:
-    body, _, _, _ = select(doc, query, max_tokens=10000)
+    body, _, _, _ = _select(doc, query, max_tokens=10000)
 
     assert kept in body
     assert dropped not in body
@@ -431,7 +439,7 @@ def test_a_compound_outranks_its_characters_appearing_apart(
 def test_a_query_of_punctuation_alone_matches_no_passage(query: str) -> None:
     doc = "# A\n\n東京・大阪。\n\n# B\n\n๏ แมวนอน, I love you \u2764\ufe0f\n"
 
-    body, matches, _, _ = select(doc, query, max_tokens=10000)
+    body, matches, _, _ = _select(doc, query, max_tokens=10000)
 
     assert (body, matches) == ("", [])
 
@@ -489,7 +497,7 @@ def test_a_long_block_that_is_wholly_relevant_comes_back_unchanged() -> None:
     markdown = f"# Feeding\n\n{block}\n\n# Other\n\nDogs guard the house.\n"
     assert len(block) > retrieval._MAX_CHUNK_CHARS
 
-    body, matches, _, _ = select(markdown, "kitten diet feeding", 20000)
+    body, matches, _, _ = _select(markdown, "kitten diet feeding", 20000)
 
     assert body == block
     assert len(matches) == 1
@@ -502,7 +510,7 @@ def test_one_piece_of_a_long_fenced_block_comes_back_fenced() -> None:
     markdown = "```python\n" + "\n".join(lines) + "\n```\n\nAfter the code, kitten prose.\n"
     assert len(markdown) > 2 * retrieval._MAX_CHUNK_CHARS
 
-    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+    body, _, _, _ = _select(markdown, "needle find_the_kitten", 20000)
 
     code_part, _, after = body.partition("\n\n")
     assert code_part.startswith("```python\n") and code_part.endswith("\n```")
@@ -536,7 +544,7 @@ def test_a_huge_opening_fence_line_is_capped_on_every_piece() -> None:
 def test_a_fence_right_after_another_is_refenced_with_its_own_opening() -> None:
     markdown = "```python\nprint(1)\n```\n~~~~text\n" + _long_code() + "\n~~~~\n"
 
-    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+    body, _, _, _ = _select(markdown, "needle find_the_kitten", 20000)
 
     assert body.startswith("~~~~text\n") and body.endswith("\n~~~~")
 
@@ -544,7 +552,7 @@ def test_a_fence_right_after_another_is_refenced_with_its_own_opening() -> None:
 def test_a_code_block_right_after_a_prose_line_is_refenced() -> None:
     markdown = "Intro line\n```python\n" + _long_code() + "\n```\n"
 
-    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+    body, _, _, _ = _select(markdown, "needle find_the_kitten", 20000)
 
     assert body.startswith("```python\n") and body.endswith("\n```")
     assert "needle = find_the_kitten()" in body
@@ -556,13 +564,6 @@ def test_a_crlf_code_blocks_fence_carries_no_carriage_return() -> None:
     chunks = chunk_document(markdown)
 
     assert [c.fence for c in chunks[1:]] == ["```python"] * (len(chunks) - 1)
-
-
-def test_a_passage_id_follows_the_page_when_no_hash_is_given() -> None:
-    _, before, _, _ = select("A kitten eats meat.\n", "kitten", 20000, source_url="u")
-    _, after, _, _ = select("A kitten eats fish.\n", "kitten", 20000, source_url="u")
-
-    assert before[0]["id"] != after[0]["id"]
 
 
 def test_only_the_pieces_after_a_code_blocks_first_carry_its_fence() -> None:
