@@ -569,14 +569,26 @@ def test_a_crlf_code_blocks_fence_carries_no_carriage_return() -> None:
     assert [c.fence for c in chunks[1:]] == ["```python"] * (len(chunks) - 1)
 
 
-def test_only_the_pieces_after_a_code_blocks_first_carry_its_fence() -> None:
+def test_every_piece_of_a_split_code_block_carries_its_fence() -> None:
     markdown = "```python\n" + _long_code() + "\n```\n"
 
     chunks = chunk_document(markdown)
 
     assert len(chunks) > 2
-    assert chunks[0].fence is None
-    assert all(c.fence == "```python" for c in chunks[1:])
+    assert all(c.fence == "```python" for c in chunks)
+
+
+def test_a_second_fenced_passage_is_admitted_only_if_its_fence_fits_too() -> None:
+    fence = "```" + "x" * 100
+    chunks = [
+        Chunk(heading=None, offset=0, text="kitten eats meat " * 20, fence=fence),
+        Chunk(heading=None, offset=400, text="kitten eats " * 20, fence=fence),
+    ]
+    raw = sum(len(c.text) + 2 for c in chunks)
+
+    ranked = rank(chunks, "kitten eats meat", max_tokens=raw // 4 + 1)
+
+    assert len(ranked.chosen) == 1
 
 
 def test_a_passage_too_long_for_the_budget_is_skipped_for_the_next_that_fits() -> None:
