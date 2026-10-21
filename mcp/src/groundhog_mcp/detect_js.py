@@ -7,6 +7,8 @@ DETECT_AND_COLLECT = r"""
   // touch reader never sees it and a keyboard one usually does not, which is why the W3C
   // discourages carrying content in it. In the markup a model reads, it is always there.
   const TEXT_ATTRIBUTES = ['alt', 'aria-label', 'aria-description', 'title'];
+  const HIDING_ATTRIBUTES = ['hidden', 'aria-hidden', 'style'];
+  const HIDING_NAME = /hid(e|den)/i;
   // Derived, never written twice. Held apart, an attribute added to the list alone is
   // matched by neither the scan nor the copy sweep: never reported, never stripped, and
   // no disclosure that anything was missed — the feature half-works in silence.
@@ -381,6 +383,7 @@ DETECT_AND_COLLECT = r"""
   // removed by position is handed back by `assignedNodes`, since slot assignment is by
   // name and indifferent to whether the node renders.
   const shadowHidden = new Set();
+  const sourceOnlyFlags = new Set();
   // Attributes to clear, held by identity for the same reason: the composition rebuilds
   // its nodes from the live tree, so an edit applied only to the copy is undone the
   // moment a carrier is projected through a `<slot>` or lives in a shadow tree at all.
@@ -457,6 +460,8 @@ DETECT_AND_COLLECT = r"""
           (el.namespaceURI === SVG_NS || getComputedStyle(el).display === 'none');
         if (!sourceOnly) {
           report({ text: text.slice(0, MAX_TEXT), reason, path: pathOf(el) });
+        } else {
+          sourceOnlyFlags.add(el);
         }
         flagged.push(el);
         if (inShadow) shadowHidden.add(el); else toRemove.push(el);
@@ -589,9 +594,7 @@ DETECT_AND_COLLECT = r"""
   // element that already existed, by moving a node, or into `document.title`. Where
   // each half gets its content instead is explained at its own step.
   //
-  // Positions are recorded only when they will be used; both walks cost O(siblings)
-  // per level, and an `include_hidden` fetch strips nothing.
-  const hiddenPaths = strip ? toRemove.map(indexPathOf) : [];
+  const hiddenPaths = toRemove.map(indexPathOf);
   const hiddenSelectors = strip ? toRemove.map(selectorOf) : [];
   // Located by position, never by searching the copy for a <body>. `document.body` is
   // the first body child of <html>, but `querySelector('body')` returns the first one
@@ -643,7 +646,25 @@ DETECT_AND_COLLECT = r"""
   // tree is absent from `outerHTML` either way, so `include_hidden` used to return a
   // document with that content silently missing — the exact omission this release closes
   // for the default path. Only the removals below are conditional on `strip`.
-  if (strip || lightHosts.length) {
+  const carriesText = (el) => !sourceOnlyFlags.has(el);
+  const unhiding =
+    !strip && (toRemove.some(carriesText) || Array.from(shadowHidden).some(carriesText));
+  const flaggedLive = new Set(toRemove);
+  const clearHidingMarkers = (el) => {
+    for (const name of HIDING_ATTRIBUTES) el.removeAttribute(name);
+    const classes = (el.getAttribute('class') || '').split(/\s+/).filter(Boolean);
+    const kept = classes.filter((name) => !HIDING_NAME.test(name));
+    if (kept.length !== classes.length) {
+      if (kept.length) el.setAttribute('class', kept.join(' '));
+      else el.removeAttribute('class');
+    }
+    if (HIDING_NAME.test(el.getAttribute('id') || '')) el.removeAttribute('id');
+  };
+  const unhide = (el) => {
+    clearHidingMarkers(el);
+    for (const inner of el.querySelectorAll('*')) clearHidingMarkers(inner);
+  };
+  if (strip || lightHosts.length || unhiding) {
     const inert = document.implementation.createHTMLDocument('');
     copy = inert.importNode(document.documentElement, true);
     // Resolve every path before mutating anything: removing renumbers later siblings,
@@ -676,7 +697,7 @@ DETECT_AND_COLLECT = r"""
       // A path that does not resolve means this markup still contains a node that was
       // flagged; say so rather than returning it as fully stripped.
       if (!node) { stripIncomplete = true; continue; }
-      node.remove();
+      if (strip) node.remove(); else unhide(node);
     }
     // `importNode` does not carry shadow roots, and neither `outerHTML` nor `innerText`
     // crosses one, so a page rendering through web components used to come back with
@@ -700,18 +721,21 @@ DETECT_AND_COLLECT = r"""
       for (const node of shadowHidden) dropped.add(node);
       for (const node of toRemove) dropped.add(node);
     }
-    const composed = (live) => {
+    const composed = (live, insideKept = false) => {
       if (dropped.has(live)) return null;
       if (live.nodeType === 3) return inert.createTextNode(live.data);
       if (live.nodeType !== 1) return null;
       const el = inert.importNode(live, false);
+      const kept =
+        insideKept || (unhiding && (shadowHidden.has(live) || flaggedLive.has(live)));
+      if (kept) clearHidingMarkers(el);
       // `importNode` copies the live element's attributes verbatim, so a carrier already
       // cleared in the copy arrives here carrying its payload again — by identity, since
       // this node may have no position in the copy at all.
       const edits = attributeEdits.get(live);
       if (edits) for (const name of edits) el.removeAttribute(name);
       for (const child of childrenOf(live)) {
-        const built = composed(child);
+        const built = composed(child, kept);
         if (built) el.appendChild(built);
       }
       return el;
@@ -771,8 +795,8 @@ DETECT_AND_COLLECT = r"""
     'address,article,aside,blockquote,br,caption,center,dd,details,dialog,div,dl,dt,' +
     'fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hgroup,hr,legend,' +
     'li,main,menu,nav,ol,p,pre,search,section,summary,table,tbody,td,tfoot,th,thead,tr,ul';
-  if ((strip || lightHosts.length) && document.body) {
-    let untrusted = document.body.getClientRects().length === 0;
+  if ((strip || lightHosts.length || unhiding) && document.body) {
+    let untrusted = unhiding || document.body.getClientRects().length === 0;
     if (!untrusted) {
       for (const el of toRemove) {
         // `innerText` lists every `<option>` label whatever its own display, so hiding
