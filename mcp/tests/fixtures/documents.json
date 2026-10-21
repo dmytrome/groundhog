@@ -1,0 +1,273 @@
+{
+ "news": {
+  "markdown": "Four crew members of NASA’s SpaceX Crew-13 mission launched at 11:10 a.m. EDT Thursday from Space Launch Complex 40 at Cape Canaveral Space Force Station in Florida for a science expedition aboard the International Space Station.\n\n“Crew-13 is another demonstration of America’s unmatched capability in human spaceflight and the strength of our commercial partnerships,” said NASA Administrator Jared Isaacman. “Jessica, Luke, Joshua, and Sergey will carry forward important work aboard the International Space Station while helping us build the experience and capabilities needed for ambitious missions to the Moon and beyond. Congratulations to the crew and the NASA and SpaceX teams who made today’s launch possible.”\n\nA SpaceX Falcon 9 rocket propelled a Dragon spacecraft into orbit carrying NASA astronauts [Jessica Watkins](https://www.nasa.gov/people/jessica-watkins/) and [Luke Delaney](https://www.nasa.gov/people/nasa-astronaut-luke-delaney/), CSA (Canadian Space Agency) astronaut Joshua Kutryk, and Roscosmos cosmonaut Sergey Teteryatnikov. The spacecraft will dock autonomously to the forward port of the station’s Harmony module at approximately 7 p.m., making it the fastest launch-to-docking by a U.S. spacecraft in the history of the International Space Station.\n\n“Our steady cadence of commercial crew launches demonstrates the essential role the International Space Station plays in sustaining our presence in Earth’s orbit and sharpening the tools we’ll take forward to the Moon and Mars,” said Dr. Lori Glaze, associate administrator of NASA’s Human Spaceflight Mission Directorate at the agency’s headquarters in Washington. “Each space station mission adds to our blueprint for exploration, and the work our crews carry out guides our plans while ensuring we keep pushing the boundaries of what’s possible in human spaceflight.”\n\nDuring Dragon’s approximately 7-hour, 50-minute flight, SpaceX will monitor a series of automatic spacecraft maneuvers from its mission control center in Hawthorne, California. NASA will monitor space station operations throughout the flight from the Mission Control Center at the agency’s Johnson Space Center in Houston.\n\nNASA’s live arrival coverage begins at 5:20 p.m. for rendezvous, docking, and hatch opening. After docking, the crew members will change out of their spacesuits and prepare cargo for offload before opening the hatch to the station’s Harmony module around 8:45 p.m.\n\nNASA will stream Crew‑13’s arrival across multiple platforms. Learn where to watch at:\n\nWatkins, Delaney, Kutryk, and Teteryatnikov will join the Expedition 75 crew, which includes NASA astronaut [Anil Menon](https://www.nasa.gov/people/nasa-astronaut-anil-menon/) and Roscosmos cosmonauts Pyotr Dubrov and Anna Kikina already aboard the station. After a brief handover, NASA’s SpaceX Crew‑12 mission, with agency astronauts [Jessica Meir](https://www.nasa.gov/people/jessica-u-meir/) and [Jack Hathaway](https://www.nasa.gov/people/nasa-astronaut-jack-hathaway/), ESA (European Space Agency) astronaut Sophie Adenot, and Roscosmos cosmonaut Andrey Fedyaev, will return to Earth.\n\nDuring its mission, Crew‑13 will help advance research aboard the orbiting laboratory by using microgravity to [produce human stem cell‑derived tissues](https://www.nasa.gov/mission/station/research-explorer/investigation/#id=9600) for improved personalized medicine, disease modeling, and pharmaceutical testing for conditions such as heart disease and Parkinson’s. The crew also will explore [crop production](https://www.nasa.gov/mission/station/research-explorer/investigation/#id=9272) through a new, mostly autonomous plant growth system and test [how plants grow](https://www.nasa.gov/mission/station/research-explorer/investigation/#id=9496) outside dedicated facilities. In addition, the crew members will continue human‑health studies that examine factors linked to [blood-flow abnormalities](https://www.nasa.gov/reference/venous-haemostasis/) in microgravity and will test a new inflight [diagnostic device](https://www.nasa.gov/mission/station/research-explorer/facility/#id=9690) to monitor astronaut health.\n\nCrew-13 is part of NASA’s Low Earth Orbit Program, which partners with private companies to provide reliable access to space, support research and development aboard the space station, and enable future missions beyond low Earth orbit.\n\nLearn more about NASA’s Space Crew-13 at:\n\n**https://www.nasa.gov/mission/nasas-spacex-crew-13/**\n\n-end-\n\nJoshua Finch / Jimi Russell\n\nHeadquarters, Washington\n\n202-358-1100[joshua.a.finch@nasa.gov](mailto:joshua.a.finch@nasa.gov) / [james.j.russell@nasa.gov](mailto:james.j.russell@nasa.gov)\n\nSteven Siceloff\n\nKennedy Space Center, Fla.\n\n321-867-2468[steven.p.siceloff@nasa.gov](mailto:steven.p.siceloff@nasa.gov)\n\nSandra Jones / Anna Schneider\n\nJohnson Space Center, Houston\n\n281-483-5111[sandra.p.jones@nasa.gov](mailto:sandra.p.jones@nasa.gov) / [anna.c.schneider@nasa.gov](mailto:anna.c.schneider@nasa.gov)",
+  "title": "NASA’s SpaceX Crew-13 Launches to International Space Station - NASA",
+  "url": "https://www.nasa.gov/news-release/nasas-spacex-crew-13-launches-to-international-space-station/",
+  "final_url": "https://www.nasa.gov/news-release/nasas-spacex-crew-13-launches-to-international-space-station/",
+  "fetched_at": "2026-10-21T16:06:19.963363+00:00",
+  "status": "ok",
+  "http_status": 200,
+  "threats": [
+   {
+    "type": "hidden_css",
+    "reason": "zero-size",
+    "location": "html>body>noscript",
+    "excerpt": "<iframe src=\"https://www.googletagmanager.com/ns.html?id=GTM-NLJ258M\"  height=\"0"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "off-screen",
+    "location": "header>div>div>form>label",
+    "excerpt": "Search"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "nav>div>ul>li>ul#news-events-submenu",
+    "excerpt": "News & Events                                                      News Releases"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "nav>div>ul>li>ul#news-galleries-submenu",
+    "excerpt": "Multimedia                                                      NASA+           "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>div",
+    "excerpt": "Search                Suggested Searches                               Artemis  "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>div#global-navigation",
+    "excerpt": "HomeMissionsHumans in SpaceEarthThe Solar SystemThe UniverseScienceAeronauticsTe"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "off-screen",
+    "location": "div>ul>li>a>span",
+    "excerpt": "(opens in new tab)",
+    "seen": 2
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>div#pum-872473",
+    "excerpt": "Was this page helpful?                             Δ               document.getE"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>p#a11y-speak-intro-text",
+    "excerpt": "Notifications"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "html>body",
+    "excerpt": "Google Tag Manager (noscript)"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "html>body",
+    "excerpt": "End Google Tag Manager (noscript)"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "div#global-navigation>div>div>div>div",
+    "excerpt": "This is just a mobile button"
+   }
+  ],
+  "provenance": {
+   "content_hash": "0a8a1ccf0551c6638406cd18ab703e3ad4742985a624b4e74d58c83a00a31b25",
+   "word_count": 584,
+   "author": "Lauren E Low",
+   "published": "2026-10-01",
+   "modified": "2026-10-01T11:59:31-04:00",
+   "canonical": "https://www.nasa.gov/news-release/nasas-spacex-crew-13-launches-to-international-space-station/",
+   "language": "en"
+  }
+ },
+ "cross_domain_redirect": {
+  "markdown": "# Requests\n\n**Requests** is a simple, yet elegant, HTTP library.\n\n```\n>>> import requests\n>>> r = requests.get('https://httpbin.org/basic-auth/user/pass', auth=('user', 'pass'))\n>>> r.status_code\n200\n>>> r.headers['content-type']\n'application/json; charset=utf8'\n>>> r.encoding\n'utf-8'\n>>> r.text\n'{\"authenticated\": true, ...'\n>>> r.json()\n{'authenticated': True, ...}\n```\nRequests allows you to send HTTP/1.1 requests extremely easily. There’s no need to manually add query strings to your URLs, or to form-encode your `PUT` & `POST` data — but nowadays, just use the `json` method!\n\nRequests is one of the most downloaded Python packages today, pulling in around `300M downloads / week` — according to GitHub, Requests is currently [depended upon](https://github.com/psf/requests/network/dependents?package_id=UGFja2FnZS01NzA4OTExNg%3D%3D) by `4,000,000+` repositories.\n\n## Installing Requests and Supported Versions\n\nRequests is available on PyPI:\n\n```\n$ python -m pip install requests\n```\nRequests officially supports Python 3.10+.\n\n## Supported Features & Best–Practices\n\nRequests is ready for the demands of building robust and reliable HTTP–speaking applications, for the needs of today.\n\n- Keep-Alive & Connection Pooling\n- International Domains and URLs\n- Sessions with Cookie Persistence\n- Browser-style TLS/SSL Verification\n- Basic & Digest Authentication\n- Familiar `dict` –like Cookies\n- Automatic Content Decompression and Decoding\n- Multi-part File Uploads\n- SOCKS Proxy Support\n- Connection Timeouts\n- Streaming Downloads\n- Automatic honoring of `.netrc`\n- Chunked HTTP Requests\n\n## Cloning the repository\n\nWhen cloning the Requests repository, you may need to add the `-c fetch.fsck.badTimezone=ignore` flag to avoid an error about a bad commit timestamp (see\n[this issue](https://github.com/psf/requests/issues/2690) for more background):\n\n```\ngit clone -c fetch.fsck.badTimezone=ignore https://github.com/psf/requests.git\n```\nYou can also apply this setting to your global Git config:\n\n```\ngit config --global fetch.fsck.badTimezone ignore\n```",
+  "title": "requests · PyPI",
+  "url": "https://pypi.python.org/pypi/requests",
+  "final_url": "https://pypi.org/project/requests/",
+  "fetched_at": "2026-10-21T16:05:09.572464+00:00",
+  "status": "ok",
+  "http_status": 200,
+  "threats": [
+   {
+    "type": "hidden_css",
+    "reason": "sr-only-1px",
+    "location": "html>body>a",
+    "excerpt": "Skip to main content"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>button",
+    "excerpt": "Switch to mobile version"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "zero-size",
+    "location": "html>body>div#sticky-notifications>noscript",
+    "excerpt": "<div class=\"notification-bar notification-bar--warning\" role=\"status\">          "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "sr-only-1px",
+    "location": "div>div>div>form>label",
+    "excerpt": "Search PyPI"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "sr-only-1px",
+    "location": "div>div>form>button>span",
+    "excerpt": "Search"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "div>div>div>div>nav",
+    "excerpt": "Help                             Docs                             Log in        "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "div>div>nav>form>ul",
+    "excerpt": "Deutsch                                                     English             "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>div",
+    "excerpt": "Search PyPI                                       Search"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "sr-only-1px",
+    "location": "div>div>nav>ul>li",
+    "excerpt": "Metadata"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "not-rendered",
+    "location": "div>div>div>details>div",
+    "excerpt": "Data provided by the project maintainers, verified at the time the release was u"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "not-rendered",
+    "location": "div>div>div>details>div",
+    "excerpt": "Data sourced directly from PyPI's database.",
+    "seen": 2
+   },
+   {
+    "type": "hidden_css",
+    "reason": "not-rendered",
+    "location": "div>div>div>details>div",
+    "excerpt": "The GitHub source repository was provided by the project maintainers and verifie"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "not-rendered",
+    "location": "div>div>div>details>div",
+    "excerpt": "Data provided by the project maintainers and verified by PyPI at the time of upl"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#metadata",
+    "excerpt": "Metadata    Project links                      Data verified by PyPI on May 14, "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#files",
+    "excerpt": "Release files for requests 2.34.2      For a detailed explanation of source dist"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#requests-2.34.2.tar.gz",
+    "excerpt": "Release files     / requests-2.34.2.tar.gz                           Download UR"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#requests-2.34.2-py3-none-any.whl",
+    "excerpt": "Release files     / requests-2.34.2-py3-none-any.whl                           D"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#security",
+    "excerpt": "Security for requests 2.34.2            Report project as malware           Prov"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "main#content>div>div>div>div#history",
+    "excerpt": "Release history            Release notifications |       RSS feed               "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "display:none/visibility:hidden",
+    "location": "html>body>footer>div",
+    "excerpt": "Switch to desktop version"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "html>body",
+    "excerpt": "Accessibility: this link should always be the first piece of content inside the "
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "html>body>div#sticky-notifications",
+    "excerpt": "Add browser warning. Will show for ie9 and below"
+   },
+   {
+    "type": "hidden_css",
+    "reason": "html-comment",
+    "location": "html>body>div#sticky-notifications",
+    "excerpt": "[if IE]>       <div class=\"notification-bar notification-bar--warning\" role=\"sta"
+   }
+  ],
+  "provenance": {
+   "content_hash": "50d27541ee5c10f60fc1beb38b511c4c1204235010f3f33c94672f9716932c4f",
+   "word_count": 269,
+   "author": null,
+   "published": "2026-05-14",
+   "modified": null,
+   "canonical": "https://pypi.org/project/requests/",
+   "language": "en"
+  }
+ },
+ "not_found": {
+  "markdown": "404 - Not found",
+  "title": "",
+  "url": "https://www.rfc-editor.org/rfc/does-not-exist-404",
+  "final_url": "https://www.rfc-editor.org/rfc/does-not-exist-404",
+  "fetched_at": "2026-10-21T16:05:38.848957+00:00",
+  "status": "not_found",
+  "http_status": 404,
+  "threats": [],
+  "provenance": {
+   "content_hash": "53c6279bf75b5b7abf1fa6349de51bf3284ee5de7cf0c720cd131303b6a6859e",
+   "word_count": 4,
+   "author": null,
+   "published": null,
+   "modified": null,
+   "canonical": null,
+   "language": null
+  }
+ }
+}

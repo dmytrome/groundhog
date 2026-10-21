@@ -1,3 +1,4 @@
+import hashlib
 import math
 import re
 import unicodedata
@@ -54,9 +55,16 @@ _B = 0.75
 
 
 class Match(TypedDict):
+    id: str
     heading: str | None
     offset: int
+    end: int
     score: float
+
+
+def passage_id(source_url: str, content_hash: str, start: int, end: int) -> str:
+    snapshot = hashlib.sha256(f"{source_url}\n{content_hash}".encode()).hexdigest()[:12]
+    return f"p:{snapshot}:{start}-{end}"
 
 
 @dataclass
@@ -307,7 +315,9 @@ def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
     return fenced
 
 
-def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool, int]:
+def select(
+    markdown: str, query: str, max_tokens: int, *, source_url: str = ""
+) -> tuple[str, list[Match], bool, int]:
     chunks = chunk_document(markdown)
     ranked, left_out, set_aside = rank(chunks, query, max_tokens, floor=RELEVANCE_FLOOR)
     if not ranked:
@@ -315,10 +325,13 @@ def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match]
     # Within one document, offset order is reading order — what a caller wants to
     # read back, unlike the relevance order `rank` returns.
     spans = _spans(chunks, ranked)
+    content_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     matches: list[Match] = [
         {
+            "id": passage_id(source_url, content_hash, span.chunk.offset, span.end),
             "heading": span.chunk.heading,
             "offset": span.chunk.offset,
+            "end": span.end,
             "score": round(span.score, SCORE_DIGITS),
         }
         for span in spans

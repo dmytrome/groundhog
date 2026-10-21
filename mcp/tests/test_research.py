@@ -1,10 +1,13 @@
 import asyncio
 import gc
+import hashlib
+import json
+from pathlib import Path
 from typing import Protocol
 
 import pytest
 
-from groundhog_mcp import cdp, document, engine, safety, search as search_module
+from groundhog_mcp import cdp, document, engine, extract, retrieval, safety, search as search_module
 from groundhog_mcp.search import SearchHit
 from groundhog_mcp.tools import research as research_mod
 from groundhog_mcp.tools.research import research
@@ -43,7 +46,7 @@ def _doc(url: str, markdown: str, status: str = "ok") -> document.Document:
         http_status=200,
         threats=[],
         provenance={
-            "content_hash": "h" * 64,
+            "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
             "word_count": len(markdown.split()),
             "author": None,
             "published": None,
@@ -419,3 +422,101 @@ async def test_a_fragment_scoring_under_the_floor_is_not_returned(fake_web: Fake
     result = await research("what does a kitten eat")
 
     assert [p["source_url"] for p in result["passages"]] == ["https://a.com/x"]
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _captured(name: str) -> document.Document:
+    return document.Document(**json.loads((_FIXTURES / "documents.json").read_text())[name])
+
+
+_KITTEN = "# Diet\n\nA kitten eats meat several times a day.\n"
+
+
+async def test_passage_ids_are_stable_across_calls(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", _KITTEN)})
+
+    first = await research("kitten eats meat")
+    second = await research("kitten eats meat")
+
+    assert [p["id"] for p in first["passages"]] == [p["id"] for p in second["passages"]]
+
+
+async def test_a_passage_id_changes_when_its_page_changes(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", _KITTEN)})
+    before = await research("kitten eats meat")
+    changed = _KITTEN.replace("Diet", "Food")
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", changed)})
+
+    after = await research("kitten eats meat")
+
+    assert before["passages"][0]["start"] == after["passages"][0]["start"]
+    assert before["passages"][0]["id"] != after["passages"][0]["id"]
+
+
+async def test_identical_text_on_two_pages_gets_two_ids(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://a.com/x"), _hit("https://b.com/y")],
+        {url: _doc(url, _KITTEN) for url in ("https://a.com/x", "https://b.com/y")},
+    )
+
+    result = await research("kitten eats meat")
+
+    assert len({p["id"] for p in result["passages"]}) == 2
+
+
+async def test_every_passage_is_the_exact_slice_its_offsets_name(fake_web: FakeWeb) -> None:
+    code = "\n".join(f"value_{i} = compute({i})" for i in range(250))
+    pages = {
+        "https://a.com/x": "# Diet\n\nA kitten eats meat\x0cseveral times a day.\n",
+        "https://b.com/y": "```python\n" + code + "\nkitten_eats = meat()\n```\n",
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    result = await research("kitten eats meat")
+
+    assert {p["source_url"] for p in result["passages"]} == set(pages)
+    for passage in result["passages"]:
+        assert not passage["clamped"]
+        assert pages[passage["source_url"]][passage["start"] : passage["end"]] == passage["text"]
+    fenced = next(p for p in result["passages"] if p["source_url"] == "https://b.com/y")
+    assert fenced["fence"] == "```python"
+
+
+async def test_a_top_passage_cut_to_the_budget_says_so(fake_web: FakeWeb) -> None:
+    sentence = "A kitten eats meat several times a day while it grows. "
+    markdown = "# Diet\n\n" + sentence * (2400 // len(sentence)) + "\n"
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=200)
+
+    top = result["passages"][0]
+    assert top["clamped"] is True
+    kept = top["text"].removesuffix(extract._TRUNCATION_MARKER)
+    assert markdown[top["start"] : top["end"]].startswith(kept)
+
+
+async def test_a_research_passage_and_a_read_url_match_share_an_id(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", _KITTEN)})
+
+    result = await research("kitten eats meat")
+    _, matches, _, _ = retrieval.select(
+        _KITTEN, "kitten eats meat", 20000, source_url="https://a.com/x"
+    )
+
+    assert [m["id"] for m in matches] == [p["id"] for p in result["passages"]]
+
+
+async def test_a_captured_news_page_yields_passages_located_in_it(fake_web: FakeWeb) -> None:
+    news = _captured("news")
+    fake_web([_hit(news.url)], {news.url: news})
+
+    result = await research("Crew-13 launch docking Harmony module")
+
+    assert result["passages"]
+    for passage in result["passages"]:
+        assert news.markdown[passage["start"] : passage["end"]] == passage["text"]
+        assert passage["id"] == retrieval.passage_id(
+            news.final_url, news.provenance["content_hash"], passage["start"], passage["end"]
+        )

@@ -3,6 +3,7 @@ from importlib.metadata import version
 import pytest
 
 from groundhog_mcp import engine, server
+from groundhog_mcp.tools import read_url as read_url_mod
 
 
 async def test_the_handshake_reports_our_version_not_empty_and_not_the_sdks():
@@ -72,7 +73,7 @@ async def test_a_failure_outside_the_tools_own_handling_is_not_relayed(
     def _misconfigured() -> object:
         raise ValueError("GROUNDHOG_SEARCH_BACKEND must be one of (...), got 'operator-value'")
 
-    monkeypatch.setattr(engine, "load_config", _misconfigured)
+    monkeypatch.setattr(read_url_mod, "load_config", _misconfigured)
     mcp = server.build_server()
     with pytest.raises(Exception) as caught:
         await mcp.call_tool("read_url", {"url": "https://ex.com/p"})

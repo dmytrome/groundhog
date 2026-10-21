@@ -33,10 +33,15 @@ SourceStatus = Literal["ok", "blocked", "timeout", "error"]
 
 
 class Passage(TypedDict):
+    id: str
     text: str
     source_url: str
     heading: str | None
     score: float
+    start: int
+    end: int
+    clamped: bool
+    fence: str | None
 
 
 class Source(TypedDict):
@@ -190,6 +195,7 @@ async def research(
 
     sources: list[Source] = []
     chunks: list[retrieval.Chunk] = []
+    hashes: dict[str, str] = {}
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
             # Infrastructure, not a property of this source: every source would
@@ -226,6 +232,7 @@ async def research(
             # for the caller's token budget against real passages. The source still
             # appears above, carrying the `page_status` that says why it contributed none.
             continue
+        hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the
@@ -242,12 +249,21 @@ async def research(
         # can still exceed the budget — clamp it and keep `truncated` honest.
         text, over_budget = extract.truncate(scored.chunk.text, limit)
         truncated = truncated or over_budget
+        start = scored.chunk.offset
+        end = start + len(scored.chunk.text)
         passages.append(
             {
+                "id": retrieval.passage_id(
+                    scored.chunk.source, hashes[scored.chunk.source], start, end
+                ),
                 "text": text,
                 "source_url": scored.chunk.source,
                 "heading": scored.chunk.heading,
                 "score": round(scored.score, retrieval.SCORE_DIGITS),
+                "start": start,
+                "end": end,
+                "clamped": over_budget,
+                "fence": scored.chunk.fence,
             }
         )
     return {

@@ -1,6 +1,6 @@
 import pytest
 
-from groundhog_mcp import server
+from groundhog_mcp import retrieval, server
 from groundhog_mcp.tools.read_url import read_url
 
 
@@ -62,6 +62,19 @@ async def test_query_returns_only_relevant_passages(fake_provider, make_page):
     assert "loyal domesticated" in result["markdown"]
     assert "carnivorous mammals" not in result["markdown"]
     assert result["matches"] and result["matches"][0]["heading"] == "Dogs"
+
+
+async def test_a_match_is_identified_by_the_final_url_and_the_page_snapshot(
+    fake_provider, make_page
+):
+    fake_provider(make_page())
+
+    result = await read_url("https://ex.com/asked-for", query="loyal domesticated dogs")
+
+    match = result["matches"][0]
+    assert match["id"] == retrieval.passage_id(
+        "https://ex.com/p", result["provenance"]["content_hash"], match["offset"], match["end"]
+    )
 
 
 async def test_query_body_respects_token_budget(fake_provider, make_page):
