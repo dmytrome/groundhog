@@ -5,8 +5,6 @@ from contextlib import asynccontextmanager
 
 
 class RateLimiter:
-    """Enforces a minimum delay between acquisitions sharing the same key."""
-
     def __init__(self, min_delay: float, *, clock=time.monotonic, sleep=asyncio.sleep):
         self._min_delay = min_delay
         self._clock = clock
@@ -22,11 +20,6 @@ class RateLimiter:
         return lock
 
     def _evict_expired(self, now: float) -> None:
-        """Drop keys whose delay has already elapsed.
-
-        A long-lived server driven by search results sees unboundedly many domains,
-        and an entry older than the delay can no longer postpone anything.
-        """
         stale = [
             key
             for key, seen in self._last.items()
