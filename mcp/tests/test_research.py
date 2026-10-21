@@ -1022,3 +1022,13 @@ async def test_two_pages_that_extract_to_nothing_are_not_content(
     assert result["receipt"]["not_content"] == 2
     assert result["receipt"]["usable"] == 0
     assert result["passages"] == []
+
+
+async def test_an_empty_page_that_is_filtered_is_counted_as_filtered(fake_web: FakeWeb) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://evil.com/x", "")})
+
+    result = await research("kitten eats meat", exclude_domains=["evil.com"])
+
+    assert result["sources"][0]["filtered"] == "excluded_domain"
+    assert result["receipt"]["filtered"] == 1
+    assert result["receipt"]["not_content"] == 0

@@ -415,12 +415,12 @@ async def research(
                 "filtered": filtered,
             }
         )
-        if empty:
-            counts["not_content"] += 1
-            continue
         counts["outside"] += outside
         if filtered:
             counts["filtered"] += 1
+            continue
+        if empty:
+            counts["not_content"] += 1
             continue
         counts["usable"] += 1
         counts["undated"] += dated is None
