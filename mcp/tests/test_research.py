@@ -947,3 +947,26 @@ async def test_captured_searxng_dates_leave_out_the_older_hits_before_fetching(
 
     assert result["receipt"]["hits_before_date"] == 3
     assert "en.wikinews.org" not in {s["url"].split("/")[2] for s in result["sources"]}
+
+
+async def test_a_later_subdomain_is_read_when_an_earlier_one_fills_the_cap(
+    fake_web: FakeWeb,
+) -> None:
+    hits = [_hit(f"https://docs.python.org/{i}") for i in range(7)]
+    hits.append(_hit("https://peps.python.org/1"))
+    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
+
+    result = await research(
+        "kitten eats meat", max_sources=3, include_domains=["docs.python.org", "peps.python.org"]
+    )
+
+    assert "https://peps.python.org/1" in [s["url"] for s in result["sources"]]
+
+
+async def test_the_source_limit_is_not_blamed_on_the_per_domain_cap(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://isric.org/{i}") for i in range(50)]
+    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
+
+    result = await research("kitten eats meat", max_sources=3, include_domains=["isric.org"])
+
+    assert result["receipt"]["hits_same_domain"] == 0
