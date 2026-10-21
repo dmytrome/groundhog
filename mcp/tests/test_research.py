@@ -1,4 +1,6 @@
 import asyncio
+import gc
+from typing import Protocol
 
 import pytest
 
@@ -8,6 +10,15 @@ from groundhog_mcp.tools import research as research_mod
 from groundhog_mcp.tools.research import research
 
 from .conftest import TAG_I, ZERO_WIDTH
+
+
+class FakeWeb(Protocol):
+    def __call__(
+        self,
+        hits: list[SearchHit],
+        docs: dict[str, document.Document],
+        failures: dict[str, BaseException] | None = None,
+    ) -> None: ...
 
 
 def _hit(url: str) -> SearchHit:
@@ -223,6 +234,117 @@ async def test_a_slow_source_times_out_without_losing_the_fast_ones(monkeypatch,
     assert statuses["https://fast.com/1"] == "ok"
     assert statuses["https://slow.com/1"] == "timeout"
     assert result["passages"], "the fast source still contributes passages"
+
+
+async def test_a_source_whose_teardown_outlasts_the_drain_still_times_out(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    hits = [_hit("https://fast.com/1"), _hit("https://stuck.com/1")]
+    docs = {"https://fast.com/1": _doc("https://fast.com/1", "# Cats\n\nCats nap all day.")}
+    fake_web(hits, docs)
+
+    installed_fetch = document.fetch_document
+
+    async def _stuck_teardown(url: str, **kwargs: int) -> document.Document:
+        if "stuck.com" in url:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.3)
+                raise
+        return await installed_fetch(url, **kwargs)
+
+    monkeypatch.setattr(document, "fetch_document", _stuck_teardown)
+    monkeypatch.setattr(research_mod, "_DEADLINE_S", 0.2)
+    monkeypatch.setattr(research_mod, "_CANCEL_DRAIN_S", 0.05)
+
+    result = await research("cats")
+    await asyncio.sleep(0.4)
+
+    statuses = {s["url"]: s["status"] for s in result["sources"]}
+    assert statuses == {"https://fast.com/1": "ok", "https://stuck.com/1": "timeout"}
+
+
+async def test_an_error_raised_after_the_drain_is_retrieved_not_left_to_the_loop(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    fake_web([_hit("https://stuck.com/1")], {})
+    unretrieved: list[str] = []
+    asyncio.get_running_loop().set_exception_handler(
+        lambda loop, context: unretrieved.append(context["message"])
+    )
+
+    async def _fails_after_the_drain(url: str, **kwargs: int) -> document.Document:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.3)
+        raise ValueError("teardown failed")
+
+    monkeypatch.setattr(document, "fetch_document", _fails_after_the_drain)
+    monkeypatch.setattr(research_mod, "_DEADLINE_S", 0.2)
+    monkeypatch.setattr(research_mod, "_CANCEL_DRAIN_S", 0.05)
+
+    await research("cats")
+    await asyncio.sleep(0.4)
+    gc.collect()
+
+    assert unretrieved == []
+
+
+async def test_a_source_that_recovers_within_the_drain_keeps_its_result(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    fake_web([_hit("https://late.com/1")], {})
+    late = _doc("https://late.com/1", "# Cats\n\nCats nap all day.")
+
+    async def _recovers_on_cancel(url: str, **kwargs: int) -> document.Document:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            return late
+        return late
+
+    monkeypatch.setattr(document, "fetch_document", _recovers_on_cancel)
+    monkeypatch.setattr(research_mod, "_DEADLINE_S", 0.2)
+
+    result = await research("cats")
+
+    assert [s["status"] for s in result["sources"]] == ["ok"]
+
+
+async def test_cancelling_research_cancels_its_fetches_and_retrieves_their_errors(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    fake_web([_hit("https://slow.com/1"), _hit("https://bad.com/1")], {})
+    unretrieved: list[str] = []
+    asyncio.get_running_loop().set_exception_handler(
+        lambda loop, context: unretrieved.append(context["message"])
+    )
+    cancelled: list[str] = []
+
+    async def _fetch(url: str, **kwargs: int) -> document.Document:
+        if "bad.com" in url:
+            raise ValueError("fetch failed")
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.append(url)
+            raise
+        raise AssertionError("the fetch was never cancelled")
+
+    monkeypatch.setattr(document, "fetch_document", _fetch)
+
+    call = asyncio.create_task(research("cats"))
+    await asyncio.sleep(0.1)
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert cancelled == ["https://slow.com/1"]
+    assert unretrieved == []
 
 
 async def test_a_blocked_source_is_reported_as_blocked_without_leaking_the_address(fake_web):

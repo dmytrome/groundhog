@@ -91,6 +91,15 @@ def _status_of(exc: BaseException) -> tuple[SourceStatus, str]:
     return status, safety.safe_detail(exc)
 
 
+_abandoned: set[asyncio.Task[document.Document]] = set()
+
+
+def _retire(task: asyncio.Task[document.Document]) -> None:
+    _abandoned.discard(task)
+    if not task.cancelled():
+        task.exception()
+
+
 async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]:
     """Fetch every URL concurrently, bounded overall.
 
@@ -102,14 +111,25 @@ async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]
         asyncio.create_task(document.fetch_document(url, max_threats=_MAX_THREATS_PER_SOURCE))
         for url in urls
     ]
-    _, pending = await asyncio.wait(tasks, timeout=_DEADLINE_S)
-    for task in pending:
-        task.cancel()
-    if pending:
-        # Bounded too: a dead websocket can stall a cancelled fetch's teardown.
-        await asyncio.wait(pending, timeout=_CANCEL_DRAIN_S)
+    try:
+        _, pending = await asyncio.wait(tasks, timeout=_DEADLINE_S)
+        for task in pending:
+            task.cancel()
+        if pending:
+            # Bounded too: a dead websocket can stall a cancelled fetch's teardown.
+            await asyncio.wait(pending, timeout=_CANCEL_DRAIN_S)
+    finally:
+        for task in tasks:
+            if task.done():
+                _retire(task)
+            else:
+                task.cancel()
+                _abandoned.add(task)
+                task.add_done_callback(_retire)
     return [
-        TimeoutError() if task.cancelled() else (task.exception() or task.result())
+        TimeoutError()
+        if task.cancelled() or not task.done()
+        else (task.exception() or task.result())
         for task in tasks
     ]
 
