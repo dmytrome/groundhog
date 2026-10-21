@@ -1,0 +1,331 @@
+{
+  "query": "NASA Crew-13 launch",
+  "results": [
+    {
+      "url": "https://www.msn.com/en-in/technology/general/go-for-launch-nasa-clears-crew-13-liftoff-for-six-month-mission-to-space-today/ar-AA2djKAD",
+      "title": "Go for launch: NASA clears Crew-13 liftoff for six-month mission to space today",
+      "content": "Nasa, SpaceX and partner teams have cleared Crew-13 for launch to the International Space Station. The mission sends a four-member international crew for six months of research and station work in orbit.",
+      "thumbnail": null,
+      "metadata": "01/10/2026 | India Today on MSN",
+      "engine": "bing news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "www.msn.com",
+        "/en-in/technology/general/go-for-launch-nasa-clears-crew-13-liftoff-for-six-month-mission-to-space-today/ar-AA2djKAD",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news",
+        "bing news"
+      ],
+      "positions": [
+        2,
+        12
+      ],
+      "score": 1.1666666666666667,
+      "category": "news",
+      "publishedDate": null,
+      "source": "India Today",
+      "pubdate": "2026-10-01 05:53:29"
+    },
+    {
+      "url": "https://en.wikinews.org/wiki/Saudi_Arabia_announces_astronaut_to_be_nation%27s_first_female_space_traveler",
+      "title": "Saudi Arabia announces astronaut to be nation's first female space traveler",
+      "content": "revealed the other three crew members for the mission, Ax-2, on Sunday: a male Saudi, Ali Al-Qarni; Peggy Whitson, a retired NASA astronaut who has flown",
+      "metadata": "NASA",
+      "publishedDate": "2024-12-19T02:38:51",
+      "engine": "wikinews",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "en.wikinews.org",
+        "/wiki/Saudi_Arabia_announces_astronaut_to_be_nation%27s_first_female_space_traveler",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "thumbnail": "",
+      "priority": "",
+      "engines": [
+        "wikinews"
+      ],
+      "positions": [
+        1
+      ],
+      "score": 1.0,
+      "category": "news",
+      "pubdate": "2024-12-19 02:38:51"
+    },
+    {
+      "url": "https://www.usatoday.com/story/tech/science/space/2026/10/01/spacex-launch-day-heres-information-on-todays-nasa-crew-13-rocket-launch-from-cape-canaveral-florida--live/92025486007/",
+      "title": "Live updates: NASA's SpaceX Crew-13 astronauts launch from Cape Canaveral",
+      "content": "Live updates from NASA's SpaceX Crew-13 mission Thursday morning that launched a Falcon 9 rocket from Cape Canaveral Space Force Station in Florida.",
+      "thumbnail": null,
+      "metadata": "01/10/2026 | USA TODAY",
+      "engine": "bing news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "www.usatoday.com",
+        "/story/tech/science/space/2026/10/01/spacex-launch-day-heres-information-on-todays-nasa-crew-13-rocket-launch-from-cape-canaveral-florida--live/92025486007/",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "priority": "",
+      "engines": [
+        "bing news"
+      ],
+      "positions": [
+        1
+      ],
+      "score": 1.0,
+      "category": "news",
+      "publishedDate": null
+    },
+    {
+      "url": "https://golfweek.usatoday.com/story/tech/science/space/2026/10/01/spacex-launch-day-heres-information-on-todays-nasa-crew-13-rocket-launch-from-cape-canaveral-florida--live/92025486007/",
+      "title": "Live updates: NASA's SpaceX Crew-13 astronauts launch from Cape Canaveral",
+      "content": "Live updates from NASA's SpaceX Crew-13 mission Thursday morning that launched a Falcon 9 rocket from Cape Canaveral Space Force Station in Florida.",
+      "source": "Golfweek",
+      "publishedDate": "2026-10-01T17:15:00",
+      "engine": "duckduckgo news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "golfweek.usatoday.com",
+        "/story/tech/science/space/2026/10/01/spacex-launch-day-heres-information-on-todays-nasa-crew-13-rocket-launch-from-cape-canaveral-florida--live/92025486007/",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "thumbnail": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news"
+      ],
+      "positions": [
+        1
+      ],
+      "score": 1.0,
+      "category": "news",
+      "pubdate": "2026-10-01 17:15:00"
+    },
+    {
+      "url": "https://www.msn.com/en-us/news/technology/4-astronauts-due-to-head-to-space-station-what-to-know-about-crew-13/ar-AA2dhNNH",
+      "title": "4 astronauts due to head to space station. What to know about Crew-13",
+      "content": "A joint NASA and SpaceX mission will send four more astronauts to the International Space Station this week. Everything to know about Crew-13.",
+      "thumbnail": null,
+      "metadata": "30/09/2026 | USA TODAY on MSN",
+      "engine": "bing news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "www.msn.com",
+        "/en-us/news/technology/4-astronauts-due-to-head-to-space-station-what-to-know-about-crew-13/ar-AA2dhNNH",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news",
+        "bing news"
+      ],
+      "positions": [
+        3,
+        25
+      ],
+      "score": 0.7466666666666666,
+      "category": "news",
+      "publishedDate": null,
+      "source": "USA TODAY",
+      "pubdate": "2026-09-30 17:01:09"
+    },
+    {
+      "url": "https://mynews13.com/fl/orlando/space/2026/09/30/nasa-spacex-crew-13-launch",
+      "title": "SpaceX successfully launches NASA's Crew-13 mission to the ISS",
+      "content": "For the Crew-13 mission, the quartet will take off from Space Launch Complex 40 at the Cape Canaveral Space Force Station.",
+      "thumbnail": null,
+      "metadata": "19 hours ago | Spectrum News 13",
+      "engine": "bing news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "mynews13.com",
+        "/fl/orlando/space/2026/09/30/nasa-spacex-crew-13-launch",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news",
+        "bing news"
+      ],
+      "positions": [
+        4,
+        19
+      ],
+      "score": 0.6052631578947368,
+      "category": "news",
+      "publishedDate": null,
+      "source": "Spectrum News 13",
+      "pubdate": "2026-10-20 23:25:00"
+    },
+    {
+      "url": "https://en.wikinews.org/wiki/On_the_campaign_trail_in_the_USA%2C_May_2020",
+      "title": "On the campaign trail in the USA, May 2020",
+      "content": "Biden — RealClearPolitics, June 13, 2020 (accessed) Mike Wall. Trump hails SpaceX's 1st astronaut launch success for NASA — Space.com, May 31, 2020 Barbara",
+      "metadata": "NASA",
+      "publishedDate": "2024-12-18T15:42:47",
+      "engine": "wikinews",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "en.wikinews.org",
+        "/wiki/On_the_campaign_trail_in_the_USA%2C_May_2020",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "thumbnail": "",
+      "priority": "",
+      "engines": [
+        "wikinews"
+      ],
+      "positions": [
+        2
+      ],
+      "score": 0.5,
+      "category": "news",
+      "pubdate": "2024-12-18 15:42:47"
+    },
+    {
+      "url": "https://www.msn.com/en-us/news/other/spacex-is-go-to-launch-nasas-crew-13-astronaut-mission-to-the-iss-on-oct-1/ar-AA2diHV3",
+      "title": "SpaceX is 'go' to launch NASA's Crew-13 astronaut mission to the ISS on Oct. 1",
+      "content": "CAPE CANAVERAL, Fla. — SpaceX and NASA officials are feeling good about tomorrow morning's launch of four astronauts to the International Space Station (ISS), provided Mother Nature cooperates. Crew-13 is scheduled to lift off Thursday (Oct. 1) on a ...",
+      "source": "MSN",
+      "publishedDate": "2026-09-30T22:47:00",
+      "engine": "duckduckgo news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "www.msn.com",
+        "/en-us/news/other/spacex-is-go-to-launch-nasas-crew-13-astronaut-mission-to-the-iss-on-oct-1/ar-AA2diHV3",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "thumbnail": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news"
+      ],
+      "positions": [
+        2
+      ],
+      "score": 0.5,
+      "category": "news",
+      "pubdate": "2026-09-30 22:47:00"
+    },
+    {
+      "url": "https://www.miamiherald.com/news/article317495742.html",
+      "title": "SpaceX Starship reaching orbit, NASA's Crew-13 launch top space newsletter",
+      "content": "SpaceX cleared a landmark development hurdle this morning by launching an enormous Starship rocket up into low-Earth orbit for the first time. Welcome to FLORIDA TODAY Space Team live coverage of SpaceX's 14th Starship test flight from Boca Chica,",
+      "thumbnail": null,
+      "metadata": "05/10/2026 | Miami Herald",
+      "engine": "bing news",
+      "template": "default.html",
+      "parsed_url": [
+        "https",
+        "www.miamiherald.com",
+        "/news/article317495742.html",
+        "",
+        "",
+        ""
+      ],
+      "img_src": "",
+      "priority": "",
+      "engines": [
+        "duckduckgo news",
+        "bing news"
+      ],
+      "positions": [
+        5,
+        22
+      ],
+      "score": 0.49090909090909096,
+      "category": "news",
+      "publishedDate": null,
+      "source": "Miami Herald",
+      "pubdate": "2026-10-05 08:51:00"
+    },
+    {
+      "template": "default.html",
+      "title": "NASA poised for historic Artemis I lunar launch from Florida",
+      "content": "A half century after the end of NASA's Apollo era, the U.S. space agency's long-anticipated bid to return astronauts to the moon's surface remains at least three years away, with much of the necessary hardware still on the drawing board.",
+      "img_src": "",
+      "iframe_src": "",
+      "audio_src": "",
+      "thumbnail": "https://www.reuters.com/resizer/v2/MUFQSNPNI5JWTIR4H5DAXFKOQ4.jpg?auth=f0532069032e500135cd2965124784350365e3c38dc40282c7a6d324aa84bf73&height=80",
+      "publishedDate": "2022-08-23T15:49:57+00:00",
+      "pubdate": "2022-08-23 15:49:57+0000",
+      "length": null,
+      "views": "",
+      "author": "",
+      "metadata": "Disrupted",
+      "priority": "",
+      "engines": [
+        "reuters"
+      ],
+      "open_group": false,
+      "close_group": false,
+      "positions": [
+        1
+      ],
+      "score": 1.0,
+      "category": "news",
+      "url": "https://www.reuters.com/lifestyle/science/nasa-poised-historic-artemis-i-lunar-launch-florida-2022-08-23/",
+      "engine": "reuters",
+      "parsed_url": [
+        "https",
+        "www.reuters.com",
+        "/lifestyle/science/nasa-poised-historic-artemis-i-lunar-launch-florida-2022-08-23/",
+        "",
+        "",
+        ""
+      ]
+    }
+  ],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": [],
+  "unresponsive_engines": [
+    [
+      "brave.news",
+      "too many requests"
+    ],
+    [
+      "google news",
+      "CAPTCHA"
+    ],
+    [
+      "startpage news",
+      "CAPTCHA"
+    ]
+  ]
+}
