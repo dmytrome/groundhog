@@ -80,9 +80,11 @@ class Receipt(TypedDict):
     published_after: str | None
     hits: int
     hits_by_domain: dict[str, int]
+    hits_excluded: int
     hits_outside_domains: int
     hits_before_date: int
     hits_same_domain: int
+    hits_unread: int
     failed: int
     not_content: int
     filtered: int
@@ -361,6 +363,7 @@ async def research(
     for hit in hits:
         if domain := _within(hit["url"], included):
             hits_by_domain[domain] += 1
+    on_excluded = [hit for hit in hits if _within(hit["url"], excluded)]
     in_domains = [
         hit
         for hit in hits
@@ -436,7 +439,7 @@ async def research(
                 "filtered": filtered,
             }
         )
-        counts["outside"] += outside
+        counts["outside"] += filtered == "outside_domains"
         if filtered:
             counts["filtered"] += 1
             continue
@@ -495,9 +498,11 @@ async def research(
             "published_after": published_after,
             "hits": len(hits),
             "hits_by_domain": hits_by_domain,
-            "hits_outside_domains": len(hits) - len(in_domains),
+            "hits_excluded": len(on_excluded),
+            "hits_outside_domains": len(hits) - len(in_domains) - len(on_excluded),
             "hits_before_date": len(in_domains) - len(kept),
             "hits_same_domain": same_domain,
+            "hits_unread": len(kept) - len(chosen) - same_domain,
             "failed": counts["failed"],
             "not_content": counts["not_content"],
             "filtered": counts["filtered"],
