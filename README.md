@@ -76,10 +76,10 @@ Claude Desktop / Cursor / Windsurf (`claude_desktop_config.json` or equivalent):
 }
 ```
 
-`uvx` fetches `groundhog-mcp` from PyPI on first run. The first fetch pulls the browser
-image (once, a few minutes); later fetches are instant. No container runtime? The `status`
-tool and any error say how to install one — or point `CDP_URL` at a hosted browser for
-zero-install use.
+`uvx` fetches `groundhog-mcp` from PyPI on first run. The first fetch starts your installed
+Chrome; with `GROUNDHOG_BROWSER=stealth` it pulls the browser image instead (once, a few
+minutes). No Chrome or container runtime? The `status` tool and any error say what to
+install — or point `CDP_URL` at a hosted browser for zero-install use.
 
 **Prefer to manage the browser yourself?** Start it and Groundhog will just use it:
 
@@ -396,9 +396,10 @@ browser is about to request — redirects, form posts, script and meta-refresh n
 navigations inside cross-site frames, not only the URL it was given — and stops one on a
 private address before the request is sent. Chrome itself refuses a public page's images,
 scripts, `fetch()`, frames and embeds into the local network. The one request it would still
-make is a speculative prefetch or prerender, so the Chrome Groundhog launches has page
-preloading turned off. Each of these routes has a live test that fails when its protection is
-removed. A browser you point `CDP_URL` at keeps its own preloading setting.
+make is a speculative prefetch or prerender, so the local Chrome Groundhog launches
+(`GROUNDHOG_BROWSER=chrome`) has page preloading turned off. Each of these routes has a live
+test that fails when its protection is removed. The stealth container, and a browser you point
+`CDP_URL` at, keep their own preloading setting.
 `GROUNDHOG_BLOCK_PRIVATE_IPS=false` turns the document check off.
 
 ### Limits of hidden-text detection
@@ -462,26 +463,28 @@ you asked for. Worth knowing what it does and does not cover.
 **What the SSRF guard blocks.** Each host is resolved and rejected if it lands in loopback,
 RFC-1918 private, link-local (incl. `169.254.169.254`), reserved, multicast, unspecified,
 CGNAT `100.64.0.0/10`, or IPv4-mapped IPv6 ranges. Only `http` and `https` are allowed, and
-credentials in URLs are rejected. The check runs again immediately before navigation, and
-once more against `final_url` after redirects.
+credentials in URLs are rejected. The check runs before navigation, on every document
+request Chrome is about to send (each redirect hop and each frame, cross-site frames
+included), and once more against `final_url`. A hop that fails the check, or whose host
+cannot be resolved, is refused before Chrome sends it.
 
 **Limits of the SSRF guard.** It is a strong default, not a sandbox. Know these before
 pointing it at untrusted URLs:
 
-- The guard resolves and checks the host *before* navigation and re-checks `final_url`
-  *after* the page loads. A redirect into a private address is therefore still requested by
-  Chrome — its content is never returned, but a blind SSRF or a state-changing internal `GET`
-  has already landed. Intermediate hops in a longer redirect chain are not individually
-  checked.
-- Sub-resource requests the page itself issues (`img`, `script`, `iframe`, `fetch`) are not
-  intercepted; only the top-level navigation is checked.
-- Groundhog resolves DNS in its own process while Chrome resolves independently at navigate
-  time, so a short-TTL rebinding window remains open. Closing these properly needs
-  request-level interception (CDP `Fetch`).
-- Fetches share the browser's default profile — targets are created without a separate
-  browser context — so cookies and storage set by one page persist into later fetches.
-  "Read-only" describes Groundhog's own API, not the JavaScript on a fetched page, which can
-  issue requests of its own from that shared profile.
+- Groundhog checks documents only. Sub-resources a page issues (`img`, `fetch`,
+  `object`) are not intercepted; what stops them reaching loopback or your LAN is Chrome's
+  own Local Network Access rule, which the Chrome versions the live tests run against
+  enforce. Groundhog checks neither the Chrome version nor the profile's permissions, so an
+  older Chrome, or a site granted local-network access in that profile, is not covered.
+- Preloading is off only in the local Chrome Groundhog launches. The stealth container and a
+  browser you supply through `CDP_URL` keep their own preloading settings.
+- Groundhog resolves DNS in its own process while Chrome resolves independently, so a
+  short-TTL rebinding window remains open between the check and the request.
+- Fetches share one profile, so cookies and storage set by one page persist into later
+  fetches. That is `GROUNDHOG_CHROME_PROFILE` (`~/.groundhog/chrome` by default), the
+  container's for `stealth`, or the profile of a browser you supply through `CDP_URL`. "Read-only" describes
+  Groundhog's own API, not the JavaScript on a fetched page, which can issue requests of its
+  own from that profile.
 
 Set `GROUNDHOG_BLOCK_PRIVATE_IPS=false` only on a network where reaching internal addresses
 is intended.

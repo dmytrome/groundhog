@@ -95,17 +95,16 @@ involved** — your agent does the synthesis.
   returns `fetched_at`.
 - **Safe by default.** Before navigating, the SSRF guard resolves the host and blocks
   loopback, private and other internal address ranges (the exact list is in the
-  [Security section](https://github.com/dmytrome/groundhog#security)), and it refuses to
-  return content from a URL that redirects into one. That matters most in `research`, where a
-  *third party* picks the URLs. Known limits: the redirect target is still requested by
-  Chrome before its content is withheld, page-issued sub-resource requests are not
-  intercepted, and Chrome resolves DNS independently, so a short-TTL rebind is not fully
-  closed. See
+  [Security section](https://github.com/dmytrome/groundhog#security)), and it
+  refuses every redirect hop and frame navigation into one before Chrome sends it. That
+  matters most in `research`, where a *third party* picks the URLs. Known limits: page-issued
+  sub-resource requests are left to Chrome's Local Network Access rule, and Chrome resolves
+  DNS independently, so a short-TTL rebind is not fully closed. See
   [Security](https://github.com/dmytrome/groundhog#security).
-- **Reads pages plain fetchers can't.** Real Chrome, headful under Xvfb, driven over raw CDP
-  — the `Runtime` domain is never enabled, so the `isAutomatedWithCDP` signal that flags
-  Puppeteer/Playwright/Selenium simply isn't there.
-- **Self-hosted and MIT.** You run the container; fetched pages never leave your
+- **Reads pages plain fetchers can't.** Real Chrome, presenting a headful identity, driven
+  over raw CDP — the `Runtime` domain is never enabled, so the `isAutomatedWithCDP` signal
+  that flags Puppeteer/Playwright/Selenium simply isn't there.
+- **Self-hosted and MIT.** It runs on your machine; fetched pages never leave your
   infrastructure.
 
 ## Configuration
