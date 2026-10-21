@@ -78,3 +78,17 @@ async def test_a_failure_outside_the_tools_own_handling_is_not_relayed(
     with pytest.raises(Exception) as caught:
         await mcp.call_tool("read_url", {"url": "https://ex.com/p"})
     assert "operator-value" not in str(caught.value)
+
+
+async def test_the_instructions_say_what_research_is_for_and_where_its_receipt_is():
+    options = server.build_server()._lowlevel_server.create_initialization_options()
+    assert "`research` is for a stated evidence question" in options.instructions
+    assert "`receipt`" in options.instructions
+
+
+async def test_the_research_schema_offers_the_aim_and_the_filters():
+    tools = {tool.name: tool for tool in await server.build_server().list_tools()}
+    research = tools["research"]
+    assert {"aim", "include_domains", "exclude_domains", "published_after"} <= set(
+        research.input_schema["properties"]
+    )

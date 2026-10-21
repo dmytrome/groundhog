@@ -164,7 +164,7 @@ Fetches a page and returns clean content plus provenance.
 | `http_status`| The top-level response's HTTP status code, or `null` when it could not be observed              |
 | `truncated`  | Whether the content was cut to fit the token budget                                              |
 | `threats`    | Signals detected: hidden-CSS nodes and invisible-character classes; empty when none found |
-| `matches`    | When `query` is set: ranked passages with `heading`, `offset`, and `score` for citation          |
+| `matches`    | When `query` is set: ranked passages with `id`, `heading`, `offset`, `end`, and `score`         |
 | `set_aside`  | When `query` is set: how many scoring passages the relevance floor dropped; `0` otherwise        |
 | `provenance` | Content hash, canonical URL, language, word count, and author/date metadata when present         |
 
@@ -250,14 +250,18 @@ the redirect wrapper and can therefore turn `%E2%80%8B` back into a real zero-wi
 character inside the link. A backend that is unreachable, has JSON disabled, or whose every upstream engine
 is rate-limited raises an actionable error rather than reporting an empty web.
 
-### `research(query, max_sources=5, max_tokens=None)`
+### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None)`
 
 One call for "find out about X": searches, reads the top sources through the stealth
 browser, and returns the passages most relevant to `query` — ranked across **all** sources
 in a single pass, so a passage from source 4 competes fairly with one from source 1.
 
-Returns `passages` (each with `text`, `source_url`, `heading`, `score`) and `sources` (each
-with `url`, `title`, `status`, `page_status`, `threats`, `provenance`). `status` is the fetch
+Returns `passages` (each with `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`,
+`clamped`, `fence`) and `sources` (each with `url`, `title`, `status`, `page_status`,
+`threats`, `provenance`, `filtered`, `outside_domains`). `start` and `end` locate the passage in
+the source's markdown, and `text` is exactly that slice unless `clamped` says the top passage was
+cut to the budget; a passage cut from a long code block carries the block's opening line in
+`fence`. `id` is stable for the same page snapshot and span, and changes when the page does. `status` is the fetch
 outcome (`ok` / `blocked` / `timeout` / `error`); `page_status` is what a page that loaded
 actually was — the same classification `read_url` reports, so a source that returned a
 bot-challenge or a non-HTML body is visible rather than passing as `ok` — and is `null` when
@@ -273,7 +277,22 @@ A source that fails doesn't fail the call: it appears in `sources` with a status
 can see what was missed. Because search results are chosen by a third party — and
 SEO-poisoned results are a documented in-the-wild attack — every fetched URL goes through
 the same SSRF guard and hidden-text stripping as `read_url`, and each source reports what
-was stripped from it. A source that failed carries `provenance: null` — only sources that
+was stripped from it.
+
+`include_domains` reads only pages on those domains or their subdomains (several pages per
+domain are allowed then), `exclude_domains` never reads them, and `published_after`
+(`YYYY-MM-DD`) leaves out pages dated before that day; up to 50 domains per list. A page whose
+redirect lands in an excluded domain, or that is dated too early, is listed with `filtered` and
+contributes no passages; one that redirects out of the included domains is kept and marked
+`outside_domains`. `aim` (at most 200 characters) states what the evidence must show; it is
+echoed back and changes neither the search nor the ranking.
+
+`receipt` says what happened: the `executed_query` sent to the backend, the hits it returned and
+how many each included domain had (`hits_by_domain`), the hits dropped before fetching
+(`hits_outside_domains`, `hits_before_date`, `hits_same_domain`), each source counted once as
+`failed`, `not_content`, `filtered` or `usable`, sources that left the included domains
+(`outside_domains`) or had no date (`unknown_dates`), and the passages `omitted` for the budget,
+`set_aside` as weak, or `clamped`. Read it before concluding the web has no answer. A source that failed carries `provenance: null` — only sources that
 were actually read are hashed. `threats` is per-source here and capped at 10 entries per
 source, lower than `read_url`'s 50, because the fan-out multiplies it. `max_sources` is
 capped at 10.
