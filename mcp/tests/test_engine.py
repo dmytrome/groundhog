@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import io
 import json
 import os
 import subprocess
@@ -7,13 +8,17 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
+import urllib.response
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 import websockets
 
-from groundhog_mcp import cdp, engine
+from groundhog_mcp import cdp, engine, http
 from groundhog_mcp.config import Config
 
 
@@ -1220,3 +1225,77 @@ async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_clea
 
     with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
         await provider._fetch_in_target("https://example.com/", True)
+
+
+def test_json_responses_larger_than_the_default_limit_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def response(url: str, timeout: float) -> io.BytesIO:
+        return io.BytesIO(b'{"value":"' + b'x' * (5 * 1024 * 1024) + b'"}')
+
+    monkeypatch.setattr(http._opener, "open", response)
+    with pytest.raises(ValueError, match="response body exceeded"):
+        http.read_json("https://endpoint.example/", timeout=1.0)
+
+
+def test_json_responses_within_the_limit_are_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    def response(url: str, timeout: float) -> io.BytesIO:
+        return io.BytesIO(b'{"value":1}')
+
+    monkeypatch.setattr(http._opener, "open", response)
+    assert http.read_json("https://endpoint.example/", timeout=1.0) == {"value": 1}
+
+
+def test_json_fetches_refuse_redirects_to_a_different_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def response(
+        self: urllib.request.HTTPHandler, req: urllib.request.Request
+    ) -> urllib.response.addinfourl:
+        headers = Message()
+        headers["Location"] = "http://internal.example/"
+        code = 302 if req.full_url == "http://operator.example/" else 200
+        result = urllib.response.addinfourl(io.BytesIO(b"{}"), headers, req.full_url, code)
+        result.msg = "Found" if code == 302 else "OK"
+        return result
+
+    monkeypatch.setattr(urllib.request.HTTPHandler, "http_open", response)
+    with pytest.raises(urllib.error.HTTPError, match="302"):
+        http.read_json("http://operator.example/", timeout=1.0)
+
+
+async def test_an_oversized_cdp_message_fails_waiters_instead_of_being_buffered() -> None:
+    async def flood(ws: websockets.ServerConnection) -> None:
+        ws.transport.write(b"\x81\x7f" + (64 * 1024 * 1024 + 1).to_bytes(8, "big"))
+        await ws.wait_closed()
+
+    async with websockets.serve(flood, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        client = cdp.CDPClient(f"ws://127.0.0.1:{port}/")
+        await client.connect()
+        try:
+            waiter = client.expect_event("Page.loadEventFired")
+            with pytest.raises(cdp.CDPError, match="CDP connection closed"):
+                await asyncio.wait_for(waiter, timeout=5)
+        finally:
+            await client.close()
+
+
+async def test_cdp_evaluations_do_not_enable_runtime_or_console_domains() -> None:
+    methods: list[str] = []
+
+    async def answer(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            command = json.loads(raw)
+            methods.append(command["method"])
+            await ws.send(json.dumps({"id": command["id"], "result": {}}))
+
+    async with websockets.serve(answer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        client = cdp.CDPClient(f"ws://127.0.0.1:{port}/")
+        await client.connect()
+        try:
+            await client.send("Runtime.evaluate", {"expression": "1"})
+        finally:
+            await client.close()
+    assert methods == ["Runtime.evaluate"]
