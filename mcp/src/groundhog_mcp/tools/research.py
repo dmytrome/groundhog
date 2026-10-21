@@ -399,9 +399,10 @@ async def research(
             filtered = "outside_domains"
         elif after and dated and dated < after:
             filtered = "published_before"
-        elif outcome.final_url in seen or outcome.provenance["content_hash"] in seen:
+        elif outcome.status not in classify.NOT_CONTENT and (
+            outcome.final_url in seen or outcome.provenance["content_hash"] in seen
+        ):
             filtered = "duplicate"
-        seen.update((outcome.final_url, outcome.provenance["content_hash"]))
         sources.append(
             {
                 "url": outcome.final_url,
@@ -414,9 +415,6 @@ async def research(
                 "filtered": filtered,
             }
         )
-        if filtered == "duplicate":
-            counts["filtered"] += 1
-            continue
         if outcome.status in classify.NOT_CONTENT:
             # A challenge, a 404 or a non-HTML body is not this source's content, and
             # ranking it would let "Checking your browser before accessing…" compete
@@ -430,6 +428,7 @@ async def research(
             continue
         counts["usable"] += 1
         counts["undated"] += dated is None
+        seen.update((outcome.final_url, outcome.provenance["content_hash"]))
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
