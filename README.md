@@ -151,18 +151,21 @@ empty web.
 Searches, reads the top sources and ranks passages from all of them in one pass.
 
 - `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
-  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`; `fence` holds the opening
-  line of a code block a passage was cut from. `id` stays stable while the page doesn't change.
+  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`; a passage that starts
+  inside a long code block carries its opening line in `fence`. `id` stays stable while the
+  page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
   (as in `read_url`), `threats`, `provenance`, `filtered`, `outside_domains`. A failed source
   doesn't fail the call, and a challenge or error page contributes no passages.
-- One page per registrable domain, `max_sources` up to 10.
+- One page per registrable domain unless `include_domains` is set, and one source per final
+  URL; `max_sources` goes up to 10.
 
 `include_domains` reads only those domains and their subdomains, `exclude_domains` never
 reads them, and `published_after` (`YYYY-MM-DD`) drops pages dated earlier; up to 50 domains
-per list. A page that redirects into an excluded domain or is dated too early is marked
-`filtered`; one that redirects out of the included domains is kept and marked
-`outside_domains`. `aim` (up to 200 characters) says what the evidence must show and is
+per list. A page that redirects into an excluded domain or out of the included ones, is dated
+too early, or repeats a page already read is listed with `filtered` and contributes no
+passages. With many domains, the query sent to the engine names at most eight and the rest are
+filtered after the search. `aim` (up to 200 characters) says what the evidence must show and is
 echoed back without changing the search or the ranking.
 
 `receipt` holds the `executed_query`, the hits and `hits_by_domain`, the hits dropped before
