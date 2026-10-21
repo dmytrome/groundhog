@@ -8,7 +8,7 @@ from typing import Protocol
 import pytest
 
 from groundhog_mcp import cdp, document, engine, extract, retrieval, safety, search as search_module
-from groundhog_mcp.search import SearchHit
+from groundhog_mcp.search import SearchHit, serp
 from groundhog_mcp.tools import research as research_mod
 from groundhog_mcp.tools.research import research
 
@@ -57,14 +57,19 @@ def _doc(url: str, markdown: str, status: str = "ok") -> document.Document:
     )
 
 
+searched: list[str] = []
+
+
 @pytest.fixture
 def fake_web(monkeypatch):
     """Install a fake search backend and per-URL documents."""
 
     def _install(hits, docs, failures=None):
         failures = failures or {}
+        searched.clear()
 
         async def _search(query, cfg, limit):
+            searched.append(query)
             return hits[:limit], "serp"
 
         async def _fetch(url, **kwargs):
@@ -413,7 +418,8 @@ async def test_a_fragment_scoring_under_the_floor_is_not_returned(fake_web: Fake
             ),
             "https://b.com/y": _doc(
                 "https://b.com/y",
-                "# Footer\n\n" + "Site map, contact, careers, press and the legal notice. " * 4
+                "# Footer\n\n"
+                + "Site map, contact, careers, press and the legal notice. " * 4
                 + "Kitten.\n",
             ),
         },
@@ -588,3 +594,143 @@ async def test_passages_left_out_for_the_budget_mark_the_result_truncated(
 
     assert result["receipt"]["omitted"] > 0
     assert result["truncated"] is True
+
+
+async def test_a_captured_serp_is_narrowed_to_the_included_domain(fake_web: FakeWeb) -> None:
+    hits = serp.parse((_FIXTURES / "ddg_serp.html").read_text())
+    fake_web(hits, {h["url"]: _doc(h["url"], "# MCP\n\nThe protocol.") for h in hits})
+
+    result = await research("model context protocol", include_domains=["modelcontextprotocol.io"])
+
+    assert [s["url"] for s in result["sources"]] == [
+        h["url"] for h in hits if h["url"].startswith("https://modelcontextprotocol.io")
+    ]
+    assert result["receipt"]["hits_by_domain"] == {"modelcontextprotocol.io": 3}
+
+
+async def test_an_included_domain_can_fill_every_source_slot(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://isric.org/{i}") for i in range(5)]
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten", max_sources=5, include_domains=["isric.org"])
+
+    assert len(result["sources"]) == 5
+
+
+async def test_an_included_hit_far_down_the_list_is_still_read(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://other{i}.com/x") for i in range(40)]
+    hits[29] = _hit("https://isric.org/soilgrids")
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten", include_domains=["isric.org"])
+
+    assert [s["url"] for s in result["sources"]] == ["https://isric.org/soilgrids"]
+    assert result["receipt"]["hits_outside_domains"] == 39
+
+
+@pytest.mark.parametrize(
+    "url,kept",
+    [
+        ("https://isric.org/x", True),
+        ("https://www.isric.org/x", True),
+        ("https://isric.org.evil.com/x", False),
+        ("https://evil-isric.org/x", False),
+    ],
+)
+async def test_a_host_matches_a_domain_only_as_itself_or_a_subdomain(
+    fake_web: FakeWeb, url: str, kept: bool
+) -> None:
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN)})
+
+    result = await research("kitten", include_domains=["isric.org"])
+
+    assert bool(result["sources"]) is kept
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "isric.org OR site:evil.com",
+        "a) OR (b",
+        ".isric.org",
+        "isric.org.",
+        "",
+        "https://isric.org",
+        "isric.org/x",
+        "isric.org:80",
+        "*.isric.org",
+    ],
+)
+async def test_a_value_that_is_not_a_domain_is_refused(value: str) -> None:
+    with pytest.raises(safety.InvalidArgument, match="domain"):
+        await research("kitten", include_domains=[value])
+    with pytest.raises(safety.InvalidArgument, match="domain"):
+        await research("kitten", exclude_domains=[value])
+
+
+async def test_more_than_fifty_domains_are_refused() -> None:
+    with pytest.raises(safety.InvalidArgument, match="at most 50"):
+        await research("kitten", include_domains=[f"d{i}.com" for i in range(51)])
+
+
+async def test_a_domain_is_normalised_before_it_is_matched(fake_web: FakeWeb) -> None:
+    url = "https://xn--bcher-kva.de/x"
+    fake_web(
+        [_hit(url), _hit("https://isric.org/y")],
+        {url: _doc(url, _KITTEN), "https://isric.org/y": _doc("https://isric.org/y", _KITTEN)},
+    )
+
+    result = await research("kitten", include_domains=["bücher.de", " ISRIC.org "])
+
+    assert result["receipt"]["include_domains"] == ["xn--bcher-kva.de", "isric.org"]
+    assert len(result["sources"]) == 2
+
+
+async def test_the_search_gets_site_operators_and_the_ranking_does_not(fake_web: FakeWeb) -> None:
+    markdown = "# A\n\nA kitten eats meat.\n\n# B\n\nSite or isric org listed here.\n"
+    fake_web(
+        [_hit("https://isric.org/x")],
+        {"https://isric.org/x": _doc("https://isric.org/x", markdown)},
+    )
+
+    plain = await research("kitten eats meat")
+    narrowed = await research(
+        "kitten eats meat", include_domains=["isric.org", "fao.org"], exclude_domains=["x.org"]
+    )
+
+    executed = "kitten eats meat (site:isric.org OR site:fao.org) -site:x.org"
+    assert searched[-1] == executed
+    assert narrowed["receipt"]["executed_query"] == executed
+    assert narrowed["passages"] == plain["passages"]
+
+
+async def test_a_redirect_out_of_the_included_domains_is_kept_and_marked(fake_web: FakeWeb) -> None:
+    moved = _captured("cross_domain_redirect")
+    fake_web([_hit(moved.url)], {moved.url: moved})
+
+    result = await research("requests HTTP library", include_domains=["python.org"])
+
+    assert result["sources"][0]["outside_domains"] is True
+    assert result["receipt"]["outside_domains"] == 1
+    assert result["passages"]
+
+
+async def test_a_redirect_into_an_excluded_domain_is_listed_and_not_read(fake_web: FakeWeb) -> None:
+    moved = _captured("cross_domain_redirect")
+    fake_web([_hit(moved.url)], {moved.url: moved})
+
+    result = await research("requests HTTP library", exclude_domains=["pypi.org"])
+
+    assert result["sources"][0]["filtered"] == "excluded_domain"
+    assert result["receipt"]["filtered"] == 1
+    assert result["passages"] == []
+
+
+async def test_an_included_domain_with_no_hits_shows_zero(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://isric.org/x")], {"https://isric.org/x": _doc("https://isric.org/x", _KITTEN)}
+    )
+
+    result = await research("kitten", include_domains=["isric.org", "fao.org"])
+
+    assert result["receipt"]["hits_by_domain"] == {"isric.org": 1, "fao.org": 0}
