@@ -821,8 +821,9 @@ async def test_two_hits_that_land_on_one_challenge_page_are_both_not_content(
 
 
 async def test_a_later_subdomain_is_read_when_an_earlier_one_fills_the_cap(
-    fake_web: FakeWeb,
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "5000")
     hits = [_hit(f"https://docs.python.org/{i}") for i in range(7)]
     hits.append(_hit("https://peps.python.org/1"))
     fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
