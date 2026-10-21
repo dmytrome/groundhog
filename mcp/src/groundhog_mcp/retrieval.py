@@ -184,7 +184,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
                     text=piece,
                     source=source,
                     block=block,
-                    fence=lines[0][: sanitize.MAX_HEADING_CHARS]
+                    fence=lines[0].rstrip("\r")[: sanitize.MAX_HEADING_CHARS]
                     if whole_fence and number
                     else None,
                 )
@@ -320,7 +320,12 @@ def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
 
 
 def select(
-    markdown: str, query: str, max_tokens: int, *, source_url: str = "", content_hash: str = ""
+    markdown: str,
+    query: str,
+    max_tokens: int,
+    *,
+    source_url: str = "",
+    content_hash: str | None = None,
 ) -> tuple[str, list[Match], bool, int]:
     chunks = chunk_document(markdown)
     ranked, left_out, set_aside = rank(chunks, query, max_tokens, floor=RELEVANCE_FLOOR)
@@ -329,6 +334,8 @@ def select(
     # Within one document, offset order is reading order — what a caller wants to
     # read back, unlike the relevance order `rank` returns.
     spans = _spans(chunks, ranked)
+    if content_hash is None:
+        content_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     matches: list[Match] = [
         {
             "id": passage_id(source_url, content_hash, span.chunk.offset, span.end),

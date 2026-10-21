@@ -550,6 +550,21 @@ def test_a_code_block_right_after_a_prose_line_is_refenced() -> None:
     assert "needle = find_the_kitten()" in body
 
 
+def test_a_crlf_code_blocks_fence_carries_no_carriage_return() -> None:
+    markdown = ("```python\n" + _long_code() + "\n```\n").replace("\n", "\r\n")
+
+    chunks = chunk_document(markdown)
+
+    assert [c.fence for c in chunks[1:]] == ["```python"] * (len(chunks) - 1)
+
+
+def test_a_passage_id_follows_the_page_when_no_hash_is_given() -> None:
+    _, before, _, _ = select("A kitten eats meat.\n", "kitten", 20000, source_url="u")
+    _, after, _, _ = select("A kitten eats fish.\n", "kitten", 20000, source_url="u")
+
+    assert before[0]["id"] != after[0]["id"]
+
+
 def test_only_the_pieces_after_a_code_blocks_first_carry_its_fence() -> None:
     markdown = "```python\n" + _long_code() + "\n```\n"
 
