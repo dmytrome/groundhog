@@ -1,6 +1,6 @@
 import asyncio
 import re
-from collections import Counter
+from collections import Counter, deque
 from datetime import date
 from typing import Annotated, Literal, TypedDict
 from urllib.parse import urlsplit
@@ -143,17 +143,17 @@ def _per_domain(min_delay_ms: int) -> int:
 def _round_robin(
     hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
 ) -> tuple[list[SearchHit], int]:
-    queues: dict[str, list[SearchHit]] = {}
+    queues: dict[str, deque[SearchHit]] = {}
     for hit in dict((hit["url"], hit) for hit in hits).values():
         if domain := _within(hit["url"], domains):
-            queues.setdefault(domain, []).append(hit)
+            queues.setdefault(domain, deque()).append(hit)
     taken: Counter[str] = Counter()
     picked: list[SearchHit] = []
     skipped = 0
     while len(picked) < max_sources and any(queues.values()):
         for queue in queues.values():
             while queue and len(picked) < max_sources:
-                hit = queue.pop(0)
+                hit = queue.popleft()
                 registrable = engine.registrable_domain(hit["url"])
                 if taken[registrable] >= per_domain:
                     skipped += 1
