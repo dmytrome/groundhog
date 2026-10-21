@@ -803,7 +803,9 @@ async def test_the_same_page_at_a_slightly_different_url_is_read_once(fake_web: 
     assert len({p["source_url"] for p in result["passages"]}) == 1
 
 
-async def test_two_hits_that_land_on_one_challenge_page_list_it_once(fake_web: FakeWeb) -> None:
+async def test_two_hits_that_land_on_one_challenge_page_are_both_not_content(
+    fake_web: FakeWeb,
+) -> None:
     fake_web(
         [_hit("https://b.com/x"), _hit("https://c.com/x")],
         {
@@ -814,8 +816,65 @@ async def test_two_hits_that_land_on_one_challenge_page_list_it_once(fake_web: F
 
     result = await research("kitten eats meat")
 
-    assert [s["filtered"] for s in result["sources"]] == [None, "duplicate"]
-    assert result["receipt"]["not_content"] == 1
+    assert [s["filtered"] for s in result["sources"]] == [None, None]
+    assert result["receipt"]["not_content"] == 2
+
+
+async def test_a_later_subdomain_is_read_when_an_earlier_one_fills_the_cap(
+    fake_web: FakeWeb,
+) -> None:
+    hits = [_hit(f"https://docs.python.org/{i}") for i in range(7)]
+    hits.append(_hit("https://peps.python.org/1"))
+    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
+
+    result = await research(
+        "kitten eats meat", max_sources=3, include_domains=["docs.python.org", "peps.python.org"]
+    )
+
+    assert "https://peps.python.org/1" in [s["url"] for s in result["sources"]]
+
+
+async def test_the_source_limit_is_not_blamed_on_the_per_domain_cap(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://isric.org/{i}") for i in range(50)]
+    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
+
+    result = await research("kitten eats meat", max_sources=3, include_domains=["isric.org"])
+
+    assert result["receipt"]["hits_same_domain"] == 0
+
+
+async def test_a_good_read_of_a_page_that_first_came_back_blocked_is_used(
+    fake_web: FakeWeb,
+) -> None:
+    fake_web(
+        [_hit("https://b.com/x"), _hit("https://c.com/x")],
+        {
+            "https://b.com/x": _doc("https://a.com/x", "Too many requests", status="rate_limited"),
+            "https://c.com/x": _doc("https://a.com/x", _KITTEN),
+        },
+    )
+
+    result = await research("kitten eats meat")
+
+    assert [s["filtered"] for s in result["sources"]] == [None, None]
+    assert result["receipt"]["usable"] == 1
+
+
+async def test_a_page_filtered_out_does_not_block_the_same_text_elsewhere(
+    fake_web: FakeWeb,
+) -> None:
+    fake_web(
+        [_hit("https://g1.com/a"), _hit("https://g2.com/b")],
+        {
+            "https://g1.com/a": _doc("https://evil.com/a", _KITTEN),
+            "https://g2.com/b": _doc("https://g2.com/b", _KITTEN),
+        },
+    )
+
+    result = await research("kitten eats meat", exclude_domains=["evil.com"])
+
+    assert [s["filtered"] for s in result["sources"]] == ["excluded_domain", None]
+    assert result["receipt"]["usable"] == 1
 
 
 async def test_a_host_written_with_a_trailing_dot_is_still_excluded(fake_web: FakeWeb) -> None:
@@ -947,26 +1006,3 @@ async def test_captured_searxng_dates_leave_out_the_older_hits_before_fetching(
 
     assert result["receipt"]["hits_before_date"] == 3
     assert "en.wikinews.org" not in {s["url"].split("/")[2] for s in result["sources"]}
-
-
-async def test_a_later_subdomain_is_read_when_an_earlier_one_fills_the_cap(
-    fake_web: FakeWeb,
-) -> None:
-    hits = [_hit(f"https://docs.python.org/{i}") for i in range(7)]
-    hits.append(_hit("https://peps.python.org/1"))
-    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
-
-    result = await research(
-        "kitten eats meat", max_sources=3, include_domains=["docs.python.org", "peps.python.org"]
-    )
-
-    assert "https://peps.python.org/1" in [s["url"] for s in result["sources"]]
-
-
-async def test_the_source_limit_is_not_blamed_on_the_per_domain_cap(fake_web: FakeWeb) -> None:
-    hits = [_hit(f"https://isric.org/{i}") for i in range(50)]
-    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
-
-    result = await research("kitten eats meat", max_sources=3, include_domains=["isric.org"])
-
-    assert result["receipt"]["hits_same_domain"] == 0
