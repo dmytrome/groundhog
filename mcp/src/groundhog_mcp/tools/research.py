@@ -368,7 +368,6 @@ async def research(
     }
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
-    seen: set[str] = set()
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
             # Infrastructure, not a property of this source: every source would
@@ -400,7 +399,8 @@ async def research(
         elif after and dated and dated < after:
             filtered = "published_before"
         elif outcome.status not in classify.NOT_CONTENT and (
-            outcome.final_url in seen or outcome.provenance["content_hash"] in seen
+            outcome.final_url in hashes
+            or (outcome.markdown.strip() and outcome.provenance["content_hash"] in hashes.values())
         ):
             filtered = "duplicate"
         sources.append(
@@ -428,7 +428,6 @@ async def research(
             continue
         counts["usable"] += 1
         counts["undated"] += dated is None
-        seen.update((outcome.final_url, outcome.provenance["content_hash"]))
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
