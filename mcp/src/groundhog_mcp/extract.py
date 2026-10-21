@@ -32,8 +32,6 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
         include_tables=True,
     ) or ""
     doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
-    # trafilatura echoes the input url back as doc.url when no canonical link exists,
-    # so treat a match as "no canonical".
     doc_url = getattr(doc, "url", None)
     canonical = doc_url if doc_url != url else None
     meta = ExtractMeta(
