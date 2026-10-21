@@ -1,12 +1,46 @@
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import NamedTuple, TypedDict
 
 from . import sanitize
 
 _CHARS_PER_TOKEN = 4
-_WORD_RE = re.compile(r"[a-z0-9]+")
+_UNSPACED = (
+    "\u0e00-\u0eff"
+    "\u1000-\u109f"
+    "\u1100-\u11ff"
+    "\u1780-\u17ff"
+    "\u3005-\u3007"
+    "\u3040-\u30ff"
+    "\u3130-\u318f"
+    "\u3400-\u4dbf"
+    "\u4e00-\u9fff"
+    "\uac00-\ud7af"
+    "\uf900-\ufaff"
+    "\U00020000-\U0003ffff"
+)
+MARK_PLANES = (range(0x20000), range(0xE0000, 0xE1000))
+
+
+def _marks() -> str:
+    spans: list[list[int]] = []
+    for code in (code for plane in MARK_PLANES for code in plane):
+        if unicodedata.category(chr(code)).startswith("M"):
+            if spans and spans[-1][1] == code - 1:
+                spans[-1][1] = code
+            else:
+                spans.append([code, code])
+    return "".join(f"{chr(first)}-{chr(last)}" for first, last in spans)
+
+
+_MARKS = _marks()
+_UNSPACED_LETTER = rf"(?=[^\W\d_]|[{_MARKS}])[{_UNSPACED}]"
+_WORD = rf"[^\W_{_UNSPACED}]+(?:[{_MARKS}]+[^\W_{_UNSPACED}]*)*"
+_RUN_RE = re.compile(rf"{_WORD}|(?:{_UNSPACED_LETTER})+|\d+")
+_SELECTORS_RE = re.compile("[\u180b-\u180d\u180f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+_UNSPACED_RE = re.compile(_UNSPACED_LETTER)
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
@@ -38,7 +72,15 @@ class Scored(NamedTuple):
 
 
 def _tokenize(text: str) -> list[str]:
-    return _WORD_RE.findall(text.lower())
+    tokens: list[str] = []
+    normalized = _SELECTORS_RE.sub("", unicodedata.normalize("NFKC", text))
+    for run in _RUN_RE.findall(normalized.lower()):
+        if _UNSPACED_RE.match(run):
+            tokens += run
+            tokens += (run[i : i + 2] for i in range(len(run) - 1))
+        else:
+            tokens.append(run)
+    return tokens
 
 
 def _fenced_lines(lines: list[str]) -> set[int]:

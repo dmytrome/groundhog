@@ -1,6 +1,9 @@
 import random
+import sys
+import unicodedata
 from collections.abc import Iterator
 
+import pytest
 from markdown_it import MarkdownIt
 
 from groundhog_mcp import extract, retrieval
@@ -352,3 +355,93 @@ def test_a_fence_line_in_a_real_page_body_costs_no_heading_after_it():
     assert "\n~~~\n" in markdown
     headings = [c.heading for c in chunk_document(markdown)]
     assert set(headings) == {"Intro", "Install", "Notes"}
+
+
+@pytest.mark.parametrize(
+    "doc,query,kept,dropped",
+    [
+        (
+            "# Кошки\n\nКошки спят весь день.\n\n# Собаки\n\nСобаки охраняют дом.\n",
+            "кошки",
+            "спят",
+            "охраняют",
+        ),
+        ("# 猫\n\n猫喜欢睡觉。\n\n# 狗\n\n狗喜欢看家。\n", "猫", "睡觉", "看家"),
+        ("# 猫\n\n猫は一日中寝る。\n\n# 犬\n\n犬は家を守る。\n", "猫", "寝る", "守る"),
+        (
+            "# A\n\nमुझे किताब पसंद है।\n\n# B\n\nकुत्ता बाहर है।\n",
+            "किताब",
+            "पसंद",
+            "बाहर",
+        ),
+        ("# A\n\nแมวนอนทั้งวัน\n\n# B\n\nหมาเฝ้าบ้าน\n", "แมว", "นอน", "เฝ้า"),
+        ("# A\n\n고양이는 잠을 잔다.\n\n# B\n\n개는 집을 지킨다.\n", "고양이", "잠을", "지킨다"),
+        ("# A\n\n𠀋𠀌很少见。\n\n# B\n\n狗喜欢看家。\n", "𠀋", "很少", "看家"),
+        ("# A\n\nｶﾀｶﾅで書く。\n\n# B\n\n犬は家を守る。\n", "カタカナ", "書く", "守る"),
+        ("# A\n\nCafe\u0301 serves coffee.\n\n# B\n\nThe tea house.\n", "café", "coffee", "tea"),
+        ("# A\n\nปี ๒๕๖๗ ฝนตก\n\n# B\n\nปี ๒๕๐๐ บ้าน ๖๗\n", "๒๕๖๗", "ฝนตก", "บ้าน"),
+    ],
+    ids=[
+        "cyrillic",
+        "chinese",
+        "japanese",
+        "hindi",
+        "thai",
+        "korean",
+        "han-beyond-the-bmp",
+        "half-width-katakana",
+        "decomposed-accent",
+        "thai-number",
+    ],
+)
+def test_passages_in_a_non_latin_script_are_ranked_against_the_query(
+    doc: str, query: str, kept: str, dropped: str
+) -> None:
+    body, _, _, _ = select(doc, query, max_tokens=10000)
+
+    assert kept in body
+    assert dropped not in body
+
+
+@pytest.mark.parametrize(
+    "query,apart,compound",
+    [
+        ("大学", "大雨，学生都回家了。", "我在东京的一所大学读了四年书。"),
+        ("時々", "時に雨、人々が来る。", "今日は午後から時々雨が降るでしょう。"),
+        ("葛飾", "葛の葉と、飾り。", "東京都の葛\U000e0100飾区に住んでいる人は多いです。"),
+    ],
+    ids=["chinese", "japanese-repetition-mark", "ideographic-variation-selector"],
+)
+def test_a_compound_outranks_its_characters_appearing_apart(
+    query: str, apart: str, compound: str
+) -> None:
+    chunks = chunk_document(f"# A\n\n{apart}\n\n# B\n\n{compound}\n")
+
+    ranked, _, _ = rank(chunks, query, max_tokens=10000)
+
+    assert compound in ranked[0].chunk.text
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["。", "・", "๏", "☀\ufe0f"],
+    ids=["ideographic-stop", "middle-dot", "thai-mark", "emoji-with-variation-selector"],
+)
+def test_a_query_of_punctuation_alone_matches_no_passage(query: str) -> None:
+    doc = "# A\n\n東京・大阪。\n\n# B\n\n๏ แมวนอน, I love you \u2764\ufe0f\n"
+
+    body, matches, _, _ = select(doc, query, max_tokens=10000)
+
+    assert (body, matches) == ("", [])
+
+
+def test_the_mark_scan_covers_every_combining_mark_in_unicode() -> None:
+    scanned = {code for plane in retrieval.MARK_PLANES for code in plane}
+
+    outside = [
+        hex(code)
+        for code in range(sys.maxunicode + 1)
+        if unicodedata.category(chr(code)).startswith("M") and code not in scanned
+    ]
+
+    assert outside == []
