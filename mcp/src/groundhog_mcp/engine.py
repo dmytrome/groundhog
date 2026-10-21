@@ -961,7 +961,10 @@ class EngineProvider:
             timeout=_EVAL_TIMEOUT_S,
         )
         if "exceptionDetails" in res:
-            detail = sanitize.clean_field(str(res["exceptionDetails"]), sanitize.MAX_ERROR_CHARS)
+            details = res["exceptionDetails"]
+            thrown = details.get("exception") if isinstance(details, dict) else None
+            message = thrown.get("description") if isinstance(thrown, dict) else None
+            detail = sanitize.clean_field(str(message or details), sanitize.MAX_ERROR_CHARS)
             raise CDPError(detail or "page evaluation failed")
         return res.get("result", {}).get("value")
 

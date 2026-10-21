@@ -1389,6 +1389,29 @@ def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     assert result["canonical"] is None
 
 
+async def test_a_real_page_exception_is_reported_by_its_message() -> None:
+    details = json.loads((_FIXTURES / "cdp_exception_details.json").read_text())
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            await ws.send(json.dumps({
+                "id": request["id"],
+                "result": {"result": {"type": "object"}, "exceptionDetails": details},
+            }))
+
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            with pytest.raises(cdp.CDPError) as caught:
+                await provider._eval("tab", "throw new Error('x'.repeat(50))")
+        finally:
+            await provider._cdp.close()
+    assert str(caught.value).startswith("Error: " + "x" * 50)
+
+
 async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     async def silent(ws: websockets.ServerConnection) -> None:
         await ws.wait_closed()

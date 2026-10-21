@@ -1,0 +1,14 @@
+{
+ "exceptionId": 1,
+ "text": "Uncaught",
+ "lineNumber": 0,
+ "columnNumber": 0,
+ "scriptId": "3",
+ "exception": {
+  "type": "object",
+  "subtype": "error",
+  "className": "Error",
+  "description": "Error: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n    at <anonymous>:1:7",
+  "objectId": "-3503524860246010272.1.2"
+ }
+}
