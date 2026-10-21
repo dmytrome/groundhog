@@ -25,6 +25,7 @@ _DEFAULT_MAX_SOURCES = 5
 _MAX_SOURCES = 10
 _OVERFETCH = 3  # headroom for the same-domain hits that dedupe discards
 _DEADLINE_S = 90.0
+_STARTS_WITHIN_S = _DEADLINE_S / 3
 _CANCEL_DRAIN_S = 5.0
 # Per source, not per page: the fan-out multiplies the report by `max_sources`,
 # and `threats` sits outside the caller's token budget.
@@ -66,7 +67,6 @@ class Source(TypedDict):
     provenance: provenance.Provenance | None
     error: str | None
     filtered: Filter | None
-    outside_domains: bool
 
 
 class Receipt(TypedDict):
@@ -118,9 +118,9 @@ def _domain(value: str) -> str:
     return domain
 
 
-def _domains(values: list[str] | None, name: str) -> list[str]:
-    if values and len(values) > _MAX_DOMAINS:
-        raise safety.InvalidArgument(f"{name} takes at most {_MAX_DOMAINS} domains")
+def _domains(values: list[str] | None, name: str, most: int) -> list[str]:
+    if values and len(values) > most:
+        raise safety.InvalidArgument(f"{name} takes at most {most} domains")
     return list(dict.fromkeys(_domain(value) for value in values or []))
 
 
@@ -134,25 +134,33 @@ def _within(url: str, domains: list[str]) -> str | None:
 
 
 def _per_domain(min_delay_ms: int) -> int:
-    return _MAX_SOURCES if not min_delay_ms else 1 + int(_DEADLINE_S * 1000 / 3 / min_delay_ms)
+    if min_delay_ms <= 0:
+        return _MAX_SOURCES
+    return 1 + int(_STARTS_WITHIN_S * 1000 / min_delay_ms)
 
 
 def _round_robin(
     hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
-) -> list[SearchHit]:
+) -> tuple[list[SearchHit], int]:
     queues: dict[str, list[SearchHit]] = {}
+    taken: dict[str, int] = {}
+    skipped = 0
     for hit in dict((hit["url"], hit) for hit in hits).values():
         domain = _within(hit["url"], domains)
-        if domain:
-            queue = queues.setdefault(engine.registrable_domain(hit["url"]), [])
-            if len(queue) < per_domain:
-                queue.append(hit)
+        if not domain:
+            continue
+        registrable = engine.registrable_domain(hit["url"])
+        if taken.get(registrable, 0) >= per_domain:
+            skipped += 1
+            continue
+        taken[registrable] = taken.get(registrable, 0) + 1
+        queues.setdefault(domain, []).append(hit)
     picked: list[SearchHit] = []
     while len(picked) < max_sources and any(queues.values()):
         for queue in queues.values():
             if queue and len(picked) < max_sources:
                 picked.append(queue.pop(0))
-    return picked
+    return picked, skipped
 
 
 def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], int]:
@@ -260,7 +268,7 @@ async def research(
         Field(
             description=(
                 f"Read only pages on these domains or their subdomains (at most "
-                f"{_MAX_DOMAINS}), e.g. a standards body or the vendor's docs. Several pages "
+                f"{_SITE_TERMS}), e.g. a standards body or the vendor's docs. Several pages "
                 "from one domain may be read."
             )
         ),
@@ -308,13 +316,12 @@ async def research(
     after = _date(published_after)
     if published_after is not None and (after is None or len(published_after) != 10):
         raise safety.InvalidArgument("published_after must be a date as YYYY-MM-DD")
-    included = _domains(include_domains, "include_domains")
-    excluded = _domains(exclude_domains, "exclude_domains")
+    included = _domains(include_domains, "include_domains", _SITE_TERMS)
+    excluded = _domains(exclude_domains, "exclude_domains", _MAX_DOMAINS)
     executed = query
-    sites = included if len(included) <= _SITE_TERMS else []
-    if sites:
-        executed += " (" + " OR ".join(f"site:{d}" for d in sites) + ")"
-    executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(sites)])
+    if included:
+        executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
+    executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(included)])
     cfg = load_config()
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
@@ -344,8 +351,7 @@ async def research(
         if not (after and (dated := _date(hit["published"])) and dated < after)
     ]
     if included:
-        chosen = _round_robin(kept, included, capped, _per_domain(cfg.min_delay_ms))
-        same_domain = 0
+        chosen, same_domain = _round_robin(kept, included, capped, _per_domain(cfg.min_delay_ms))
     else:
         chosen, same_domain = _diverse(kept, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
@@ -361,6 +367,7 @@ async def research(
     }
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
+    seen: set[str] = set()
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
             # Infrastructure, not a property of this source: every source would
@@ -379,7 +386,6 @@ async def research(
                     "provenance": None,
                     "error": detail,
                     "filtered": None,
-                    "outside_domains": False,
                 }
             )
             continue
@@ -392,8 +398,9 @@ async def research(
             filtered = "outside_domains"
         elif after and dated and dated < after:
             filtered = "published_before"
-        elif outcome.final_url in hashes:
+        elif outcome.final_url in seen or outcome.provenance["content_hash"] in seen:
             filtered = "duplicate"
+        seen.update((outcome.final_url, outcome.provenance["content_hash"]))
         sources.append(
             {
                 "url": outcome.final_url,
@@ -404,9 +411,11 @@ async def research(
                 "provenance": outcome.provenance,
                 "error": None,
                 "filtered": filtered,
-                "outside_domains": outside,
             }
         )
+        if filtered == "duplicate":
+            counts["filtered"] += 1
+            continue
         if outcome.status in classify.NOT_CONTENT:
             # A challenge, a 404 or a non-HTML body is not this source's content, and
             # ranking it would let "Checking your browser before accessing…" compete
