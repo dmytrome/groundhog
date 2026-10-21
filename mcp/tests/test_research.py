@@ -466,7 +466,10 @@ async def test_a_passage_id_changes_when_its_page_changes(fake_web: FakeWeb) -> 
 async def test_identical_text_on_two_pages_gets_two_ids(fake_web: FakeWeb) -> None:
     fake_web(
         [_hit("https://a.com/x"), _hit("https://b.com/y")],
-        {url: _doc(url, _KITTEN) for url in ("https://a.com/x", "https://b.com/y")},
+        {
+            "https://a.com/x": _doc("https://a.com/x", _KITTEN),
+            "https://b.com/y": _doc("https://b.com/y", _KITTEN + "\n# Other\n\nDogs bark.\n"),
+        },
     )
 
     result = await research("kitten eats meat")
@@ -674,9 +677,14 @@ async def test_a_value_that_is_not_a_domain_is_refused(value: str) -> None:
         await research("kitten", exclude_domains=[value])
 
 
-async def test_more_than_fifty_domains_are_refused() -> None:
+async def test_more_than_fifty_excluded_domains_are_refused() -> None:
     with pytest.raises(safety.InvalidArgument, match="at most 50"):
-        await research("kitten", include_domains=[f"d{i}.com" for i in range(51)])
+        await research("kitten", exclude_domains=[f"d{i}.com" for i in range(51)])
+
+
+async def test_more_than_eight_included_domains_are_refused() -> None:
+    with pytest.raises(safety.InvalidArgument, match="at most 8"):
+        await research("kitten", include_domains=[f"d{i}.com" for i in range(9)])
 
 
 async def test_a_domain_is_normalised_before_it_is_matched(fake_web: FakeWeb) -> None:
@@ -718,7 +726,6 @@ async def test_a_redirect_out_of_the_included_domains_is_listed_and_not_read(
 
     result = await research("requests HTTP library", include_domains=["python.org"])
 
-    assert result["sources"][0]["outside_domains"] is True
     assert result["sources"][0]["filtered"] == "outside_domains"
     assert result["receipt"]["outside_domains"] == 1
     assert result["receipt"]["filtered"] == 1
@@ -754,6 +761,61 @@ async def test_one_included_domain_is_read_no_more_often_than_the_deadline_allow
     result = await research("kitten eats meat", max_sources=10, include_domains=["isric.org"])
 
     assert len(result["sources"]) == 7
+    assert result["receipt"]["hits_same_domain"] == 3
+
+
+async def test_a_negative_delay_does_not_stop_an_included_domain_being_read(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "-1")
+    url = "https://isric.org/x"
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN)})
+
+    result = await research("kitten eats meat", include_domains=["isric.org"])
+
+    assert len(result["sources"]) == 1
+
+
+async def test_included_subdomains_of_one_site_take_turns(fake_web: FakeWeb) -> None:
+    hits = [_hit(f"https://docs.python.org/{i}") for i in range(6)]
+    hits.append(_hit("https://peps.python.org/1"))
+    fake_web(hits, {h["url"]: _doc(h["url"], f"{_KITTEN}\n{h['url']}\n") for h in hits})
+
+    result = await research(
+        "kitten eats meat", max_sources=3, include_domains=["docs.python.org", "peps.python.org"]
+    )
+
+    assert "https://peps.python.org/1" in [s["url"] for s in result["sources"]]
+
+
+async def test_the_same_page_at_a_slightly_different_url_is_read_once(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://b.com/x"), _hit("https://c.com/x")],
+        {
+            "https://b.com/x": _doc("https://a.com/x", _KITTEN),
+            "https://c.com/x": _doc("https://a.com/x/", _KITTEN),
+        },
+    )
+
+    result = await research("kitten eats meat")
+
+    assert [s["filtered"] for s in result["sources"]] == [None, "duplicate"]
+    assert len({p["source_url"] for p in result["passages"]}) == 1
+
+
+async def test_two_hits_that_land_on_one_challenge_page_list_it_once(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://b.com/x"), _hit("https://c.com/x")],
+        {
+            "https://b.com/x": _doc("https://a.com/x", "Checking your browser", status="challenge"),
+            "https://c.com/x": _doc("https://a.com/x", "Checking your browser", status="challenge"),
+        },
+    )
+
+    result = await research("kitten eats meat")
+
+    assert [s["filtered"] for s in result["sources"]] == [None, "duplicate"]
+    assert result["receipt"]["not_content"] == 1
 
 
 async def test_a_host_written_with_a_trailing_dot_is_still_excluded(fake_web: FakeWeb) -> None:
@@ -775,17 +837,6 @@ async def test_a_hit_with_a_malformed_host_does_not_fail_the_call(fake_web: Fake
     result = await research("kitten eats meat", include_domains=["isric.org"])
 
     assert [s["url"] for s in result["sources"]] == ["https://isric.org/x"]
-
-
-async def test_many_included_domains_are_filtered_here_rather_than_sent_to_the_engine(
-    fake_web: FakeWeb,
-) -> None:
-    fake_web([], {})
-    domains = [f"site{i}.org" for i in range(20)]
-
-    result = await research("kitten", include_domains=domains, exclude_domains=["evil.com"])
-
-    assert result["receipt"]["executed_query"] == "kitten -site:evil.com"
 
 
 async def test_the_engine_gets_at_most_eight_site_terms(fake_web: FakeWeb) -> None:
