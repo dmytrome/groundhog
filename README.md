@@ -159,7 +159,8 @@ Searches, reads the top sources and ranks passages from all of them in one pass.
   (as in `read_url`), `threats`, `provenance`, `filtered`. A failed source doesn't fail the
   call. A challenge, an error page or a page with no text (whose `page_status` stays `ok`)
   counts as `not_content` and contributes no passages.
-- One page per registrable domain unless `include_domains` is set; `max_sources` goes up to 10.
+- One page per registrable domain unless `include_domains` is set, and then no more pages
+  per site than `GROUNDHOG_MAX_CONCURRENT_PAGES`; `max_sources` goes up to 10.
 
 `include_domains` reads only those domains and their subdomains, `exclude_domains` never
 reads them, and `published_after` (`YYYY-MM-DD`) drops pages dated earlier. Up to 8 domains

@@ -617,7 +617,10 @@ async def test_a_captured_serp_is_narrowed_to_the_included_domain(fake_web: Fake
     assert result["receipt"]["hits_by_domain"] == {"modelcontextprotocol.io": 3}
 
 
-async def test_an_included_domain_can_fill_every_source_slot(fake_web: FakeWeb) -> None:
+async def test_an_included_domain_can_fill_every_source_slot(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_MAX_CONCURRENT_PAGES", "5")
     hits = [_hit(f"https://isric.org/{i}") for i in range(5)]
     fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
 
@@ -754,6 +757,7 @@ async def test_one_included_domain_is_read_no_more_often_than_the_deadline_allow
     fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "5000")
+    monkeypatch.setenv("GROUNDHOG_MAX_CONCURRENT_PAGES", "10")
     hits = [_hit(f"https://isric.org/{i}") for i in range(10)]
     fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
 
@@ -761,6 +765,19 @@ async def test_one_included_domain_is_read_no_more_often_than_the_deadline_allow
 
     assert len(result["sources"]) == 7
     assert result["receipt"]["hits_same_domain"] == 3
+
+
+async def test_one_included_domain_is_read_no_more_often_than_there_are_page_slots(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "5000")
+    monkeypatch.setenv("GROUNDHOG_MAX_CONCURRENT_PAGES", "4")
+    hits = [_hit(f"https://isric.org/{i}") for i in range(10)]
+    fake_web(hits, {h["url"]: _doc(h["url"], _KITTEN) for h in hits})
+
+    result = await research("kitten eats meat", max_sources=10, include_domains=["isric.org"])
+
+    assert len(result["sources"]) == 4
 
 
 async def test_a_negative_delay_does_not_stop_an_included_domain_being_read(
