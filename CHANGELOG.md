@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-21
+
+### Added
+
+- `research` takes `include_domains` (up to 8), `exclude_domains` (up to 50) and
+  `published_after` (`YYYY-MM-DD`). Domains match as a browser writes them, subdomains
+  included.
+- `research` takes `aim`, the evidence the caller is after, and echoes it back.
+- `research` returns a `receipt`: the query sent to the engine, where every hit and every
+  source went, and which passages were left out, set aside or clamped.
+- Every passage has an `id`, `start` and `end` tied to the page it came from. `read_url`
+  with `query` returns the same ids in `matches`.
+- A passage cut from a long code block carries the block's opening line in `fence`.
+
+### Changed
+
+- Pages are cut on line breaks only, into pieces of at most 2,400 characters, and a passage
+  too long for the budget is skipped for the next one that fits.
+- A source that redirects out of the included domains, is dated too early, repeats a page
+  already used, or has no text is listed but adds no passages.
+- With `include_domains`, one site gets no more pages than `GROUNDHOG_MAX_CONCURRENT_PAGES`.
+- The README is half its former length.
+
+### Removed
+
+- `outside_domains` on each source. `filtered: "outside_domains"` says the same thing.
+
+### Fixed
+
+- A search hit with a malformed host is dropped instead of failing `search`.
+
 ## [0.17.2] - 2026-10-21
 
 ### Fixed
@@ -910,6 +941,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.18.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.0
 [0.17.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.2
 [0.17.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.1
 [0.17.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.0
