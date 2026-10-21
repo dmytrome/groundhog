@@ -44,7 +44,7 @@ _SELECTORS_RE = re.compile("[\u180b-\u180d\u180f\ufe00-\ufe0f\U000e0100-\U000e01
 _UNSPACED_RE = re.compile(_UNSPACED_LETTER)
 _HEADING_RE = re.compile(r"^#{1,6}\s+")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t\r]*$")
 SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
 RELEVANCE_FLOOR = 0.5
 _MAX_CHUNK_CHARS = 2400
@@ -102,7 +102,7 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _fenced_lines(lines: list[str]) -> set[int]:
+def _fenced_lines(lines: list[str]) -> dict[int, int]:
     closers: list[tuple[str, int]] = []
     for line in lines:
         closing = _FENCE_CLOSE_RE.match(line)
@@ -114,7 +114,7 @@ def _fenced_lines(lines: list[str]) -> set[int]:
         for key, longest in ahead.items():
             longest[index] = max(longest[index + 1], size) if key == char else longest[index + 1]
 
-    inside: set[int] = set()
+    inside: dict[int, int] = {}
     index = 0
     while index < len(lines):
         opening = _FENCE_OPEN_RE.match(lines[index])
@@ -130,7 +130,7 @@ def _fenced_lines(lines: list[str]) -> set[int]:
             for i in range(index + 1, len(lines))
             if closers[i][0] == run[0] and closers[i][1] >= len(run)
         )
-        inside.update(range(index, closed_at + 1))
+        inside.update(dict.fromkeys(range(index, closed_at + 1), index))
         index = closed_at + 1
     return inside
 
@@ -174,14 +174,9 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
             return
         text = "\n".join(lines)
         pieces = _pieces(text)
-        whole_fence = (
-            len(pieces) > 1
-            and {first, first + len(lines) - 1} <= fenced
-            and _FENCE_OPEN_RE.match(lines[0]) is not None
-            and _FENCE_CLOSE_RE.match(lines[-1]) is not None
-        )
+        whole_fence = len(pieces) > 1 and fenced.get(first) == first
         start = offset
-        for piece in pieces:
+        for number, piece in enumerate(pieces):
             chunks.append(
                 Chunk(
                     heading=heading,
@@ -189,7 +184,9 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
                     text=piece,
                     source=source,
                     block=block,
-                    fence=lines[0] if whole_fence else None,
+                    fence=lines[0][: sanitize.MAX_HEADING_CHARS]
+                    if whole_fence and number
+                    else None,
                 )
             )
             start += len(piece)
@@ -201,9 +198,13 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
         start = pos
         pos += len(raw)
         if index in fenced:
+            if fenced[index] == index:
+                flush()
             if not lines:
                 offset, first = start, index
             lines.append(line)
+            if fenced.get(index + 1) != fenced[index]:
+                flush()
         elif not line.strip():
             flush()
         elif _HEADING_RE.match(line):
@@ -291,8 +292,11 @@ class _Span(NamedTuple):
 def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
     block_end = {c.block: c.offset + len(c.text) for c in chunks}
     block_start: dict[int, int] = {}
+    fences: dict[int, str] = {}
     for c in chunks:
         block_start.setdefault(c.block, c.offset)
+        if c.fence is not None:
+            fences[c.block] = c.fence
     spans: list[_Span] = []
     for s in sorted(ranked, key=lambda s: s.chunk.offset):
         end = s.chunk.offset + len(s.chunk.text)
@@ -303,7 +307,7 @@ def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
             spans.append(_Span(s.chunk, end, s.chunk.text, s.score))
     fenced: list[_Span] = []
     for span in spans:
-        text, fence = span.text, span.chunk.fence
+        text, fence = span.text, fences.get(span.chunk.block)
         if fence is not None:
             opening = _FENCE_OPEN_RE.match(fence)
             assert opening
