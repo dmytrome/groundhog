@@ -7,6 +7,7 @@ from groundhog_mcp.safety import (
     is_blocked_ip,
     redacted_url,
     safe_detail,
+    safe_url,
 )
 
 
@@ -72,3 +73,54 @@ def test_a_failure_detail_a_page_can_choose_is_bounded():
 
 def test_an_ipv6_address_keeps_its_brackets_when_redacted():
     assert redacted_url("http://[::1]:9222/?token=secret") == "http://[::1]:9222"
+
+
+@pytest.mark.parametrize("value", ["user:secret@host:abc", "//user:secret@host:abc"])
+def test_misconfigured_url_redaction_drops_credentials(value: str) -> None:
+    assert redacted_url(value) == "host:abc"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://ex.com/a\u200bb",
+        "https://ex.com/a\nb",
+        "https://ex.com/" + "x" * 3000,
+        "javascript:alert(1)",
+        "ftp://ex.com/path",
+        "https://user:secret@ex.com/",
+        "https:///missing-host",
+        "http://[::1/path",
+    ],
+)
+def test_unsafe_citations_are_dropped_instead_of_rewritten(value: str) -> None:
+    assert safe_url(value) is None
+
+
+def test_a_safe_citation_preserves_its_exact_url() -> None:
+    value = "https://ex.com/a%20b?x=1#part"
+    assert safe_url(value) == value
+
+
+def test_blocked_address_details_are_suppressed() -> None:
+    assert safe_detail(BlockedURLError("internal.example -> 10.0.0.1")) == "blocked by SSRF policy"
+
+
+def test_page_chosen_error_details_are_sanitized() -> None:
+    assert safe_detail(ValueError("bad\u200b\ntext")) == "ValueError: bad text"
+
+
+def test_redaction_keeps_only_scheme_host_and_port() -> None:
+    assert redacted_url("https://user:secret@ex.com:8443/path?token=private#fragment") == (
+        "https://ex.com:8443"
+    )
+
+
+@pytest.mark.parametrize("value", ["ftp://ex.com/", "https://user:secret@ex.com/", "https:///x"])
+async def test_citations_and_fetches_reject_the_same_unsafe_url_rules(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", "false")
+    assert safe_url(value) is None
+    with pytest.raises(BlockedURLError):
+        await check_url(value, load_config())

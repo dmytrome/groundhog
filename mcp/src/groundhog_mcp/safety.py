@@ -10,24 +10,18 @@ _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 class CallerFacingError(Exception):
-    """A failure whose message was written to be read by the caller.
-
-    The MCP boundary relays the message of these and withholds every other, so the
-    decision is made where the message is written rather than inferred from a type a
-    library might also raise.
-    """
+    pass
 
 
 class InvalidArgument(CallerFacingError, ValueError):
-    """An argument the caller can correct. Also a `ValueError` for direct callers."""
+    pass
 
 
 class BlockedURLError(Exception):
-    """Raised when a URL is disallowed by the SSRF guard."""
+    pass
 
 
 def _url_fault(parsed: ParseResult) -> str | None:
-    """Why this URL may not be used, or None. The rules that need no I/O."""
     if parsed.scheme not in ALLOWED_SCHEMES:
         return f"scheme not allowed: {parsed.scheme!r}"
     if parsed.username or parsed.password:
@@ -38,13 +32,6 @@ def _url_fault(parsed: ParseResult) -> str | None:
 
 
 def safe_url(url: object) -> str | None:
-    """A URL that may be handed to a model as a citation, or nothing.
-
-    Never rewritten: a truncated or de-escaped URL is still a valid-looking URL
-    pointing somewhere else, so cleaning either leaves it identical or discards it.
-    Shares `_url_fault` with `check_url`, so a rule added once applies to every
-    model-facing URL whether it came from a page, a search engine or a redirect.
-    """
     cleaned = sanitize.clean_field(url, sanitize.MAX_URL_CHARS)
     if cleaned is None or cleaned != url:
         return None
@@ -55,38 +42,21 @@ def safe_url(url: object) -> str | None:
 
 
 def redacted_url(url: str) -> str:
-    """A URL reduced to scheme, host and port — enough to diagnose, safe to echo.
-
-    `cdp_url` is reported by `status` and quoted in the remediation hint, so it
-    lands in model context and transcripts. A hosted browser endpoint commonly
-    carries its credential in userinfo or a query parameter; `config` already
-    refuses to echo `SEARXNG_URL` for the same reason.
-    """
     parts = urlparse(url)
     host = parts.hostname
     try:
-        port = parts.port  # lazily parsed, so this is what raises on a bad value
+        port = parts.port
     except ValueError:
         host = port = None
     if host and parts.scheme:
         shown = f"[{host}]" if ":" in host else host
         return f"{parts.scheme}://{shown}{f':{port}' if port else ''}"
-    # No scheme, or unparseable — `CDP_URL=127.0.0.1:9222` is a common misconfiguration
-    # and `urlparse` reads the host as the scheme. Show it, since the operator has to
-    # fix it, but drop anything before an `@` so a credential cannot ride along.
     return sanitize.clean_field(url.rsplit("@", 1)[-1], sanitize.MAX_URL_CHARS) or "(unset)"
 
 
 def safe_detail(exc: BaseException) -> str:
-    """The failure text that may be shown to a model.
-
-    A guard message names the host and the address it resolved to, so echoing it
-    publishes internal topology into model context. A page can also choose the
-    text of an exception it provokes — the evals run in its own world. Neither
-    belongs in a tool result verbatim, and every tool needs the same answer.
-    """
     if isinstance(exc, BlockedURLError):
-        return _BLOCKED_MESSAGE  # the host the caller asked for is already known to them
+        return _BLOCKED_MESSAGE
     if isinstance(exc, TimeoutError):
         return "fetch timed out"
     detail = sanitize.clean_field(f"{type(exc).__name__}: {exc}", sanitize.MAX_ERROR_CHARS)
