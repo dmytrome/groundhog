@@ -368,6 +368,7 @@ async def research(
     }
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
+    used: set[str] = set()
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
             # Infrastructure, not a property of this source: every source would
@@ -390,6 +391,7 @@ async def research(
             )
             continue
         dated = _date(outcome.provenance["published"]) or _date(hit["published"])
+        empty = outcome.status in classify.NOT_CONTENT or not outcome.markdown.strip()
         outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
         if _within(outcome.final_url, excluded):
@@ -398,9 +400,8 @@ async def research(
             filtered = "outside_domains"
         elif after and dated and dated < after:
             filtered = "published_before"
-        elif outcome.status not in classify.NOT_CONTENT and (
-            outcome.final_url in hashes
-            or (outcome.markdown.strip() and outcome.provenance["content_hash"] in hashes.values())
+        elif not empty and (
+            outcome.final_url in hashes or outcome.provenance["content_hash"] in used
         ):
             filtered = "duplicate"
         sources.append(
@@ -415,7 +416,7 @@ async def research(
                 "filtered": filtered,
             }
         )
-        if outcome.status in classify.NOT_CONTENT:
+        if empty:
             # A challenge, a 404 or a non-HTML body is not this source's content, and
             # ranking it would let "Checking your browser before accessing…" compete
             # for the caller's token budget against real passages. The source still
@@ -429,6 +430,7 @@ async def research(
         counts["usable"] += 1
         counts["undated"] += dated is None
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
+        used.add(outcome.provenance["content_hash"])
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the

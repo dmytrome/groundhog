@@ -156,7 +156,8 @@ Searches, reads the top sources and ranks passages from all of them in one pass.
   page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
   (as in `read_url`), `threats`, `provenance`, `filtered`. A failed source doesn't fail the
-  call, and a challenge or error page contributes no passages.
+  call, and a challenge, an error page or a page with no text counts as
+  `not_content` and contributes no passages.
 - One page per registrable domain unless `include_domains` is set; `max_sources` goes up to 10.
 
 `include_domains` reads only those domains and their subdomains, `exclude_domains` never

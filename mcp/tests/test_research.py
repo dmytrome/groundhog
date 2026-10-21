@@ -1009,12 +1009,15 @@ async def test_captured_searxng_dates_leave_out_the_older_hits_before_fetching(
     assert "en.wikinews.org" not in {s["url"].split("/")[2] for s in result["sources"]}
 
 
-async def test_two_pages_that_both_extract_to_nothing_are_not_duplicates(
-    fake_web: FakeWeb,
+@pytest.mark.parametrize("markdown", ["", "\n  \n"])
+async def test_two_pages_that_extract_to_nothing_are_not_content(
+    fake_web: FakeWeb, markdown: str
 ) -> None:
-    pages = {"https://a.com/x": "", "https://b.com/y": ""}
-    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+    pages = ["https://a.com/x", "https://b.com/y"]
+    fake_web([_hit(url) for url in pages], {url: _doc(url, markdown) for url in pages})
 
     result = await research("kitten eats meat")
 
     assert [s["filtered"] for s in result["sources"]] == [None, None]
+    assert result["receipt"]["not_content"] == 2
+    assert result["receipt"]["usable"] == 0
