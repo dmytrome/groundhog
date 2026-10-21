@@ -23,7 +23,10 @@ def _select(
     markdown: str, query: str, max_tokens: int
 ) -> tuple[str, list[retrieval.Match], bool, int]:
     content_hash = hashlib.sha256(markdown.encode()).hexdigest()
-    return select(markdown, query, max_tokens, content_hash=content_hash)
+    return select(
+        markdown, query, max_tokens, source_url="https://ex.com/p", content_hash=content_hash
+    )
+
 
 DOC = """# Intro
 

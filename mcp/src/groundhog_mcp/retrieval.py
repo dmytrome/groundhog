@@ -324,7 +324,7 @@ def select(
     query: str,
     max_tokens: int,
     *,
-    source_url: str = "",
+    source_url: str,
     content_hash: str,
 ) -> tuple[str, list[Match], bool, int]:
     chunks = chunk_document(markdown)
