@@ -24,18 +24,20 @@ class FakeWeb(Protocol):
     ) -> None: ...
 
 
-def _hit(url: str) -> SearchHit:
+def _hit(url: str, published: str | None = None) -> SearchHit:
     return {
         "title": f"T {url}",
         "url": url,
         "snippet": "s",
         "engine": "e",
         "score": 1.0,
-        "published": None,
+        "published": published,
     }
 
 
-def _doc(url: str, markdown: str, status: str = "ok") -> document.Document:
+def _doc(
+    url: str, markdown: str, status: str = "ok", published: str | None = None
+) -> document.Document:
     return document.Document(
         markdown=markdown,
         title=f"T {url}",
@@ -49,7 +51,7 @@ def _doc(url: str, markdown: str, status: str = "ok") -> document.Document:
             "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
             "word_count": len(markdown.split()),
             "author": None,
-            "published": None,
+            "published": published,
             "modified": None,
             "canonical": None,
             "language": "en",
@@ -734,3 +736,70 @@ async def test_an_included_domain_with_no_hits_shows_zero(fake_web: FakeWeb) -> 
     result = await research("kitten", include_domains=["isric.org", "fao.org"])
 
     assert result["receipt"]["hits_by_domain"] == {"isric.org": 1, "fao.org": 0}
+
+
+async def test_a_hit_dated_before_the_bound_is_never_fetched(fake_web: FakeWeb) -> None:
+    fake_web(
+        [_hit("https://old.com/x", "2025-01-01"), _hit("https://new.com/y", "2026-10-05")],
+        {"https://new.com/y": _doc("https://new.com/y", _KITTEN)},
+    )
+
+    result = await research("kitten", published_after="2026-10-01")
+
+    assert [s["url"] for s in result["sources"]] == ["https://new.com/y"]
+    assert result["receipt"]["hits_before_date"] == 1
+
+
+@pytest.mark.parametrize("published", ["2026-10-01T12:00:00Z", "2026-10-01"])
+async def test_a_page_dated_on_the_bound_is_kept(fake_web: FakeWeb, published: str) -> None:
+    url = "https://a.com/x"
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN, published=published)})
+
+    result = await research("kitten", published_after="2026-10-01")
+
+    assert result["sources"][0]["filtered"] is None
+    assert result["receipt"]["unknown_dates"] == 0
+
+
+async def test_the_first_value_that_parses_as_a_date_decides(fake_web: FakeWeb) -> None:
+    url = "https://a.com/x"
+    fake_web([_hit(url, "2025-03-01")], {url: _doc(url, _KITTEN, published="October 1, 2026")})
+
+    result = await research("kitten", published_after="2025-01-01")
+    older = await research("kitten", published_after="2026-01-01")
+
+    assert result["sources"][0]["filtered"] is None
+    assert older["sources"] == [] and older["receipt"]["hits_before_date"] == 1
+
+
+async def test_a_page_with_no_date_is_kept_and_counted(fake_web: FakeWeb) -> None:
+    url = "https://a.com/x"
+    fake_web([_hit(url)], {url: _doc(url, _KITTEN)})
+
+    dated = await research("kitten", published_after="2026-10-01")
+    undated = await research("kitten")
+
+    assert dated["passages"] and dated["receipt"]["unknown_dates"] == 1
+    assert undated["receipt"]["unknown_dates"] is None
+
+
+@pytest.mark.parametrize("value", ["2026-1-1", " 2026-10-01", "October 1, 2026", "2026-02-30"])
+async def test_a_bound_that_is_not_a_date_is_refused(value: str) -> None:
+    with pytest.raises(safety.InvalidArgument, match="published_after"):
+        await research("kitten", published_after=value)
+
+
+@pytest.mark.parametrize(
+    "bound,filtered", [("2026-10-01", None), ("2026-10-02", "published_before")]
+)
+async def test_the_captured_news_date_decides_on_both_sides_of_it(
+    fake_web: FakeWeb, bound: str, filtered: str | None
+) -> None:
+    news = _captured("news")
+    assert news.provenance["published"] == "2026-10-01"
+    fake_web([_hit(news.url)], {news.url: news})
+
+    result = await research("Crew-13 launch", published_after=bound)
+
+    assert result["sources"][0]["filtered"] == filtered
+    assert bool(result["passages"]) is (filtered is None)

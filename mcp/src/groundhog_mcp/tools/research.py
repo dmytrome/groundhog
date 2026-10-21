@@ -1,5 +1,6 @@
 import asyncio
 import re
+from datetime import date
 from typing import Annotated, Literal, TypedDict
 from urllib.parse import urlsplit
 
@@ -33,12 +34,13 @@ _MAX_THREATS_PER_SOURCE = 10
 _MAX_AIM_CHARS = 200
 _MAX_DOMAINS = 50
 _FILTERED_HITS = 50
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$"
 )
 
 SourceStatus = Literal["ok", "blocked", "timeout", "error"]
-Filter = Literal["excluded_domain"]
+Filter = Literal["excluded_domain", "published_before"]
 
 
 class Passage(TypedDict):
@@ -73,15 +75,18 @@ class Receipt(TypedDict):
     aim: str | None
     include_domains: list[str]
     exclude_domains: list[str]
+    published_after: str | None
     hits: int
     hits_by_domain: dict[str, int]
     hits_outside_domains: int
+    hits_before_date: int
     hits_same_domain: int
     failed: int
     not_content: int
     filtered: int
     usable: int
     outside_domains: int
+    unknown_dates: int | None
     omitted: int
     set_aside: int
     clamped: bool
@@ -94,6 +99,14 @@ class ResearchResult(TypedDict):
     sources: list[Source]
     truncated: bool
     receipt: Receipt
+
+
+def _date(value: str | None) -> date | None:
+    found = _DATE_RE.match(value or "")
+    try:
+        return date.fromisoformat(found.group()) if found else None
+    except ValueError:
+        return None
 
 
 def _domain(value: str) -> str:
@@ -249,6 +262,15 @@ async def research(
         list[str] | None,
         Field(description=f"Never read pages on these domains (at most {_MAX_DOMAINS})."),
     ] = None,
+    published_after: Annotated[
+        str | None,
+        Field(
+            description=(
+                "YYYY-MM-DD. Leave out pages dated before this day. A page with no date is "
+                "kept and counted in the receipt's `unknown_dates`."
+            )
+        ),
+    ] = None,
     aim: Annotated[
         str | None,
         Field(
@@ -276,6 +298,9 @@ async def research(
         raise safety.InvalidArgument("query must not be empty")
     if aim is not None and len(aim) > _MAX_AIM_CHARS:
         raise safety.InvalidArgument(f"aim must be at most {_MAX_AIM_CHARS} characters")
+    after = _date(published_after)
+    if published_after is not None and (after is None or len(published_after) != 10):
+        raise safety.InvalidArgument("published_after must be a date as YYYY-MM-DD")
     included = _domains(include_domains, "include_domains")
     excluded = _domains(exclude_domains, "exclude_domains")
     executed = query
@@ -288,7 +313,7 @@ async def research(
 
     try:
         hits, backend = await search_backend.search(
-            executed, cfg, _FILTERED_HITS if included or excluded else capped * _OVERFETCH
+            executed, cfg, _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH
         )
     except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
         raise  # our own text, and the caller needs it to fix the backend
@@ -300,10 +325,15 @@ async def research(
     for hit in hits:
         if domain := _within(hit["url"], included):
             hits_by_domain[domain] += 1
-    kept = [
+    in_domains = [
         hit
         for hit in hits
         if not _within(hit["url"], excluded) and (not included or _within(hit["url"], included))
+    ]
+    kept = [
+        hit
+        for hit in in_domains
+        if not (after and (dated := _date(hit["published"])) and dated < after)
     ]
     if included:
         chosen, same_domain = _round_robin(kept, included, capped), 0
@@ -312,7 +342,14 @@ async def research(
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
 
     sources: list[Source] = []
-    counts = {"failed": 0, "not_content": 0, "filtered": 0, "usable": 0, "outside": 0}
+    counts = {
+        "failed": 0,
+        "not_content": 0,
+        "filtered": 0,
+        "usable": 0,
+        "outside": 0,
+        "undated": 0,
+    }
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
     for hit, outcome in zip(chosen, outcomes, strict=True):
@@ -337,9 +374,12 @@ async def research(
                 }
             )
             continue
-        filtered: Filter | None = (
-            "excluded_domain" if _within(outcome.final_url, excluded) else None
-        )
+        dated = _date(outcome.provenance["published"]) or _date(hit["published"])
+        filtered: Filter | None = None
+        if _within(outcome.final_url, excluded):
+            filtered = "excluded_domain"
+        elif after and dated and dated < after:
+            filtered = "published_before"
         outside = bool(included) and not _within(outcome.final_url, included)
         sources.append(
             {
@@ -366,6 +406,7 @@ async def research(
             continue
         counts["usable"] += 1
         counts["outside"] += outside
+        counts["undated"] += dated is None
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
@@ -413,15 +454,18 @@ async def research(
             "aim": aim,
             "include_domains": included,
             "exclude_domains": excluded,
+            "published_after": published_after,
             "hits": len(hits),
             "hits_by_domain": hits_by_domain,
-            "hits_outside_domains": len(hits) - len(kept),
+            "hits_outside_domains": len(hits) - len(in_domains),
+            "hits_before_date": len(in_domains) - len(kept),
             "hits_same_domain": same_domain,
             "failed": counts["failed"],
             "not_content": counts["not_content"],
             "filtered": counts["filtered"],
             "usable": counts["usable"],
             "outside_domains": counts["outside"],
+            "unknown_dates": counts["undated"] if after else None,
             "omitted": left_out,
             "set_aside": set_aside,
             "clamped": clamped,
