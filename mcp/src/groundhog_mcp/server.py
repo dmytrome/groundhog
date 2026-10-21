@@ -57,7 +57,8 @@ _INSTRUCTIONS = (
     "exists to protect. A `detection_degraded` or `strip_incomplete` entry means the scan "
     "itself was limited, so trust a short `threats` list less. Check `status` (in `research`, "
     "each source's `page_status`) before using content: anything but `ok` or `unknown` means "
-    "the page you wanted did not come back."
+    "the page you wanted did not come back. `research` is for a stated evidence question, and "
+    "its `receipt` says what was searched, filtered and left out."
 )
 
 
