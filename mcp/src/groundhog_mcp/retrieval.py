@@ -46,6 +46,9 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 SCORE_DIGITS = 4  # one reported precision for BM25 scores, wherever they surface
 _RELEVANCE_FLOOR = 0.5
+_MAX_CHUNK_CHARS = 2400
+_LINE_RE = re.compile(r"[^\n]*\n|[^\n]+\Z")
+_SENTENCE_END_RE = re.compile(r"[.?!] |。")
 _K1 = 1.5
 _B = 0.75
 
@@ -64,6 +67,8 @@ class Chunk:
     # Optional because single-document ranking has no URL to attribute to;
     # `research` sets it so pooled passages stay attributable to their source.
     source: str | None = None
+    block: int = 0
+    fence: str | None = None
 
 
 class Scored(NamedTuple):
@@ -116,32 +121,74 @@ def _fenced_lines(lines: list[str]) -> set[int]:
     return inside
 
 
+def _lines(markdown: str) -> list[str]:
+    return _LINE_RE.findall(markdown)
+
+
+def _pieces(text: str) -> list[str]:
+    pieces: list[str] = []
+    start = 0
+    while len(text) - start > _MAX_CHUNK_CHARS:
+        end = start + _MAX_CHUNK_CHARS
+        cut = text.rfind("\n", start, end) + 1
+        if cut <= start:
+            ends = [m.end() for m in _SENTENCE_END_RE.finditer(text, start, end)]
+            cut = ends[-1] if ends and ends[-1] > start else end
+        pieces.append(text[start:cut])
+        start = cut
+    pieces.append(text[start:])
+    return pieces
+
+
 def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
     # Scan line by line so a heading with no blank line before its body still
     # splits into a heading + a searchable body chunk (a blank-line-delimited
     # block would swallow the body into the heading and drop it).
-    fenced = _fenced_lines(markdown.splitlines())
+    raws = _lines(markdown)
+    fenced = _fenced_lines([raw.rstrip("\n") for raw in raws])
     chunks: list[Chunk] = []
     heading: str | None = None
     lines: list[str] = []
+    first = 0
     offset = 0
     pos = 0
+    block = 0
 
     def flush() -> None:
-        nonlocal lines
-        if lines:
+        nonlocal lines, block
+        if not lines:
+            return
+        text = "\n".join(lines)
+        pieces = _pieces(text)
+        whole_fence = (
+            len(pieces) > 1
+            and {first, first + len(lines) - 1} <= fenced
+            and _FENCE_OPEN_RE.match(lines[0]) is not None
+            and _FENCE_CLOSE_RE.match(lines[-1]) is not None
+        )
+        start = offset
+        for piece in pieces:
             chunks.append(
-                Chunk(heading=heading, offset=offset, text="\n".join(lines), source=source)
+                Chunk(
+                    heading=heading,
+                    offset=start,
+                    text=piece,
+                    source=source,
+                    block=block,
+                    fence=lines[0] if whole_fence else None,
+                )
             )
-            lines = []
+            start += len(piece)
+        block += 1
+        lines = []
 
-    for index, raw in enumerate(markdown.splitlines(keepends=True)):
+    for index, raw in enumerate(raws):
         line = raw.rstrip("\n")
         start = pos
         pos += len(raw)
         if index in fenced:
             if not lines:
-                offset = start
+                offset, first = start, index
             lines.append(line)
         elif not line.strip():
             flush()
@@ -154,7 +201,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
             heading = _HEADING_RE.sub("", line).strip()[: sanitize.MAX_HEADING_CHARS]
         else:
             if not lines:
-                offset = start
+                offset, first = start, index
             lines.append(line)
     flush()
     return chunks
@@ -222,22 +269,55 @@ def rank(
     )
 
 
+class _Span(NamedTuple):
+    chunk: Chunk
+    end: int
+    text: str
+    score: float
+
+
+def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
+    block_end = {c.block: c.offset + len(c.text) for c in chunks}
+    block_start: dict[int, int] = {}
+    for c in chunks:
+        block_start.setdefault(c.block, c.offset)
+    spans: list[_Span] = []
+    for s in sorted(ranked, key=lambda s: s.chunk.offset):
+        end = s.chunk.offset + len(s.chunk.text)
+        last = spans[-1] if spans else None
+        if last and last.chunk.block == s.chunk.block and last.end == s.chunk.offset:
+            spans[-1] = _Span(last.chunk, end, last.text + s.chunk.text, max(last.score, s.score))
+        else:
+            spans.append(_Span(s.chunk, end, s.chunk.text, s.score))
+    fenced: list[_Span] = []
+    for span in spans:
+        text, fence = span.text, span.chunk.fence
+        if fence is not None:
+            opening = _FENCE_OPEN_RE.match(fence)
+            assert opening
+            if span.chunk.offset != block_start[span.chunk.block]:
+                text = fence + "\n" + text
+            if span.end != block_end[span.chunk.block]:
+                text = text.rstrip("\n") + "\n" + opening.group(1)
+        fenced.append(span._replace(text=text))
+    return fenced
+
+
 def select(markdown: str, query: str, max_tokens: int) -> tuple[str, list[Match], bool, int]:
-    ranked, truncated, set_aside = rank(
-        chunk_document(markdown), query, max_tokens, floor=_RELEVANCE_FLOOR
-    )
+    chunks = chunk_document(markdown)
+    ranked, truncated, set_aside = rank(chunks, query, max_tokens, floor=_RELEVANCE_FLOOR)
     if not ranked:
         return "", [], False, 0
     # Within one document, offset order is reading order — what a caller wants to
     # read back, unlike the relevance order `rank` returns.
-    by_offset = sorted(ranked, key=lambda s: s.chunk.offset)
+    spans = _spans(chunks, ranked)
     matches: list[Match] = [
         {
-            "heading": s.chunk.heading,
-            "offset": s.chunk.offset,
-            "score": round(s.score, SCORE_DIGITS),
+            "heading": span.chunk.heading,
+            "offset": span.chunk.offset,
+            "score": round(span.score, SCORE_DIGITS),
         }
-        for s in by_offset
+        for span in spans
     ]
-    body = "\n\n".join(s.chunk.text for s in by_offset)
+    body = "\n\n".join(span.text for span in spans)
     return body, matches, truncated, set_aside
