@@ -28,6 +28,7 @@ _CANCEL_DRAIN_S = 5.0
 # Per source, not per page: the fan-out multiplies the report by `max_sources`,
 # and `threats` sits outside the caller's token budget.
 _MAX_THREATS_PER_SOURCE = 10
+_MAX_AIM_CHARS = 200
 
 SourceStatus = Literal["ok", "blocked", "timeout", "error"]
 
@@ -57,26 +58,42 @@ class Source(TypedDict):
     error: str | None
 
 
+class Receipt(TypedDict):
+    executed_query: str
+    aim: str | None
+    hits: int
+    hits_same_domain: int
+    failed: int
+    not_content: int
+    usable: int
+    omitted: int
+    set_aside: int
+    clamped: bool
+
+
 class ResearchResult(TypedDict):
     query: str
     backend: str
     passages: list[Passage]
     sources: list[Source]
     truncated: bool
+    receipt: Receipt
 
 
-def _diverse(hits: list[SearchHit], max_sources: int) -> list[SearchHit]:
+def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], int]:
     seen: set[str] = set()
     picked: list[SearchHit] = []
+    skipped = 0
     for hit in hits:
         domain = engine.registrable_domain(hit["url"])
         if domain in seen:
+            skipped += 1
             continue
         seen.add(domain)
         picked.append(hit)
         if len(picked) == max_sources:
             break
-    return picked
+    return picked, skipped
 
 
 def _status_of(exc: BaseException) -> tuple[SourceStatus, str]:
@@ -163,6 +180,16 @@ async def research(
             )
         ),
     ] = None,
+    aim: Annotated[
+        str | None,
+        Field(
+            description=(
+                f"What the evidence must show, in at most {_MAX_AIM_CHARS} characters: the "
+                "authority, artifact and version sought. Echoed in the receipt; it does not "
+                "change the search or the ranking."
+            )
+        ),
+    ] = None,
 ) -> ResearchResult:
     """Search the web and return ranked passages drawn from several sources.
 
@@ -178,6 +205,8 @@ async def research(
     """
     if not query.strip():
         raise safety.InvalidArgument("query must not be empty")
+    if aim is not None and len(aim) > _MAX_AIM_CHARS:
+        raise safety.InvalidArgument(f"aim must be at most {_MAX_AIM_CHARS} characters")
     cfg = load_config()
     limit = config.token_budget(max_tokens, cfg.max_tokens)
     capped = max(1, min(max_sources, _MAX_SOURCES))
@@ -190,10 +219,11 @@ async def research(
         # The same boundary `search` has: the SERP leg runs through the browser, so
         # its failures can name internal addresses or carry page-chosen text.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
-    chosen = _diverse(hits, capped)
+    chosen, same_domain = _diverse(hits, capped)
     outcomes = await _fetch_all([hit["url"] for hit in chosen]) if chosen else []
 
     sources: list[Source] = []
+    counts = {"failed": 0, "not_content": 0, "usable": 0}
     chunks: list[retrieval.Chunk] = []
     hashes: dict[str, str] = {}
     for hit, outcome in zip(chosen, outcomes, strict=True):
@@ -203,6 +233,7 @@ async def research(
             raise outcome
         if isinstance(outcome, BaseException):
             status, detail = _status_of(outcome)
+            counts["failed"] += 1
             sources.append(
                 {
                     "url": hit["url"],
@@ -231,14 +262,18 @@ async def research(
             # ranking it would let "Checking your browser before accessing…" compete
             # for the caller's token budget against real passages. The source still
             # appears above, carrying the `page_status` that says why it contributed none.
+            counts["not_content"] += 1
             continue
+        counts["usable"] += 1
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
     # One BM25 pass over every passage from every source, so a passage from the
     # last source is directly comparable to one from the first.
-    ranked, left_out, _ = retrieval.rank(chunks, query, limit, floor=retrieval.RELEVANCE_FLOOR)
-    truncated = left_out > 0
+    ranked, left_out, set_aside = retrieval.rank(
+        chunks, query, limit, floor=retrieval.RELEVANCE_FLOOR
+    )
+    clamped = False
     passages: list[Passage] = []
     for scored in ranked:
         if not scored.chunk.source:
@@ -248,7 +283,7 @@ async def research(
         # rank() admits its top passage unconditionally, so a single huge block
         # can still exceed the budget — clamp it and keep `truncated` honest.
         text, over_budget = extract.truncate(scored.chunk.text, limit)
-        truncated = truncated or over_budget
+        clamped = clamped or over_budget
         start = scored.chunk.offset
         end = start + len(scored.chunk.text)
         passages.append(
@@ -271,5 +306,17 @@ async def research(
         "backend": backend,
         "passages": passages,
         "sources": sources,
-        "truncated": truncated,
+        "truncated": left_out > 0 or clamped,
+        "receipt": {
+            "executed_query": query,
+            "aim": aim,
+            "hits": len(hits),
+            "hits_same_domain": same_domain,
+            "failed": counts["failed"],
+            "not_content": counts["not_content"],
+            "usable": counts["usable"],
+            "omitted": left_out,
+            "set_aside": set_aside,
+            "clamped": clamped,
+        },
     }
