@@ -176,7 +176,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
         pieces = _pieces(text)
         whole_fence = len(pieces) > 1 and fenced.get(first) == first
         start = offset
-        for number, piece in enumerate(pieces):
+        for piece in pieces:
             chunks.append(
                 Chunk(
                     heading=heading,
@@ -185,7 +185,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
                     source=source,
                     block=block,
                     fence=lines[0].rstrip("\r")[: sanitize.MAX_HEADING_CHARS]
-                    if whole_fence and number
+                    if whole_fence
                     else None,
                 )
             )
@@ -272,7 +272,8 @@ def rank(
     chosen: list[int] = []
     used = 0
     for i in relevant:
-        blen = len(chunks[i].text) + 2
+        fence = chunks[i].fence
+        blen = len(chunks[i].text) + 2 + (2 * len(fence) + 2 if fence else 0)
         if chosen and used + blen > limit:
             continue
         chosen.append(i)

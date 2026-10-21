@@ -151,9 +151,10 @@ empty web.
 Searches, reads the top sources and ranks passages from all of them in one pass.
 
 - `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
-  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`; a passage that starts
-  inside a long code block carries its opening line in `fence`. `id` stays stable while the
-  page doesn't change.
+  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`. A passage cut from a
+  long code block carries the block's opening line in `fence`: reopen with it when `text`
+  doesn't start with it, and close the block when `text` doesn't end with a closing fence.
+  `id` stays stable while the page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
   (as in `read_url`), `threats`, `provenance`, `filtered`. A failed source doesn't fail the
   call. A challenge, an error page or a page with no text (whose `page_status` stays `ok`)
