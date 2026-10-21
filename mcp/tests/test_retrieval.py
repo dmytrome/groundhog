@@ -2,6 +2,7 @@ import random
 import sys
 import unicodedata
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from markdown_it import MarkdownIt
@@ -445,3 +446,65 @@ def test_the_mark_scan_covers_every_combining_mark_in_unicode() -> None:
     ]
 
     assert outside == []
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("page", ["long_paragraph_page.md", "long_fenced_page.md"])
+def test_a_captured_page_is_cut_into_pieces_that_are_its_exact_slices(page: str) -> None:
+    markdown = (_FIXTURES / page).read_text()
+    assert max(len(block) for block in markdown.split("\n\n")) > retrieval._MAX_CHUNK_CHARS
+
+    chunks = chunk_document(markdown)
+
+    assert max(len(c.text) for c in chunks) <= retrieval._MAX_CHUNK_CHARS
+    assert all(markdown[c.offset : c.offset + len(c.text)] == c.text for c in chunks)
+
+
+@pytest.mark.parametrize(
+    "markdown", ["alpha\x0cbeta gamma\n", "one\rtwo\n", "p q\n", "a\r\nb\r\n\r\nc\x85d\n"]
+)
+def test_a_chunk_with_a_separator_other_than_newline_is_its_exact_slice(markdown: str) -> None:
+    chunks = chunk_document(markdown)
+
+    assert chunks
+    assert all(markdown[c.offset : c.offset + len(c.text)] == c.text for c in chunks)
+
+
+def test_a_long_paragraph_is_cut_at_sentence_ends() -> None:
+    sentence = "The quick brown fox jumps over the lazy dog near the river bank today. "
+    markdown = sentence * (6000 // len(sentence) + 1)
+
+    chunks = chunk_document(markdown)
+
+    assert len(chunks) > 2
+    assert all(len(c.text) <= retrieval._MAX_CHUNK_CHARS for c in chunks)
+    assert all(c.text.endswith(". ") for c in chunks[:-1])
+    assert "".join(c.text for c in chunks) == markdown.rstrip("\n")
+
+
+def test_a_long_block_that_is_wholly_relevant_comes_back_unchanged() -> None:
+    block = "\n".join(f"line {i} about the kitten diet and feeding schedule" for i in range(120))
+    markdown = f"# Feeding\n\n{block}\n\n# Other\n\nDogs guard the house.\n"
+    assert len(block) > retrieval._MAX_CHUNK_CHARS
+
+    body, matches, _, _ = select(markdown, "kitten diet feeding", 20000)
+
+    assert body == block
+    assert len(matches) == 1
+
+
+def test_one_piece_of_a_long_fenced_block_comes_back_fenced() -> None:
+    code = "\n".join(f"value_{i} = compute({i})" for i in range(250))
+    lines = code.split("\n")
+    lines[200] = "needle = find_the_kitten()"
+    markdown = "```python\n" + "\n".join(lines) + "\n```\n\nAfter the code, kitten prose.\n"
+    assert len(markdown) > 2 * retrieval._MAX_CHUNK_CHARS
+
+    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+
+    code_part, _, after = body.partition("\n\n")
+    assert code_part.startswith("```python\n") and code_part.endswith("\n```")
+    assert "needle = find_the_kitten()" in code_part
+    assert after in ("", "After the code, kitten prose.")
