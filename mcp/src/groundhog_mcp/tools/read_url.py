@@ -3,6 +3,7 @@ from typing import Annotated, TypedDict
 from pydantic import Field
 
 from .. import classify, config, document, engine, extract, provenance, retrieval, safety, sanitize
+from ..config import load_config
 
 
 class ReadResult(TypedDict):
@@ -84,13 +85,13 @@ async def read_url(
         # page-chosen exception text reach the model unchanged. `research` already
         # refuses to echo those; this is the same rule for the single-page tool.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
-    limit = config.token_budget(max_tokens, engine.load_config().max_tokens)
+    limit = config.token_budget(max_tokens, load_config().max_tokens)
 
     matches: list[retrieval.Match] = []
     body, truncated, set_aside = doc.markdown, False, 0
     if query and query.strip():
         selected, selected_matches, selected_truncated, selected_set_aside = retrieval.select(
-            doc.markdown, query, limit
+            doc.markdown, query, limit, source_url=doc.final_url
         )
         if selected_matches:
             body, matches, truncated = selected, selected_matches, selected_truncated
