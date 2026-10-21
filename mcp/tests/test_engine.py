@@ -1309,11 +1309,9 @@ def test_a_bad_cdp_port_does_not_break_the_startup_remediation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(engine, "_container_runtime", lambda: "docker")
-    cfg = _cfg(cdp_url="http://host:abc")
+    cfg = _cfg(cdp_url="http://localhost:abc")
     assert engine._port_of(cfg.cdp_url) == 9222
-    assert "127.0.0.1:9222:9222" in engine.remediation(
-        _cfg(cdp_url="http://localhost:abc")
-    )
+    assert "127.0.0.1:9222:9222" in engine.remediation(cfg)
 
 
 async def test_runtime_stderr_is_sanitized_and_bounded() -> None:
@@ -1410,6 +1408,46 @@ async def test_a_real_page_exception_is_reported_by_its_message() -> None:
         finally:
             await provider._cdp.close()
     assert str(caught.value).startswith("Error: " + "x" * 50)
+
+
+class _HangsOnDetection(_ScriptedCDP):
+    def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
+        return lambda: None
+
+
+async def _fetch_until_detection_hangs(monkeypatch: pytest.MonkeyPatch) -> _HangsOnDetection:
+    async def public(url: str, cfg: Config) -> None:
+        return None
+
+    async def evaluate(sid: str, expression: str, context_id: int | None = None) -> object:
+        if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
+            await asyncio.Event().wait()
+        return "https://example.com/" if expression == "document.location.href" else 1
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    monkeypatch.setattr(engine, "_DETECT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.05)
+    provider = engine.EngineProvider(_cfg())
+    fake = _HangsOnDetection(_HEADLESS_UA, _HINTS)
+    provider._cdp = fake
+    monkeypatch.setattr(provider, "_eval", evaluate)
+    with pytest.raises(cdp.CDPError, match="hidden-text detection timed out"):
+        await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+    return fake
+
+
+async def test_a_collector_that_never_answers_fails_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _fetch_until_detection_hangs(monkeypatch)
+
+
+async def test_a_fetch_never_enables_the_runtime_or_console_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = (await _fetch_until_detection_hangs(monkeypatch)).methods()
+    assert {"Page.enable", "Network.enable"} <= set(sent)
+    assert not {"Runtime.enable", "Console.enable"} & set(sent)
 
 
 async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
