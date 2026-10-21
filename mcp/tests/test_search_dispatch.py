@@ -169,3 +169,22 @@ async def test_a_hit_url_carrying_credentials_is_dropped(monkeypatch):
     monkeypatch.setattr(search.serp, "search", _serp)
     hits, _ = await search.search("q", _cfg(search_backend="serp"), limit=5)
     assert [h["url"] for h in hits] == ["https://ex.com/ok"]
+
+
+async def test_a_hit_url_with_a_malformed_host_is_dropped(monkeypatch):
+    def _hit(url):
+        return {
+            "title": "T",
+            "url": url,
+            "snippet": "s",
+            "engine": "e",
+            "score": 1.0,
+            "published": None,
+        }
+
+    async def _serp(query):
+        return [_hit("http://[::1/x"), _hit("https://ex.com/ok")]
+
+    monkeypatch.setattr(search.serp, "search", _serp)
+    hits, _ = await search.search("q", _cfg(search_backend="serp"), limit=5)
+    assert [h["url"] for h in hits] == ["https://ex.com/ok"]

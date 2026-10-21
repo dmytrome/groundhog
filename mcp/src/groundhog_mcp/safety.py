@@ -48,7 +48,10 @@ def safe_url(url: object) -> str | None:
     cleaned = sanitize.clean_field(url, sanitize.MAX_URL_CHARS)
     if cleaned is None or cleaned != url:
         return None
-    return None if _url_fault(urlparse(cleaned)) else cleaned
+    try:
+        return None if _url_fault(urlparse(cleaned)) else cleaned
+    except ValueError:
+        return None
 
 
 def redacted_url(url: str) -> str:
