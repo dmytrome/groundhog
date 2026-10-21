@@ -1,7 +1,11 @@
+from collections.abc import Callable
+
 import pytest
 
-from groundhog_mcp import retrieval, server
+from groundhog_mcp import document, engine, retrieval, safety, sanitize, server
 from groundhog_mcp.tools.read_url import read_url
+
+from .conftest import TAG_I, ZERO_WIDTH
 
 
 async def test_maps_document_fields_onto_the_result(fake_provider, make_page):
@@ -78,12 +82,23 @@ async def test_a_match_is_identified_by_the_final_url_and_the_page_snapshot(
 
 
 async def test_query_body_respects_token_budget(fake_provider, make_page):
-    # A single matching chunk larger than the budget must still be truncated, and
-    # `truncated` must report it — the query path honors max_tokens like the plain path.
     fake_provider(make_page())
     result = await read_url("https://ex.com/p", query="loyal domesticated dogs", max_tokens=5)
     assert result["truncated"] is True
     assert "[... truncated]" in result["markdown"]
+
+
+@pytest.mark.parametrize("query", [None, "loyal domesticated dogs"])
+async def test_a_text_body_is_cut_to_the_token_budget(
+    fake_provider: Callable[[engine.RenderedPage], None],
+    make_page: Callable[..., engine.RenderedPage],
+    query: str | None,
+) -> None:
+    fake_provider(make_page(text="Dogs are loyal domesticated animals. " * 10))
+    result = await read_url("https://ex.com/p", format="text", query=query, max_tokens=5)
+    assert result["truncated"] is True
+    assert result["markdown"].endswith("[... truncated]")
+    assert 0 < len(result["markdown"].removesuffix("\n\n[... truncated]")) <= 20
 
 
 async def test_empty_query_uses_full_document(fake_provider, make_page):
@@ -115,3 +130,18 @@ async def test_a_blocked_url_does_not_leak_the_resolved_address():
     message = str(excinfo.value)
     assert "blocked by SSRF policy" in message
     assert "127.0.0.1" not in message and "::1" not in message
+
+
+async def test_page_chosen_errors_are_cleaned_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _boom(url: str, **kwargs: object) -> document.Document:
+        raise RuntimeError(f"boom{ZERO_WIDTH}{TAG_I}" + "x" * 4000)
+
+    monkeypatch.setattr(document, "fetch_document", _boom)
+
+    with pytest.raises(safety.CallerFacingError) as excinfo:
+        await read_url("https://ex.com/p")
+
+    detail = str(excinfo.value)
+    assert detail.startswith("RuntimeError: boom")
+    assert ZERO_WIDTH not in detail and TAG_I not in detail
+    assert len(detail) <= sanitize.MAX_ERROR_CHARS
