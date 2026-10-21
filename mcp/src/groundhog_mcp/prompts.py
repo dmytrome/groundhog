@@ -1,12 +1,3 @@
-"""Workflows the tools support but a caller would not think to compose.
-
-A prompt is a template the user picks, not something the model calls, so this earns
-its place only if it encodes something non-obvious. Comparing a stripped fetch against
-an unstripped one is exactly that: both halves are ordinary `read_url` calls, and the
-comparison between them is the thing nobody discovers on their own.
-"""
-
-
 def audit_hidden_text(url: str) -> str:
     """Show what a page hides from human readers, and what it would have fed a model."""
     return (
