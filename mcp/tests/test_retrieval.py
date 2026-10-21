@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from markdown_it import MarkdownIt
 
-from groundhog_mcp import extract, retrieval
+from groundhog_mcp import extract, retrieval, sanitize
 from groundhog_mcp.retrieval import (
     _HEADING_RE,
     Chunk,
@@ -220,7 +220,7 @@ def test_a_closed_block_keeps_its_cover_when_a_later_one_is_left_open():
 
 def test_fence_lines_pair_in_the_order_they_appear():
     markdown = "## A\n\n```\ncode\n\n## B\n\n```\nmore code\n```\n\n## C\n\ntail\n"
-    assert [c.heading for c in chunk_document(markdown)] == ["A", "C"]
+    assert [c.heading for c in chunk_document(markdown)] == ["A", "A", "C"]
 
 
 def test_a_shorter_run_of_backticks_does_not_close_a_longer_one():
@@ -255,7 +255,7 @@ def test_openers_that_can_never_close_are_not_each_scanned_to_the_end(monkeypatc
 
     fenced = _fenced_lines(lines)
 
-    assert fenced == set()
+    assert fenced == {}
     assert steps[0] <= 2 * len(lines)
 
 
@@ -508,6 +508,56 @@ def test_one_piece_of_a_long_fenced_block_comes_back_fenced() -> None:
     assert code_part.startswith("```python\n") and code_part.endswith("\n```")
     assert "needle = find_the_kitten()" in code_part
     assert after in ("", "After the code, kitten prose.")
+
+
+def _long_code(needle_at: int = 200) -> str:
+    lines = [f"value_{i} = compute({i})" for i in range(250)]
+    lines[needle_at] = "needle = find_the_kitten()"
+    return "\n".join(lines)
+
+
+def test_a_crlf_code_block_keeps_its_comment_lines_out_of_the_headings() -> None:
+    markdown = "## Install\r\n\r\n```\r\n# or from a checkout\r\n\r\ndocker compose up\r\n```\r\n"
+
+    chunks = chunk_document(markdown)
+
+    assert [c.heading for c in chunks] == ["Install"]
+
+
+def test_a_huge_opening_fence_line_is_capped_on_every_piece() -> None:
+    markdown = "```" + "x" * 50_000 + "\n" + _long_code() + "\n```\n"
+
+    chunks = chunk_document(markdown)
+
+    assert len(chunks) > 2
+    assert all(len(c.fence or "") <= sanitize.MAX_HEADING_CHARS for c in chunks)
+
+
+def test_a_fence_right_after_another_is_refenced_with_its_own_opening() -> None:
+    markdown = "```python\nprint(1)\n```\n~~~~text\n" + _long_code() + "\n~~~~\n"
+
+    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+
+    assert body.startswith("~~~~text\n") and body.endswith("\n~~~~")
+
+
+def test_a_code_block_right_after_a_prose_line_is_refenced() -> None:
+    markdown = "Intro line\n```python\n" + _long_code() + "\n```\n"
+
+    body, _, _, _ = select(markdown, "needle find_the_kitten", 20000)
+
+    assert body.startswith("```python\n") and body.endswith("\n```")
+    assert "needle = find_the_kitten()" in body
+
+
+def test_only_the_pieces_after_a_code_blocks_first_carry_its_fence() -> None:
+    markdown = "```python\n" + _long_code() + "\n```\n"
+
+    chunks = chunk_document(markdown)
+
+    assert len(chunks) > 2
+    assert chunks[0].fence is None
+    assert all(c.fence == "```python" for c in chunks[1:])
 
 
 def test_a_passage_too_long_for_the_budget_is_skipped_for_the_next_that_fits() -> None:
