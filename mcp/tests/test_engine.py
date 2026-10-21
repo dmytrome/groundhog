@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import urllib.response
+from collections.abc import Callable
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,8 +19,9 @@ from pathlib import Path
 import pytest
 import websockets
 
-from groundhog_mcp import cdp, engine, http
+from groundhog_mcp import cdp, engine, extract, http, provenance
 from groundhog_mcp.config import Config
+from groundhog_mcp.engine import _run
 
 
 def _cfg(**over):
@@ -96,7 +98,7 @@ def _stub_start(monkeypatch, calls, runtime="docker", code=0):
     monkeypatch.setattr(engine, "check_browser", ready)
 
 
-async def test_start_browser_builds_docker_run(monkeypatch):
+async def test_start_browser_builds_docker_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
     _stub_start(monkeypatch, calls)
     await engine._start_browser(_cfg(cdp_url="http://127.0.0.1:7000", browser_image="img:tag"))
@@ -104,7 +106,7 @@ async def test_start_browser_builds_docker_run(monkeypatch):
     run = calls[1]
     assert run[:3] == ["docker", "run", "-d"]
     assert engine._CONTAINER_NAME in run
-    assert f"{engine._CONTAINER_BIND_HOST}:7000:{engine._CONTAINER_CDP_PORT}" in run
+    assert "127.0.0.1:7000:9222" in run
     assert "--platform" not in run  # multi-arch image: let the runtime pick the native arch
     assert run[-2:] == ["--", "img:tag"]  # `--` guards against a flag-like image ref
 
@@ -937,8 +939,10 @@ def test_a_malformed_collector_result_is_emptied_not_trusted(make_page, field, r
     assert getattr(page, field) == cleaned
 
 
-def test_a_page_metadata_value_is_cut_to_url_length(make_page):
-    description = "d" * 5000
+def test_a_page_metadata_value_is_cut_to_url_length(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    description = "\u200b" + "d" * 5000
 
     page = dataclasses.replace(
         make_page(), meta={"meta": {"description": description}, "lang": None, "canonical": None}
@@ -1299,3 +1303,174 @@ async def test_cdp_evaluations_do_not_enable_runtime_or_console_domains() -> Non
         finally:
             await client.close()
     assert methods == ["Runtime.evaluate"]
+
+
+def test_a_bad_cdp_port_does_not_break_the_startup_remediation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine, "_container_runtime", lambda: "docker")
+    cfg = _cfg(cdp_url="http://host:abc")
+    assert engine._port_of(cfg.cdp_url) == 9222
+    assert "127.0.0.1:9222:9222" in engine.remediation(
+        _cfg(cdp_url="http://localhost:abc")
+    )
+
+
+async def test_runtime_stderr_is_sanitized_and_bounded() -> None:
+    payload = "bad\u200b\n" + "x" * 500
+    script = f"import sys; sys.stderr.write({payload!r}); sys.exit(7)"
+    code, detail = await _run([sys.executable, "-c", script])
+    assert code == 7
+    assert detail == "bad " + "x" * 196
+
+
+@pytest.mark.parametrize("omitted", ["isolated", "strip_incomplete"])
+def test_a_rendered_page_requires_an_explicit_detection_flag(
+    make_page: Callable[..., engine.RenderedPage],
+    omitted: str,
+) -> None:
+    page = make_page()
+    supplied = {
+        field.name: getattr(page, field.name)
+        for field in dataclasses.fields(page)
+        if field.name != omitted
+    }
+    with pytest.raises(TypeError, match=omitted):
+        engine.RenderedPage(**supplied)
+
+
+def test_rendered_content_preserves_invisible_characters_and_its_full_length(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    html = "<p>hello\u200bworld</p>" * 1000
+    text = "hello\u200bworld " * 1000
+    page = dataclasses.replace(make_page(), html=html, text=text)
+    assert page.html == html
+    assert page.text == text
+
+
+@pytest.mark.parametrize("field", ["html", "text"])
+@pytest.mark.parametrize("raw", [None, 5])
+def test_nonstring_rendered_content_becomes_empty_at_construction(
+    make_page: Callable[..., engine.RenderedPage],
+    field: str,
+    raw: object,
+) -> None:
+    page = dataclasses.replace(make_page(), **{field: raw})
+    assert getattr(page, field) == ""
+
+
+@pytest.mark.parametrize("status", ["200", -1, {"status": 200}])
+def test_a_rendered_pages_nonstatus_value_is_reported_as_absent(
+    make_page: Callable[..., engine.RenderedPage],
+    status: object,
+) -> None:
+    page = dataclasses.replace(make_page(), http_status=status)
+    assert page.http_status is None
+
+
+def test_a_canonical_metadata_url_longer_than_a_byline_is_not_shortened(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    canonical = "https://ex.com/" + "a" * 500
+    page = make_page(meta={"meta": {"canonical": canonical}, "lang": None, "canonical": None})
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] == canonical
+
+
+async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def silent(ws: websockets.ServerConnection) -> None:
+        await ws.wait_closed()
+
+    monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
+    async with websockets.serve(silent, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        operation = asyncio.create_task(provider._eval("tab", "1"))
+        try:
+            done, _ = await asyncio.wait({operation}, timeout=0.5)
+            assert operation in done
+            with pytest.raises(TimeoutError):
+                operation.result()
+        finally:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            await provider.aclose()
+
+
+@pytest.mark.parametrize("command", ["Page.getFrameTree", "Page.createIsolatedWorld"])
+@pytest.mark.parametrize("failure", ["unanswered", "refused"])
+async def test_unavailable_isolated_world_commands_degrade_without_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    failure: str,
+) -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            if request["method"] == command:
+                if failure == "refused":
+                    await ws.send(json.dumps({
+                        "id": request["id"],
+                        "error": {"code": -32601, "message": "method unavailable"},
+                    }))
+            else:
+                await ws.send(json.dumps({
+                    "id": request["id"],
+                    "result": {"frameTree": {"frame": {"id": "root"}}},
+                }))
+
+    monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        operation = asyncio.create_task(provider._isolated_context("tab"))
+        try:
+            done, _ = await asyncio.wait({operation}, timeout=0.5)
+            assert operation in done
+            assert operation.result() is None
+        finally:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            await provider.aclose()
+
+
+async def test_page_evaluation_exception_details_are_bounded() -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            details = {
+                "exceptionId": 1,
+                "text": "Error: " + "x" * 500,
+                "lineNumber": 0,
+                "columnNumber": 0,
+            }
+            await ws.send(json.dumps({
+                "id": request["id"],
+                "result": {"result": {"type": "undefined"}, "exceptionDetails": details},
+            }))
+
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            with pytest.raises(cdp.CDPError) as caught:
+                await provider._eval("tab", "throw Error('payload')")
+            assert len(str(caught.value)) <= 200
+            assert "x" * 50 in str(caught.value)
+        finally:
+            await provider.aclose()
+
+
+def test_an_unobserved_document_is_not_classified_from_another_documents_response() -> None:
+    responses = engine._MainResponse()
+    responses._on_response({
+        "requestId": "observed", "loaderId": "observed",
+        "response": {"status": 200, "mimeType": "text/html", "headers": {}},
+    })
+    for loader in ("unobserved", None):
+        selected = responses.main(loader)
+        assert engine.classify.classify(selected, False, "An article", "Some content") == "unknown"

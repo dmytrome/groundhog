@@ -2011,3 +2011,17 @@ async def test_include_hidden_still_returns_shadow_content():
     assert any("KEPT_SHADOW_HIDDEN" in h["text"] for h in kept.hidden_spans)
     # Nothing fell short of a strip that was never asked for.
     assert kept.strip_incomplete is False
+
+
+async def test_settle_probes_are_not_visible_to_a_page_that_instruments_dom_queries() -> None:
+    html = (
+        '<html><body><p id="status">UNPROBED_CONTENT_MARKER</p><script>'
+        'const query = document.querySelectorAll.bind(document);'
+        'document.querySelectorAll = function(...args) {'
+        'document.getElementById("status").textContent = "SETTLE_PROBE_EXPOSED";'
+        'return query(...args);'
+        '};</script></body></html>'
+    )
+    page = await _fetch_local(html)
+    assert "UNPROBED_CONTENT_MARKER" in page.text
+    assert "SETTLE_PROBE_EXPOSED" not in page.text

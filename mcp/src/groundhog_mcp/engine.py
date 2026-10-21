@@ -28,8 +28,6 @@ _EVAL_TIMEOUT_S = 20.0
 _SETTLE_POLL_S = 0.25
 _SETTLE_QUIET_S = 1.0
 _SETTLE_TIMEOUT_S = 8.0
-# Element count + visible-text length: cheap to sample, and one of them moves
-# whenever an SPA hydrates or streams content in.
 _DOM_SIZE_EXPR = (
     "document.querySelectorAll('*').length + '|' + "
     "(document.body ? document.body.innerText.length : 0)"
@@ -41,7 +39,7 @@ _MAX_REPORTED_DROP = 1_000_000
 _CONTAINER_NAME = "groundhog-browser"
 _CONTAINER_SHM = "512m"
 _CONTAINER_CDP_PORT = 9222
-_CONTAINER_BIND_HOST = "127.0.0.1"  # never bind the auto-started CDP to a public interface
+_CONTAINER_BIND_HOST = "127.0.0.1"
 _RUNTIMES = ("docker", "podman")
 _CHROME_PATHS = {
     "darwin": (
@@ -91,7 +89,7 @@ _HINT_KEYS = (
 
 
 class BrowserUnavailableError(safety.CallerFacingError):
-    """The stealth browser's CDP endpoint could not be reached."""
+    pass
 
 
 def _container_runtime() -> str | None:
@@ -109,17 +107,10 @@ def _port_of(cdp_url: str) -> int:
     try:
         return urlparse(cdp_url).port or _CONTAINER_CDP_PORT
     except ValueError:
-        # A non-numeric port is a misconfiguration; the remediation hint that says so
-        # must not itself raise on the way out.
         return _CONTAINER_CDP_PORT
 
 
 def _run_argv(runtime: str, cfg: Config) -> list[str]:
-    """The command that starts the browser.
-
-    Built once so the message telling a user how to start it cannot drift from
-    what auto-start actually runs — they did, over `--shm-size`.
-    """
     return [
         runtime,
         "run",
@@ -226,7 +217,7 @@ def _ip_probe_url(cdp_url: str) -> str:
     except ValueError:
         pass
     infos = socket.getaddrinfo(host, parts.port, proto=socket.IPPROTO_TCP)
-    family, _, _, _, addr = min(infos, key=lambda info: info[0] != socket.AF_INET)  # prefer IPv4
+    family, _, _, _, addr = min(infos, key=lambda info: info[0] != socket.AF_INET)
     netloc = f"[{addr[0]}]" if family == socket.AF_INET6 else addr[0]
     if parts.port:
         netloc += f":{parts.port}"
@@ -239,10 +230,8 @@ def _version_url(cdp_url: str) -> str:
 
 
 async def _fetch_version(cdp_url: str, timeout: float) -> dict:
-    """Read the CDP `/json/version` document off the event loop."""
     return await asyncio.get_running_loop().run_in_executor(
         None,
-        # _ip_probe_url resolves DNS, which also blocks — keep it in the executor.
         lambda: http.read_json(_version_url(cdp_url), timeout),
     )
 
@@ -264,8 +253,6 @@ async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool
     except (OSError, WebSocketException):
         return False
     except ValueError:
-        # A malformed CDP_URL (`http://host:abc`) raises out of `urlparse`. The tool
-        # whose job is reporting a broken configuration must survive one.
         return False
 
 
@@ -280,8 +267,6 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     _, stderr = await proc.communicate()
-    # Runtime stderr is not page-authored, but it reaches the model in the
-    # remediation message — bound it with the same rule as everything else.
     detail = sanitize.clean_field(stderr.decode(errors="replace"), sanitize.MAX_ERROR_CHARS)
     return proc.returncode or 0, detail or ""
 
@@ -397,19 +382,13 @@ async def _start_browser(cfg: Config) -> None:
 
 
 async def _start_stealth(cfg: Config) -> None:
-    """Bring up the stealth browser.
-
-    Default path: `docker run` the published image, so a bare `uvx groundhog-mcp`
-    works with no repo checkout. `GROUNDHOG_COMPOSE_FILE` opts into `docker compose`
-    against a local repo instead.
-    """
     runtime = _container_runtime()
     if runtime is None:
         raise BrowserUnavailableError(remediation(cfg))
     if cfg.compose_file:
         cmd = [runtime, "compose", "-f", cfg.compose_file, "up", "-d"]
     else:
-        await _run([runtime, "rm", "-f", _CONTAINER_NAME])  # clear a stale container, if any
+        await _run([runtime, "rm", "-f", _CONTAINER_NAME])
         cmd = _run_argv(runtime, cfg)
     print(
         f"[groundhog] starting the stealth browser via {runtime} "
@@ -423,16 +402,12 @@ async def _start_stealth(cfg: Config) -> None:
 
 
 class HiddenSpan(TypedDict):
-    """A span the page hid from humans, as reported by the in-page collector."""
-
     text: str
     reason: str
     path: NotRequired[str]
 
 
 class PageMeta(TypedDict):
-    """Document-level metadata the in-page collector reads off the live DOM."""
-
     meta: dict[str, str]
     lang: str | None
     canonical: str | None
@@ -440,54 +415,19 @@ class PageMeta(TypedDict):
 
 @dataclass
 class RenderedPage:
-    """One page as the browser rendered it — this process's untrusted-input boundary.
-
-    Every string here is written by the page, so they are sanitized on construction
-    rather than at each place that later reads them. Doing it per consumer made the
-    rule something a call site had to remember, and fields kept being added that
-    quietly didn't: the title, then the metadata, then the threat excerpts, then the
-    detected language and the final URL.
-
-    Every page-authored field is handled explicitly below, so one added here must be
-    added there too — the result walk in `tests/test_boundary.py` is what catches the
-    omission. Two carve-outs: `html` and `text` are only type-checked, because they
-    carry the content itself and are stripped downstream *with* threat collection so
-    the caller learns what was hidden in it; and the boolean flags are ours, not the
-    page's — they record how the reads above were performed, not what they returned.
-    """
-
     html: str
     text: str
     final_url: str
     title: str
     hidden_spans: list[HiddenSpan]
     meta: PageMeta
-    # Whether the reads above ran in an isolated world. False means the page could
-    # have suppressed its own hidden-text report, and the caller is told so. No
-    # default: a construction site that forgets it must say which it means, rather
-    # than silently asserting the reassuring answer.
     isolated: bool
-    # Whether the strip fell short of removing a flagged node outright — the cases are
-    # enumerated in `detect_js.py`, which is where they are detected. Same no-default
-    # rule as `isolated`.
     strip_incomplete: bool
     spans_dropped: int
-    # The top-level response's HTTP status, or None if it was not observed. Not
-    # page-authored free text — Chrome parses the status line into an int — so it is
-    # bounds-checked here rather than run through the string sanitizer.
     http_status: int | None
-    # What the fetch actually returned, per `classify`: real content, an anti-bot
-    # interstitial, a hard block, a non-text body. Computed by our own code from the
-    # response and the render, so it is a trusted enum, never a page-authored string.
     retrieval_status: classify.RetrievalStatus
 
     def __post_init__(self) -> None:
-        # A URL is a citation, so it is never rewritten: if cleaning would change
-        # it, drop it and let the caller fall back to the URL it asked for. Same
-        # rule the search backend applies to a hit's URL.
-        # `html`/`text` carry the content and are stripped downstream with threat
-        # collection; they still have to *be* text, since a page can shadow the
-        # getters these are read from.
         self.html, self.text = _as_text(self.html), _as_text(self.text)
         self.final_url = safety.safe_url(self.final_url) or ""
         self.title = sanitize.clean_field(self.title, sanitize.MAX_TITLE_CHARS) or ""
@@ -503,43 +443,20 @@ class RenderedPage:
                 key: cleaned
                 for key, value in (meta_pairs if isinstance(meta_pairs, dict) else {}).items()
                 if isinstance(key, str) and isinstance(value, str)
-                # Bounded at URL length, not metadata length: `canonical` is read
-                # back out of this map, and pre-truncating it here would leave
-                # `safe_url` comparing against an already-shortened string and
-                # calling a rewritten URL unchanged.
                 if (cleaned := sanitize.clean_field(value, sanitize.MAX_URL_CHARS))
             },
             "lang": sanitize.clean_field(raw_meta.get("lang"), sanitize.MAX_LANG_CHARS),
             "canonical": safety.safe_url(raw_meta.get("canonical")),
         }
-        # A CDP status is already an int, but a construction site (or a test) can pass
-        # anything; fail closed to None rather than surface a non-numeric status. `0` is
-        # normalized away too — it is what a service-worker-synthesized or client-blocked
-        # request reports, and returning it would hand a caller a value that is not a
-        # status while `retrieval_status` already says `unknown`.
         status = self.http_status
         self.http_status = status if isinstance(status, int) and status > 0 else None
 
 
 def _as_text(value: object) -> str:
-    """A page-world eval result as text.
-
-    Every expression here reads a DOM property a page can shadow with
-    `Object.defineProperty`, so the declared `str` is a claim about the happy path.
-    Anything else means no content, matching how `_clean_span` treats a malformed span.
-    """
     return value if isinstance(value, str) else ""
 
 
 def _clean_span(span: object) -> HiddenSpan | None:
-    """Clean one hidden span to the size its threat report uses, or reject it.
-
-    `HiddenSpan` describes what the collector is *supposed* to return, but the
-    collector runs in the page's own JS world, so the shape is a claim rather than
-    a guarantee — indexing it directly turns a patched `Array.prototype.push` into
-    an unhandled crash on the untrusted-input boundary. Anything malformed is
-    dropped rather than trusted.
-    """
     if not isinstance(span, dict):
         return None
     text, reason, path = span.get("text"), span.get("reason"), span.get("path")
@@ -557,24 +474,11 @@ def _clean_span(span: object) -> HiddenSpan | None:
 
 
 def registrable_domain(url: str) -> str:
-    """The key requests are grouped under, for rate limiting and source diversity.
-
-    Falls back to the bare host for addresses with no public suffix (IPs,
-    `localhost`, unknown TLDs) — grouping on the full URL instead would give
-    every path its own bucket and effectively disable both.
-    """
     ext = tldextract.extract(url)
     return ext.top_domain_under_public_suffix or ext.fqdn or urlparse(url).hostname or url
 
 
 class _InflightRequests:
-    """Tracks a session's in-flight network requests by CDP request id.
-
-    Ids rather than a counter: `Network.requestWillBeSent` re-fires per redirect
-    hop with the same request id while `loadingFinished`/`loadingFailed` fire
-    once, so a counter would drift upward and never return to zero.
-    """
-
     def __init__(self) -> None:
         self._ids: set[str] = set()
 
@@ -601,24 +505,6 @@ class _InflightRequests:
 
 
 class _MainResponse:
-    """Captures the top-level response's status, MIME type and headers for `classify`.
-
-    These are what let a caller tell a Cloudflare interstitial, a 403, or a PDF from
-    the real page, instead of a block being returned as if it were content. CDP sets
-    the main resource's requestId equal to its loaderId — for an HTML page, a PDF, or
-    a top-level image alike — so a lookup by loaderId picks the main document out of
-    every request the page made, without depending on its resource type.
-
-    The loaderId tracked is the *current* main frame's, not the one `Page.navigate`
-    returned. A meta-refresh or a JS `location.href` replaces the document after
-    navigate returns, and the text, title and final URL are read from whatever is
-    current at extraction time. Keying on the navigation's own loaderId would describe
-    the page that was left behind: a 200 that redirects to a 404 would report `ok` and
-    hand back the 404 body as content, and a 403 interstitial that redirects to the
-    real article would throw that article away as `blocked`. Anti-bot flows redirect
-    client-side routinely, so this is the common path rather than a corner.
-    """
-
     def __init__(self) -> None:
         self._by_loader: dict[str, dict] = {}
         self._loader_id: str | None = None
@@ -628,10 +514,6 @@ class _MainResponse:
         if not isinstance(response, dict):
             return
         request_id = params.get("requestId")
-        # A document's main resource is the request whose id *is* its loaderId; every
-        # subresource it pulls in has a different one. Keeping only the former is both
-        # the lookup key below and the reason this holds one entry per navigation
-        # rather than a header dict for every image and script on an ad-heavy page.
         if not isinstance(request_id, str) or request_id != params.get("loaderId"):
             return
         # Server-side redirect hops arrive as `requestWillBeSent.redirectResponse`, so
@@ -642,7 +524,7 @@ class _MainResponse:
     def _on_frame_navigated(self, params: dict) -> None:
         frame = params.get("frame")
         if not isinstance(frame, dict) or frame.get("parentId"):
-            return  # a sub-frame's document is not the one being read
+            return
         loader_id = frame.get("loaderId")
         if isinstance(loader_id, str):
             self._loader_id = loader_id
@@ -654,11 +536,6 @@ class _MainResponse:
         ]
 
     def main(self, navigated_loader_id: object) -> dict | None:
-        """The response for the document current now, or None if it was not observed.
-
-        None rather than a best guess: an unobserved response is reported as `unknown`
-        rather than allowed to read as a verified 200.
-        """
         loader_id = self._loader_id if self._loader_id is not None else navigated_loader_id
         if isinstance(loader_id, str):
             return self._by_loader.get(loader_id)
@@ -666,17 +543,6 @@ class _MainResponse:
 
 
 class _ChallengeAssets:
-    """Watches for assets only an anti-bot challenge loads.
-
-    A challenge's orchestrator is a request the page makes, so it is visible here even
-    though the collector strips `<script>` out of the markup it returns — and a URL that
-    was really requested is a fact, where the same string inside HTML could be an article
-    about the vendor.
-
-    Each URL is tested as it arrives and only the verdict is kept, so this holds one
-    boolean rather than every URL an ad-heavy page requested.
-    """
-
     def __init__(self) -> None:
         self.seen = False
 
@@ -891,7 +757,6 @@ class EngineProvider:
         try:
             return await _browser_ws_url(cfg.cdp_url)
         except OSError as exc:
-            # A remote/hosted CDP_URL is the user's to manage; only auto-start a local one.
             if not (cfg.auto_start_browser and _is_local(cfg.cdp_url)):
                 raise BrowserUnavailableError(remediation(cfg)) from exc
         await _start_browser(cfg)
@@ -901,12 +766,6 @@ class EngineProvider:
             raise BrowserUnavailableError(remediation(cfg)) from exc
 
     async def _ensure_connected(self) -> None:
-        """Reconnect if the browser dropped the CDP socket.
-
-        The MCP process outlives browser containers (Docker restarts, image
-        upgrades); the endpoint can answer HTTP probes while this process's
-        websocket is dead — without this, every fetch fails until a restart.
-        """
         if self._cdp is not None and not self._cdp.closed:
             return
         async with self._reconnect_lock:
@@ -930,8 +789,6 @@ class EngineProvider:
         await self._ensure_identity()
         if self._identity is not None:
             await self._cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
-        # Only Page and Network are enabled — never Runtime/Console, which would
-        # expose the CDP session to the page as the `isAutomatedWithCDP` signal.
         await self._cdp.send("Page.enable", session_id=sid)
         await self._cdp.send("Network.enable", session_id=sid)
         if self._cfg.block_private_ips:
@@ -994,21 +851,12 @@ class EngineProvider:
                     raise CDPError(f"navigation failed: {reason or 'unknown error'}")
                 await asyncio.wait_for(loaded, timeout=_GOTO_TIMEOUT_S)
             finally:
-                # Navigation can fail before the load event is ever awaited; the
-                # waiter deregisters itself once cancelled.
                 loaded.cancel()
             await self._settle(sid, inflight)
 
-            # Created after the last navigation, so it belongs to the document being
-            # read. Everything below evaluates here rather than in the page's world.
             ctx = await self._isolated_context(sid)
 
-            # `_eval` returns whatever the page produced. Narrow before use: a
-            # shadowed `location.href` reaching `urlparse` raises out of the guard
-            # instead of being checked by it.
             final_url = _as_text(await self._eval(sid, "document.location.href", ctx))
-            # A page can redirect to an internal address the initial check never saw;
-            # re-check the final URL so its content is never returned.
             await safety.check_url(final_url, self._cfg)
             detect_expr = f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)})"
             try:
@@ -1016,32 +864,22 @@ class EngineProvider:
                     self._eval(sid, detect_expr, ctx), timeout=_DETECT_TIMEOUT_S
                 )
             except TimeoutError as exc:
-                # An adversarial page (deeply nested, huge DOM) could otherwise force
-                # unbounded style-recalc work here; fail this fetch instead of hanging
-                # the page's concurrency slot indefinitely.
                 raise CDPError("hidden-text detection timed out") from exc
             # The collector's own result is page-world data too: a reply carrying no
             # `value` at all arrives as None, so index it defensively rather than
             # letting a TypeError surface as the fetch's error message.
             found = collected if isinstance(collected, dict) else {}
-            # The top-level response tells a block or a non-text body from real content.
-            # Classified from our own code (status/MIME/headers + the render), so the
-            # verdict is a trusted enum even though every input is page-influenceable.
             main = responses.main(nav.get("loaderId"))
             http_status = main.get("status") if main else None
             retrieval_status = classify.classify(
                 main, challenge_assets.seen, found.get("title"), found.get("text")
             )
-            # `html`/`text`/`title` come out of the collector's own evaluation rather
-            # than from separate round trips: see the note in `detect_js.py`.
             return RenderedPage(
                 html=_as_text(found.get("html")),
                 text=_as_text(found.get("text")),
                 final_url=final_url,
                 title=_as_text(found.get("title")),
                 isolated=ctx is not None,
-                # Any non-false reply degrades to "say the strip was partial", so a
-                # page cannot quiet the disclosure by returning a surprising shape.
                 strip_incomplete=bool(found.get("stripIncomplete")),
                 spans_dropped=found.get("spansDropped") or 0,
                 http_status=http_status,
@@ -1060,16 +898,6 @@ class EngineProvider:
                 await self._cdp.send("Target.closeTarget", {"targetId": tid})
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
-        """Wait until the network is quiet and the DOM stops changing.
-
-        DOMContentLoaded fires on an SPA's empty shell. In-flight data fetches
-        hold the wait open; the _SETTLE_QUIET_S window catches the render work
-        and short timers that follow them; _SETTLE_TIMEOUT_S caps the whole wait.
-
-        Polled from an isolated world, so a page instrumenting `querySelectorAll`
-        cannot count the probes and learn that extraction is underway — which would
-        hand it the timing signal for everything that happens next.
-        """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _SETTLE_TIMEOUT_S
         prev: object = None
@@ -1079,8 +907,6 @@ class EngineProvider:
             try:
                 current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
             except CDPError:
-                # A navigation during settle destroys the context. Rebuild it against
-                # the new document and treat this poll as a change.
                 ctx = await self._isolated_context(session_id)
                 prev, quiet_since = None, loop.time()
                 await asyncio.sleep(_SETTLE_POLL_S)
@@ -1093,18 +919,6 @@ class EngineProvider:
             await asyncio.sleep(_SETTLE_POLL_S)
 
     async def _isolated_context(self, session_id: str) -> int | None:
-        """An execution context the page's own JavaScript cannot reach.
-
-        The collector reads the DOM through `getComputedStyle`, `createTreeWalker`
-        and `Array.prototype.push` — all replaceable from the page. Evaluated in the
-        main world, a page could therefore silently suppress its own hidden-text
-        report. An isolated world shares the DOM but gets fresh JS globals, so those
-        substitutions do not apply to it.
-
-        This does not enable the `Runtime` domain, so the `isAutomatedWithCDP` signal
-        stays absent. Returns None if the browser will not provide one, and the
-        caller degrades to the main world and says so.
-        """
         try:
             tree = await asyncio.wait_for(
                 self._cdp.send("Page.getFrameTree", session_id=session_id),
@@ -1122,18 +936,13 @@ class EngineProvider:
             context_id = world.get("executionContextId")
             return context_id if isinstance(context_id, int) else None
         except (CDPError, KeyError, TypeError, TimeoutError):
-            # Both commands are serviced by the renderer, so a wedged page would
-            # otherwise hold a concurrency slot here indefinitely.
             if self._cdp.closed:
-                raise  # a dead socket is infrastructure, not reduced detection
+                raise
             return None
 
     async def _eval(
         self, session_id: str, expression: str, context_id: int | None = None
     ) -> object:
-        # Bounded: a page that wedges its renderer after load (a spinning timer, a
-        # modal dialog nothing dismisses) would otherwise hang this await forever
-        # while holding one of the `max_concurrent_pages` slots.
         res = await asyncio.wait_for(
             self._cdp.send(
                 "Runtime.evaluate",
@@ -1148,8 +957,6 @@ class EngineProvider:
             timeout=_EVAL_TIMEOUT_S,
         )
         if "exceptionDetails" in res:
-            # The eval runs in the page's own world, so a page can throw with a
-            # payload of its choosing — this text can reach the caller's model.
             detail = sanitize.clean_field(str(res["exceptionDetails"]), sanitize.MAX_ERROR_CHARS)
             raise CDPError(detail or "page evaluation failed")
         return res.get("result", {}).get("value")
@@ -1168,9 +975,6 @@ async def get_provider() -> EngineProvider:
     global _provider
     async with _provider_lock:
         if _provider is None:
-            # Constructed, not connected: `fetch` validates the URL before
-            # `_ensure_connected` starts anything, so a URL the SSRF guard rejects
-            # never auto-starts a container.
             _provider = EngineProvider(load_config())
     return _provider
 
