@@ -146,9 +146,7 @@ async def fetch_document(
         markdown = text
     elif not include_hidden:
         markdown = sanitize.strip_invisible(markdown, scans[0])
-    content = markdown
     if format == "markdown" and not markdown.strip():
-        content = text
         markdown = extract.fenced(text)
     status = page.retrieval_status
     if status == "ok" and not visible_text.strip():
@@ -192,5 +190,5 @@ async def fetch_document(
         status=status,
         http_status=page.http_status,
         threats=threats,
-        provenance=provenance.build(content, meta, page.meta),
+        provenance=provenance.build(markdown, meta, page.meta),
     )
