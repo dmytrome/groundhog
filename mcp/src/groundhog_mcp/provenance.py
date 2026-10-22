@@ -72,7 +72,7 @@ def build(markdown: str, extract_meta: ExtractMeta, engine_meta: "PageMeta") -> 
         "canonical": (
             safety.safe_url(extract_meta.canonical)
             or engine_meta["canonical"]
-            or safety.safe_url(_first(raw, ("canonical",)))
+            or _first(raw, ("canonical",))
         ),
         "language": _detect_language(markdown, engine_meta["lang"]),
     }
