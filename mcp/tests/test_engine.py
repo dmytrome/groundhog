@@ -1406,10 +1406,12 @@ async def test_a_real_page_exception_is_reported_by_its_message(
     fixture: str, message: str
 ) -> None:
     details = json.loads((_FIXTURES / fixture).read_text())
+    methods: list[str] = []
 
     async def respond(ws: websockets.ServerConnection) -> None:
         async for raw in ws:
             request = json.loads(raw)
+            methods.append(request["method"])
             await ws.send(json.dumps({
                 "id": request["id"],
                 "result": {"result": {"type": "object"}, "exceptionDetails": details},
@@ -1425,6 +1427,7 @@ async def test_a_real_page_exception_is_reported_by_its_message(
         finally:
             await provider._cdp.close()
     assert str(caught.value).startswith(message)
+    assert methods == ["Runtime.evaluate"]
 
 
 class _NoEvents(_ScriptedCDP):
