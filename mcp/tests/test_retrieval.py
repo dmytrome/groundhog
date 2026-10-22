@@ -505,6 +505,15 @@ def test_a_hard_cut_never_separates_an_escape_from_the_character_it_escapes() ->
     assert "".join(c.text for c in chunks) == markdown
 
 
+def test_a_run_of_backslashes_is_cut_into_full_sized_pieces() -> None:
+    markdown = "\\" * 6000
+
+    chunks = chunk_document(markdown)
+
+    assert len(chunks) == 3
+    assert all(len(c.text) % 2 == 0 for c in chunks)
+
+
 def test_a_long_block_that_is_wholly_relevant_comes_back_unchanged() -> None:
     block = "\n".join(f"line {i} about the kitten diet and feeding schedule" for i in range(120))
     markdown = f"# Feeding\n\n{block}\n\n# Other\n\nDogs guard the house.\n"

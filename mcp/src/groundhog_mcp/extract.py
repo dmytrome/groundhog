@@ -14,22 +14,31 @@ class ExtractMeta:
     canonical: str | None
 
 
-_INLINE_MARKUP_RE = re.compile(r"([\\`*_~\[\]<])")
-_BLOCK_START_RE = re.compile(r"^([ \t]*)([#>+-]|\d+(?=[.)]))", re.MULTILINE)
-_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
-_LINK_TARGET_RE = re.compile(r"\]\([^)]*\)")
+_BACKTICKS_RE = re.compile(r"`+")
+_TARGET = r"\((?:[^()]|\([^()]*\))*\)"
+_IMAGE_RE = re.compile(r"!\[(?:[^\[\]]|\[[^\]]*\])*\]" + _TARGET)
+_LINK_TARGET_RE = re.compile(r"\]" + _TARGET)
 
 
-def escaped(text: str) -> str:
-    inline = _INLINE_MARKUP_RE.sub(r"\\\1", text)
-    return _BLOCK_START_RE.sub(
-        lambda m: m[1] + (m[2] + "\\" if m[2][0].isdigit() else "\\" + m[2]), inline
-    )
+def fenced(text: str) -> str:
+    if not text.strip():
+        return ""
+    longest = max((len(run) for run in _BACKTICKS_RE.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
 
 
 def readable(markdown: str) -> bool:
     words = _LINK_TARGET_RE.sub("]", _IMAGE_RE.sub("", markdown))
     return any(ch.isalnum() for ch in words)
+
+
+def dangling_escape(text: str) -> bool:
+    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+
+def _whole_escapes(text: str) -> str:
+    return text[:-1] if dangling_escape(text) else text
 
 
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
@@ -39,7 +48,7 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     cut = text.rfind("\n\n", 0, limit)
     if cut <= 0:
         cut = limit
-    return text[:cut].rstrip().rstrip("\\") + _TRUNCATION_MARKER, True
+    return _whole_escapes(text[:cut].rstrip()) + _TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:

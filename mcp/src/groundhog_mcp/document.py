@@ -146,8 +146,8 @@ async def fetch_document(
         markdown = text
     elif not include_hidden:
         markdown = sanitize.strip_invisible(markdown, scans[0])
-    if format == "markdown" and not markdown.strip():
-        markdown = extract.escaped(text)
+    if format == "markdown" and not extract.readable(markdown):
+        markdown = extract.fenced(text)
     status = page.retrieval_status
     if status == "ok" and not visible_text.strip() and not extract.readable(markdown):
         status = "empty"
