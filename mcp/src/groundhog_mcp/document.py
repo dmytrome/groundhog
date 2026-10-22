@@ -134,8 +134,6 @@ async def fetch_document(
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
-        if not markdown:
-            markdown = page.text
 
     scans = [sanitize.counts(markdown)]
     if markdown is not page.text:
@@ -143,12 +141,15 @@ async def fetch_document(
     found = _merged(scans)
     char_threats = sanitize.threats(found)
     visible_text = sanitize.strip_invisible(page.text, scans[-1])
-    if not include_hidden:
+    text = page.text if include_hidden else visible_text
+    if markdown is page.text:
+        markdown = text
+    elif not include_hidden:
         markdown = sanitize.strip_invisible(markdown, scans[0])
-        if not markdown.strip():
-            markdown = visible_text
+    if format == "markdown" and not markdown.strip():
+        markdown = extract.escaped(text)
     status = page.retrieval_status
-    if status in ("ok", "unknown") and not visible_text.strip():
+    if status == "ok" and not visible_text.strip():
         status = "empty"
     threats = _capped(
         char_threats,

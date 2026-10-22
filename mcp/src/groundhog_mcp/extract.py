@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 import trafilatura
@@ -11,6 +12,10 @@ class ExtractMeta:
     author: str | None
     published: str | None
     canonical: str | None
+
+
+def escaped(text: str) -> str:
+    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", text)
 
 
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
