@@ -1397,6 +1397,9 @@ def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     [
         ("cdp_exception_details.json", "Error: " + "x" * 50),
         ("cdp_thrown_string_details.json", "boom"),
+        ("cdp_thrown_empty_string_details.json", '""'),
+        ("cdp_thrown_false_details.json", "false"),
+        ("cdp_thrown_null_details.json", "null"),
     ],
 )
 async def test_a_real_page_exception_is_reported_by_its_message(

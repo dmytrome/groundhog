@@ -963,11 +963,15 @@ class EngineProvider:
         if "exceptionDetails" in res:
             details = res["exceptionDetails"]
             thrown = details.get("exception") if isinstance(details, dict) else None
-            message = (
-                thrown.get("description") or thrown.get("value")
-                if isinstance(thrown, dict)
-                else None
-            )
+            message = None
+            if isinstance(thrown, dict):
+                value = thrown.get("value")
+                if thrown.get("description"):
+                    message = thrown["description"]
+                elif isinstance(value, str) and value:
+                    message = value
+                elif "value" in thrown:
+                    message = json.dumps(value)
             detail = sanitize.clean_field(str(message or details), sanitize.MAX_ERROR_CHARS)
             raise CDPError(detail or "page evaluation failed")
         return res.get("result", {}).get("value")
