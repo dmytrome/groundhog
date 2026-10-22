@@ -1140,15 +1140,16 @@ async def test_a_repeated_domain_counts_once_toward_the_limit(fake_web: FakeWeb)
 @pytest.mark.parametrize("max_tokens", [1, 2000])
 async def test_each_source_keeps_its_own_threat_budget_outside_the_passage_budget(
     monkeypatch: pytest.MonkeyPatch,
-    fake_web: FakeWeb,
     fake_provider: Callable[[engine.RenderedPage], None],
     make_page: Callable[..., engine.RenderedPage],
     max_tokens: int,
 ) -> None:
-    fetch_document = document.fetch_document
     urls = ["https://a.com/x", "https://b.com/y"]
-    fake_web([_hit(url) for url in urls], {})
-    monkeypatch.setattr(document, "fetch_document", fetch_document)
+
+    async def _search(query: str, cfg: Config, limit: int) -> tuple[list[SearchHit], str]:
+        return [_hit(url) for url in urls], "serp"
+
+    monkeypatch.setattr(search_module, "search", _search)
     hidden: list[engine.HiddenSpan] = [
         {"reason": "display:none", "text": f"hidden payload {i}", "path": f"p:nth-child({i})"}
         for i in range(30)
@@ -1161,6 +1162,23 @@ async def test_each_source_keeps_its_own_threat_budget_outside_the_passage_budge
     for source in result["sources"]:
         assert len([t for t in source["threats"] if t["type"] == "hidden_css"]) == 10
         assert any(t["type"] == "report_truncated" for t in source["threats"])
+
+
+async def test_a_chunk_without_a_source_yields_no_passage(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    url = "https://a.com/x"
+    fake_web([_hit(url)], {url: _doc(url, "# Cats\n\nCats nap all day.")})
+    chunk_document = retrieval.chunk_document
+    monkeypatch.setattr(
+        retrieval,
+        "chunk_document",
+        lambda markdown, source=None: chunk_document(markdown),
+    )
+
+    result = await research("cats")
+
+    assert result["passages"] == []
 
 
 @pytest.mark.parametrize(
