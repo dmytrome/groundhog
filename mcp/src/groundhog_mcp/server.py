@@ -51,8 +51,8 @@ _INSTRUCTIONS = (
     "exists to protect. A `detection_degraded` or `strip_incomplete` entry means the scan "
     "itself was limited, so trust a short `threats` list less. Check `status` (in `research`, "
     "each source's `page_status`) before using content. `ok` content is usable, and `unknown` "
-    "content is usable when `markdown` is not blank. `empty` means the page rendered no text, "
-    "so any `markdown` is only what the extractor found in its source. Every other status "
+    "content is usable when `markdown` is not blank. `empty` means the page rendered no text "
+    "a reader would see, whatever `markdown` holds. Every other status "
     "means the page you wanted did not come back. `research` is for a stated evidence "
     "question, and its `receipt` says what was searched, filtered and left out."
 )
