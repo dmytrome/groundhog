@@ -1376,6 +1376,16 @@ def test_a_canonical_metadata_url_longer_than_a_byline_is_not_shortened(
     assert result["canonical"] == canonical
 
 
+def test_a_canonical_metadata_url_padded_with_whitespace_is_kept_stripped(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    page = make_page(
+        meta={"meta": {"canonical": " \thttps://ex.com/a\n"}, "lang": None, "canonical": None}
+    )
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] == "https://ex.com/a"
+
+
 @pytest.mark.parametrize(
     "canonical", ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000]
 )
