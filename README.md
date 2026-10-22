@@ -96,7 +96,7 @@ container after removing an unreachable one named `groundhog-browser`.
 
 | Key          | Meaning |
 | ------------ | ------- |
-| `markdown`   | Extracted content, article first, falling back to the rendered text with markdown syntax backslash-escaped; `format` may be `markdown` or `text` |
+| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown; `format` may be `markdown` or `text` |
 | `title`      | Page title |
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
