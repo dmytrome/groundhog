@@ -1433,7 +1433,7 @@ class _NoEvents(_ScriptedCDP):
 
 
 def _provider_collecting(
-    monkeypatch: pytest.MonkeyPatch, collected: dict | None
+    monkeypatch: pytest.MonkeyPatch, collected: dict[str, str] | None
 ) -> tuple[engine.EngineProvider, _NoEvents]:
     async def public(url: str, cfg: Config) -> None:
         return None
