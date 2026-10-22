@@ -1381,7 +1381,8 @@ def test_a_canonical_metadata_url_padded_with_whitespace_is_kept_stripped(
 
 
 @pytest.mark.parametrize(
-    "canonical", ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000]
+    "canonical",
+    ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000, "\u00a0https://ex.com/a"],
 )
 def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     make_page: Callable[..., engine.RenderedPage], canonical: str
@@ -1396,6 +1397,9 @@ def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     [
         ("cdp_exception_details.json", "Error: " + "x" * 50),
         ("cdp_thrown_string_details.json", "boom"),
+        ("cdp_thrown_empty_string_details.json", '""'),
+        ("cdp_thrown_false_details.json", "false"),
+        ("cdp_thrown_null_details.json", "null"),
     ],
 )
 async def test_a_real_page_exception_is_reported_by_its_message(
@@ -1429,7 +1433,7 @@ class _NoEvents(_ScriptedCDP):
 
 
 def _provider_collecting(
-    monkeypatch: pytest.MonkeyPatch, collected: dict | None
+    monkeypatch: pytest.MonkeyPatch, collected: dict[str, str] | None
 ) -> tuple[engine.EngineProvider, _NoEvents]:
     async def public(url: str, cfg: Config) -> None:
         return None
