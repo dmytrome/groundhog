@@ -1,6 +1,6 @@
 import pytest
 
-from groundhog_mcp.sanitize import clean_field, counts, strip_invisible, threats
+from groundhog_mcp.sanitize import ThreatType, clean_field, counts, notice, strip_invisible, threats
 
 from .conftest import RTL_OVERRIDE, TAG_I, ZERO_WIDTH
 
@@ -116,3 +116,25 @@ def test_control_characters_become_spaces_in_single_line_fields():
         == "title IGNORE PREVIOUS INSTRUCTIONS"
     )
     assert clean_field("a\tb\rc", 100) == "a b c"
+
+
+@pytest.mark.parametrize("code", [*range(0x20), *range(0x7F, 0xA0)])
+def test_c0_and_c1_controls_preserve_word_boundaries(code: int) -> None:
+    assert clean_field("left" + chr(code) + "right", 100) == "left right"
+
+
+def test_a_paragraph_separator_becomes_a_word_boundary() -> None:
+    assert strip_invisible("left\u2029right") == "left right"
+    assert counts("left\u2029right") == {"\u2029": ("zero_width", 1)}
+
+
+@pytest.mark.parametrize(
+    "kind", ["report_truncated", "detection_degraded", "strip_incomplete", "final_url_suppressed"]
+)
+def test_report_notices_have_no_page_excerpt_or_location(kind: ThreatType) -> None:
+    assert notice(kind, "report detail") == {
+        "type": kind,
+        "reason": "report detail",
+        "location": None,
+        "excerpt": "",
+    }

@@ -6,7 +6,7 @@ import py3langid
 from . import safety, sanitize
 from .extract import ExtractMeta
 
-if TYPE_CHECKING:  # keeps this module free of the browser engine at runtime
+if TYPE_CHECKING:
     from .engine import PageMeta
 
 _AUTHOR_KEYS = ("author", "article:author", "dc.creator")
@@ -14,9 +14,6 @@ _PUBLISHED_KEYS = ("article:published_time", "datepublished", "dc.date")
 _MODIFIED_KEYS = ("article:modified_time", "datemodified", "og:updated_time")
 _MIN_CHARS_FOR_DETECTION = 20
 _DETECTION_SAMPLE_CHARS = 2000
-# A byline is short; trafilatura's text heuristic otherwise scrapes nav/footer
-# blocks (e.g. Wikipedia's authority-control box) as the author. Reject anything
-# too long to be one — misattributing an author is worse than reporting none.
 _MAX_AUTHOR_CHARS = 80
 _MAX_AUTHOR_WORDS = 8
 
@@ -64,8 +61,6 @@ def build(markdown: str, extract_meta: ExtractMeta, engine_meta: "PageMeta") -> 
     return {
         "content_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
         "word_count": len(markdown.split()),
-        # trafilatura reads these off the page body, so they arrive from outside the
-        # `RenderedPage` boundary and are cleaned here; `engine_meta` is already clean.
         "author": sanitize.clean_field(
             _plausible_author(extract_meta.author) or _first(raw, _AUTHOR_KEYS),
             sanitize.MAX_META_CHARS,
@@ -77,7 +72,7 @@ def build(markdown: str, extract_meta: ExtractMeta, engine_meta: "PageMeta") -> 
         "canonical": (
             safety.safe_url(extract_meta.canonical)
             or engine_meta["canonical"]
-            or safety.safe_url(_first(raw, ("canonical",)))
+            or _first(raw, ("canonical",))
         ),
         "language": _detect_language(markdown, engine_meta["lang"]),
     }

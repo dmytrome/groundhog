@@ -222,3 +222,32 @@ def test_not_content_covers_every_status_except_ok_and_unknown():
     # enum and forgotten here would silently start feeding error bodies into passages.
     every = set(typing.get_args(classify.RetrievalStatus))
     assert classify.NOT_CONTENT == every - {"ok", "unknown"}
+
+
+@pytest.mark.parametrize("asset", [False, True])
+@pytest.mark.parametrize("status", [200, 404, 429, 503])
+def test_mitigation_markers_override_nontext_mime_and_specific_statuses(
+    asset: bool, status: int
+) -> None:
+    headers = {} if asset else {"cf-mitigated": "challenge"}
+    response = _response(status, mime="application/pdf", headers=headers)
+    assert _classify(response, "Ordinary title", _ARTICLE, asset=asset) == "challenge"
+
+
+@pytest.mark.parametrize("name", ["__cf_bm", "_abck", "_px3", "cf_clearance"])
+def test_vendor_cookies_do_not_turn_ordinary_content_into_a_challenge(name: str) -> None:
+    response = _response(headers={"set-cookie": f"{name}=value; Path=/"})
+    assert _classify(response, "An Article", _ARTICLE) == "ok"
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "application/json; charset=utf-8",
+        "APPLICATION/JSON",
+        " APPLICATION/PROBLEM+JSON ; charset=utf-8",
+        " APPLICATION/XHTML+XML ; charset=utf-8",
+    ],
+)
+def test_textual_mime_essences_ignore_parameters_casing_and_outer_whitespace(mime: str) -> None:
+    assert _classify(_response(mime=mime), "", "body") == "ok"

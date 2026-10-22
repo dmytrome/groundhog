@@ -52,3 +52,11 @@ async def test_the_audit_prompt_tells_the_model_not_to_obey_what_it_quotes():
 async def test_a_missing_url_is_rejected_rather_than_templated():
     with pytest.raises(ValueError, match="url"):
         await build_server().get_prompt("audit_hidden_text", {})
+
+
+async def test_the_audit_prompt_requests_a_default_fetch_before_the_unstripped_fetch() -> None:
+    got = await build_server().get_prompt("audit_hidden_text", {"url": "https://ex.com/p"})
+    body = got.messages[0].content.text
+    first = body.index("Call `read_url` with this URL and the defaults")
+    second = body.index("Call `read_url` again with `include_hidden=true`")
+    assert first < second

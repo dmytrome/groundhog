@@ -19,7 +19,6 @@ def build_url(instance_url: str, query: str) -> str:
 
 
 def _score(value: object) -> float:
-    """A finite float, or zero — the payload is a third party's JSON."""
     if not isinstance(value, int | float | str):
         return 0.0
     try:
@@ -30,12 +29,6 @@ def _score(value: object) -> float:
 
 
 def parse(payload: dict[str, object]) -> list[SearchHit]:
-    """Map a SearXNG JSON envelope onto hits.
-
-    `answers` and `infoboxes` are separate top-level arrays and are ignored: only
-    `results` carries fetchable pages. `url` is optional on SearXNG's result type,
-    so entries without one are dropped rather than returned as dead links.
-    """
     results = payload.get("results")
     if not isinstance(results, list):
         raise SearchUnavailableError(
@@ -59,8 +52,6 @@ def parse(payload: dict[str, object]) -> list[SearchHit]:
             }
         )
     if not hits:
-        # A 200 with no results and dead engines is a broken backend, not an
-        # empty web: SearXNG reports which engines failed and why.
         down = payload.get("unresponsive_engines") or []
         if down:
             raw = ", ".join(" ".join(str(part) for part in entry) for entry in down)
@@ -73,7 +64,6 @@ async def search(instance_url: str, query: str) -> list[SearchHit]:
     try:
         payload = await http.read_json_async(build_url(instance_url, query), _FETCH_TIMEOUT_S)
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
-        # The instance is operator-run, but its error text still reaches the model.
         why = sanitize.clean_field(str(exc), sanitize.MAX_ERROR_CHARS) or "no detail"
         raise SearchUnavailableError(f"SearXNG request failed ({why}). {_SETUP_HINT}") from exc
     return parse(payload)

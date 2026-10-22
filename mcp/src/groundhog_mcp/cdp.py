@@ -7,12 +7,12 @@ from typing import TypeVar
 import websockets
 
 _T = TypeVar("_T")
-_MAX_FRAME_BYTES = 64 * 1024 * 1024  # generous for real pages, fatal for a memory bomb
+_MAX_FRAME_BYTES = 64 * 1024 * 1024
 _COMMAND_TIMEOUT_S = 90.0
 
 
 class CDPError(Exception):
-    """A CDP command returned an error or the page raised during evaluate."""
+    pass
 
 
 class CommandTimeout(CDPError, TimeoutError):
@@ -39,9 +39,6 @@ class CDPClient:
         self._closed = False
 
     async def connect(self) -> None:
-        # Bounded, not unlimited: a CDP response carries the page's own `outerHTML`,
-        # so a hostile page choosing its size could otherwise stream this process out
-        # of memory — the same reason `http.MAX_BYTES` exists for plain fetches.
         self._ws = await websockets.connect(self._ws_url, max_size=_MAX_FRAME_BYTES)
         self._reader = asyncio.create_task(self._read_loop())
 
@@ -64,16 +61,14 @@ class CDPClient:
                             fut.set_result(msg.get("params", {}))
                     for cb in list(self._event_listeners.get(key, [])):
                         cb(msg.get("params", {}))
-            # Clean close from the browser side — fail waiters, don't strand them.
             self._fail_all(CDPError("CDP connection closed"))
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # connection dropped — fail everything waiting
+        except Exception as exc:
             self._fail_all(CDPError(f"CDP connection closed: {exc}"))
 
     @property
     def closed(self) -> bool:
-        """Whether this client can no longer talk to the browser."""
         return self._ws is None or self._closed
 
     def _fail_all(self, exc: Exception) -> None:
@@ -100,9 +95,6 @@ class CDPClient:
             msg["sessionId"] = session_id
         self._pending[mid] = fut
         try:
-            # The send is inside the block too: a cancellation or a dropped socket
-            # while suspended here would otherwise strand the entry for the life of
-            # the connection, once per wedged page.
             await self._ws.send(json.dumps(msg))
             try:
                 return await asyncio.wait_for(fut, timeout=_COMMAND_TIMEOUT_S)
@@ -113,12 +105,6 @@ class CDPClient:
             self._pending.pop(mid, None)
 
     def expect_event(self, method: str, session_id: str | None = None) -> asyncio.Future[dict]:
-        """Register a waiter BEFORE the command that triggers the event, then await it.
-
-        The waiter removes itself once settled. An event that never arrives — a
-        navigation that times out, or fails before the load fires — would otherwise
-        retain its entry for the life of the connection, once per such fetch.
-        """
         key = (session_id, method)
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._event_waiters.setdefault(key, []).append(fut)
@@ -131,10 +117,9 @@ class CDPClient:
         key: tuple[str | None, str],
         item: _T,
     ) -> None:
-        """Remove one entry from a per-(session, method) registry, pruning the key."""
         entries = registry.get(key)
         if not entries:
-            return  # already delivered: `_read_loop` pops the whole list
+            return
         if item in entries:
             entries.remove(item)
         if not entries:
@@ -143,7 +128,6 @@ class CDPClient:
     def on_event(
         self, method: str, session_id: str | None, callback: Callable[[dict], None]
     ) -> Callable[[], None]:
-        """Persistent listener (expect_event is one-shot). Returns an unsubscribe."""
         key = (session_id, method)
         self._event_listeners.setdefault(key, []).append(callback)
 

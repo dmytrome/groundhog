@@ -37,12 +37,6 @@ def _surfaced(tool: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable
 def _register_read_only(
     mcp: MCPServer, tool: Callable[..., Awaitable[object]], title: str, *, open_world: bool
 ) -> None:
-    """Register a read-only tool, carrying its title in both places the spec allows.
-
-    A client following 2025-06-18 reads `Tool.title` and only falls back to
-    `annotations.title`, so setting one alone shows some clients a bare function name.
-    Writing the title once here is also what keeps the two from drifting apart.
-    """
     mcp.tool(
         title=title,
         annotations=ToolAnnotations(title=title, read_only_hint=True, open_world_hint=open_world),

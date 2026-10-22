@@ -120,3 +120,10 @@ def test_a_home_relative_chrome_path_and_profile_are_expanded(monkeypatch):
     cfg = load_config()
 
     assert (cfg.chrome_path, cfg.chrome_profile) == ("/home/ada/bin/chrome", "/home/ada/gh-chrome")
+
+
+def test_an_invalid_searxng_url_reports_only_its_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SEARXNG_URL", "ftp://user:secret@internal.example/path?token=private")
+    with pytest.raises(ValueError) as caught:
+        load_config()
+    assert str(caught.value) == "SEARXNG_URL must be http(s), got scheme 'ftp'"

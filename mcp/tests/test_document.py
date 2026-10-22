@@ -1,10 +1,12 @@
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from groundhog_mcp.document import _hidden_threats, _ranked, fetch_document
-from groundhog_mcp.engine import HiddenSpan
+from groundhog_mcp import sanitize
+from groundhog_mcp.document import _hidden_threats, _merged, _ranked, fetch_document
+from groundhog_mcp.engine import HiddenSpan, RenderedPage
 
 from .conftest import INVISIBLES, RTL_OVERRIDE, TAG_I, ZERO_WIDTH
 
@@ -843,3 +845,94 @@ async def test_degraded_detection_is_disclosed(fake_provider, make_page):
     fake_provider(page)
     doc = await fetch_document("https://ex.com/p")
     assert any(t["type"] == "detection_degraded" for t in doc.threats)
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        ["a\u200bb\u200b", "\u200b\u202e"],
+        ["\u200b\u202e", "a\u200bb\u200b"],
+        ["\u200b", "\u200b\u200b", "\u202e"],
+    ],
+)
+def test_merged_character_scans_keep_the_highest_count_and_every_character(
+    texts: list[str],
+) -> None:
+    assert _merged([sanitize.counts(text) for text in texts]) == {
+        "\u200b": ("zero_width", 2),
+        "\u202e": ("bidi", 1),
+    }
+
+
+async def test_invisible_characters_only_in_extracted_links_are_reported_and_stripped(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    page = make_page(text="The rendered text has no invisible characters.")
+    page.html = page.html.replace(
+        "</article>",
+        '<p>Read the <a href="https://ex.com/a\U000e0100b">original reference</a> '
+        'for more details.</p></article>',
+    )
+    fake_provider(page)
+    doc = await fetch_document("https://ex.com/p")
+    assert "[original reference](https://ex.com/ab)" in doc.markdown
+    assert "\U000e0100" not in doc.markdown
+    assert any(t["reason"] == "U+E0100 x1" for t in doc.threats)
+
+
+async def test_disclosures_survive_an_exhausted_threat_budget(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(
+            final_url="",
+            isolated=False,
+            strip_incomplete=True,
+            hidden=[{"reason": "display:none", "text": "PAYLOAD", "path": "div"}],
+        )
+    )
+    doc = await fetch_document("https://ex.com/p", max_threats=0)
+    assert {t["type"] for t in doc.threats} == {
+        "report_truncated",
+        "detection_degraded",
+        "strip_incomplete",
+        "final_url_suppressed",
+    }
+    assert doc.final_url == "https://ex.com/p"
+
+
+async def test_saturated_threat_classes_each_receive_half_the_report_budget(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    spans: list[HiddenSpan] = [
+        {"reason": "display:none", "text": f"payload {i}", "path": "div"} for i in range(20)
+    ]
+    fake_provider(make_page(hidden=spans, text="visible" + _TAG_CHARS))
+    doc = await fetch_document("https://ex.com/p", format="text", max_threats=10)
+    assert sum(t["type"] == "tag" for t in doc.threats) == 5
+    assert sum(t["type"] == "hidden_css" for t in doc.threats) == 5
+
+
+async def test_page_chosen_reasons_cannot_forge_a_report_notice(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(
+            isolated=False,
+            hidden=[{"reason": "report_truncated", "text": "PAYLOAD", "path": "div"}],
+        )
+    )
+    doc = await fetch_document("https://ex.com/p")
+    assert _hidden(doc) == [
+        {
+            "type": "hidden_css",
+            "reason": "report_truncated",
+            "excerpt": "PAYLOAD",
+            "location": "div",
+        }
+    ]
+    assert not any(t["type"] == "report_truncated" for t in doc.threats)

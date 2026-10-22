@@ -12,8 +12,6 @@ class ReadResult(TypedDict):
     url: str
     final_url: str
     fetched_at: str
-    # What actually came back: `ok`, or `challenge`/`blocked`/`rate_limited`/`not_found`/
-    # `server_error`/`unsupported_content` when the content is not the page a caller wants.
     status: classify.RetrievalStatus
     http_status: int | None
     truncated: bool
@@ -79,11 +77,8 @@ async def read_url(
     try:
         doc = await document.fetch_document(url, format=format, include_hidden=include_hidden)
     except engine.BrowserUnavailableError:
-        raise  # our own text, and the caller needs the remediation steps verbatim
+        raise
     except Exception as exc:
-        # Without this the SSRF guard's "blocked address: host -> 169.254.x.x" and any
-        # page-chosen exception text reach the model unchanged. `research` already
-        # refuses to echo those; this is the same rule for the single-page tool.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     limit = config.token_budget(max_tokens, load_config().max_tokens)
 
@@ -100,8 +95,6 @@ async def read_url(
         if selected_matches:
             body, matches, truncated = selected, selected_matches, selected_truncated
             set_aside = selected_set_aside
-    # select() admits the top passage unconditionally, so even a ranked body can
-    # exceed the budget — one clamp covers both paths and keeps the flag honest.
     body, over_budget = extract.truncate(body, limit)
     truncated = truncated or over_budget
 

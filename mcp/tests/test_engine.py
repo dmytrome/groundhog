@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import io
 import json
 import os
 import subprocess
@@ -7,14 +8,20 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
+import urllib.response
+from collections.abc import Callable
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 import websockets
 
-from groundhog_mcp import cdp, engine
+from groundhog_mcp import cdp, engine, extract, http, provenance
 from groundhog_mcp.config import Config
+from groundhog_mcp.engine import _run
 
 
 def _cfg(**over):
@@ -91,7 +98,7 @@ def _stub_start(monkeypatch, calls, runtime="docker", code=0):
     monkeypatch.setattr(engine, "check_browser", ready)
 
 
-async def test_start_browser_builds_docker_run(monkeypatch):
+async def test_start_browser_builds_docker_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
     _stub_start(monkeypatch, calls)
     await engine._start_browser(_cfg(cdp_url="http://127.0.0.1:7000", browser_image="img:tag"))
@@ -99,7 +106,7 @@ async def test_start_browser_builds_docker_run(monkeypatch):
     run = calls[1]
     assert run[:3] == ["docker", "run", "-d"]
     assert engine._CONTAINER_NAME in run
-    assert f"{engine._CONTAINER_BIND_HOST}:7000:{engine._CONTAINER_CDP_PORT}" in run
+    assert "127.0.0.1:7000:9222" in run
     assert "--platform" not in run  # multi-arch image: let the runtime pick the native arch
     assert run[-2:] == ["--", "img:tag"]  # `--` guards against a flag-like image ref
 
@@ -115,6 +122,20 @@ def test_ip_probe_url_resolves_dns_names(monkeypatch):
         engine.socket,
         "getaddrinfo",
         lambda *a, **k: [(engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0))],
+    )
+    assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
+
+
+def test_a_dns_name_with_both_address_families_is_dialed_over_ipv4(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine.socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (engine.socket.AF_INET6, None, None, "", ("fd00::2", 0, 0, 0)),
+            (engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0)),
+        ],
     )
     assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
 
@@ -932,8 +953,10 @@ def test_a_malformed_collector_result_is_emptied_not_trusted(make_page, field, r
     assert getattr(page, field) == cleaned
 
 
-def test_a_page_metadata_value_is_cut_to_url_length(make_page):
-    description = "d" * 5000
+def test_a_page_metadata_value_is_cut_to_url_length(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    description = "\u200b" + "d" * 5000
 
     page = dataclasses.replace(
         make_page(), meta={"meta": {"description": description}, "lang": None, "canonical": None}
@@ -1220,3 +1243,339 @@ async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_clea
 
     with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
         await provider._fetch_in_target("https://example.com/", True)
+
+
+def test_json_responses_larger_than_the_default_limit_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def response(url: str, timeout: float) -> io.BytesIO:
+        return io.BytesIO(b'{"value":"' + b'x' * (5 * 1024 * 1024) + b'"}')
+
+    monkeypatch.setattr(http._opener, "open", response)
+    with pytest.raises(ValueError, match="response body exceeded"):
+        http.read_json("https://endpoint.example/", timeout=1.0)
+
+
+def test_json_responses_within_the_limit_are_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    def response(url: str, timeout: float) -> io.BytesIO:
+        return io.BytesIO(b'{"value":1}')
+
+    monkeypatch.setattr(http._opener, "open", response)
+    assert http.read_json("https://endpoint.example/", timeout=1.0) == {"value": 1}
+
+
+def test_json_fetches_refuse_redirects_to_a_different_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def response(
+        self: urllib.request.HTTPHandler, req: urllib.request.Request
+    ) -> urllib.response.addinfourl:
+        headers = Message()
+        headers["Location"] = "http://internal.example/"
+        code = 302 if req.full_url == "http://operator.example/" else 200
+        result = urllib.response.addinfourl(io.BytesIO(b"{}"), headers, req.full_url, code)
+        result.msg = "Found" if code == 302 else "OK"
+        return result
+
+    monkeypatch.setattr(urllib.request.HTTPHandler, "http_open", response)
+    with pytest.raises(urllib.error.HTTPError, match="302"):
+        http.read_json("http://operator.example/", timeout=1.0)
+
+
+async def test_an_oversized_cdp_message_fails_waiters_instead_of_being_buffered() -> None:
+    async def flood(ws: websockets.ServerConnection) -> None:
+        ws.transport.write(b"\x81\x7f" + (64 * 1024 * 1024 + 1).to_bytes(8, "big"))
+        await ws.wait_closed()
+
+    async with websockets.serve(flood, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        client = cdp.CDPClient(f"ws://127.0.0.1:{port}/")
+        await client.connect()
+        try:
+            waiter = client.expect_event("Page.loadEventFired")
+            with pytest.raises(cdp.CDPError, match="CDP connection closed"):
+                await asyncio.wait_for(waiter, timeout=5)
+        finally:
+            await client.close()
+
+
+def test_a_bad_cdp_port_does_not_break_the_startup_remediation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine, "_container_runtime", lambda: "docker")
+    cfg = _cfg(cdp_url="http://localhost:abc")
+    assert engine._port_of(cfg.cdp_url) == 9222
+    assert "127.0.0.1:9222:9222" in engine.remediation(cfg)
+
+
+async def test_runtime_stderr_is_sanitized_and_bounded() -> None:
+    payload = "bad\u200b\n" + "x" * 500
+    script = f"import sys; sys.stderr.write({payload!r}); sys.exit(7)"
+    code, detail = await _run([sys.executable, "-c", script])
+    assert code == 7
+    assert detail == "bad " + "x" * 196
+
+
+@pytest.mark.parametrize("omitted", ["isolated", "strip_incomplete"])
+def test_a_rendered_page_requires_an_explicit_detection_flag(
+    make_page: Callable[..., engine.RenderedPage],
+    omitted: str,
+) -> None:
+    page = make_page()
+    supplied = {
+        field.name: getattr(page, field.name)
+        for field in dataclasses.fields(page)
+        if field.name != omitted
+    }
+    with pytest.raises(TypeError, match=omitted):
+        engine.RenderedPage(**supplied)
+
+
+def test_rendered_content_preserves_invisible_characters_and_its_full_length(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    html = "<p>hello\u200bworld</p>" * 1000
+    text = "hello\u200bworld " * 1000
+    page = dataclasses.replace(make_page(), html=html, text=text)
+    assert page.html == html
+    assert page.text == text
+
+
+@pytest.mark.parametrize("field", ["html", "text"])
+@pytest.mark.parametrize("raw", [None, 5])
+def test_nonstring_rendered_content_becomes_empty_at_construction(
+    make_page: Callable[..., engine.RenderedPage],
+    field: str,
+    raw: object,
+) -> None:
+    page = dataclasses.replace(make_page(), **{field: raw})
+    assert getattr(page, field) == ""
+
+
+@pytest.mark.parametrize("status", ["200", -1, {"status": 200}])
+def test_a_rendered_pages_nonstatus_value_is_reported_as_absent(
+    make_page: Callable[..., engine.RenderedPage],
+    status: object,
+) -> None:
+    page = dataclasses.replace(make_page(), http_status=status)
+    assert page.http_status is None
+
+
+def test_a_canonical_metadata_url_longer_than_a_byline_is_not_shortened(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    canonical = "https://ex.com/" + "a" * 500
+    page = make_page(meta={"meta": {"canonical": canonical}, "lang": None, "canonical": None})
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] == canonical
+
+
+def test_a_canonical_metadata_url_padded_with_whitespace_is_kept_stripped(
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    page = make_page(
+        meta={"meta": {"canonical": " \thttps://ex.com/a\n"}, "lang": None, "canonical": None}
+    )
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] == "https://ex.com/a"
+
+
+@pytest.mark.parametrize(
+    "canonical", ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000]
+)
+def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
+    make_page: Callable[..., engine.RenderedPage], canonical: str
+) -> None:
+    page = make_page(meta={"meta": {"canonical": canonical}, "lang": None, "canonical": None})
+    result = provenance.build("text", extract.ExtractMeta(None, None, None), page.meta)
+    assert result["canonical"] is None
+
+
+@pytest.mark.parametrize(
+    ("fixture", "message"),
+    [
+        ("cdp_exception_details.json", "Error: " + "x" * 50),
+        ("cdp_thrown_string_details.json", "boom"),
+    ],
+)
+async def test_a_real_page_exception_is_reported_by_its_message(
+    fixture: str, message: str
+) -> None:
+    details = json.loads((_FIXTURES / fixture).read_text())
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            await ws.send(json.dumps({
+                "id": request["id"],
+                "result": {"result": {"type": "object"}, "exceptionDetails": details},
+            }))
+
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            with pytest.raises(cdp.CDPError) as caught:
+                await provider._eval("tab", "1")
+        finally:
+            await provider._cdp.close()
+    assert str(caught.value).startswith(message)
+
+
+class _NoEvents(_ScriptedCDP):
+    def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
+        return lambda: None
+
+
+def _provider_collecting(
+    monkeypatch: pytest.MonkeyPatch, collected: dict | None
+) -> tuple[engine.EngineProvider, _NoEvents]:
+    async def public(url: str, cfg: Config) -> None:
+        return None
+
+    async def evaluate(sid: str, expression: str, context_id: int | None = None) -> object:
+        if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
+            if collected is None:
+                await asyncio.Event().wait()
+            return collected
+        return "https://example.com/" if expression == "document.location.href" else 1
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    monkeypatch.setattr(engine, "_DETECT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.05)
+    provider = engine.EngineProvider(_cfg())
+    fake = _NoEvents(_HEADLESS_UA, _HINTS)
+    provider._cdp = fake
+    monkeypatch.setattr(provider, "_eval", evaluate)
+    return provider, fake
+
+
+async def test_a_collector_that_never_answers_fails_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, _ = _provider_collecting(monkeypatch, None)
+    with pytest.raises(cdp.CDPError, match="hidden-text detection timed out"):
+        await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+
+
+async def test_a_fetch_never_enables_the_runtime_or_console_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, fake = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+    page = await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+    assert page.text == "Cats nap."
+    sent = fake.methods()
+    assert {"Page.enable", "Network.enable", "Target.closeTarget"} <= set(sent)
+    assert not {"Runtime.enable", "Console.enable"} & set(sent)
+
+
+async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def silent(ws: websockets.ServerConnection) -> None:
+        await ws.wait_closed()
+
+    monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
+    async with websockets.serve(silent, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        operation = asyncio.create_task(provider._eval("tab", "1"))
+        try:
+            done, _ = await asyncio.wait({operation}, timeout=0.5)
+            assert operation in done
+            with pytest.raises(TimeoutError):
+                operation.result()
+        finally:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            await provider.aclose()
+
+
+@pytest.mark.parametrize("command", ["Page.getFrameTree", "Page.createIsolatedWorld"])
+@pytest.mark.parametrize("failure", ["unanswered", "refused"])
+async def test_unavailable_isolated_world_commands_degrade_without_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    failure: str,
+) -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            if request["method"] == command:
+                if failure == "refused":
+                    await ws.send(json.dumps({
+                        "id": request["id"],
+                        "error": {"code": -32601, "message": "method unavailable"},
+                    }))
+            else:
+                await ws.send(json.dumps({
+                    "id": request["id"],
+                    "result": {"frameTree": {"frame": {"id": "root"}}},
+                }))
+
+    monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        operation = asyncio.create_task(provider._isolated_context("tab"))
+        try:
+            done, _ = await asyncio.wait({operation}, timeout=0.5)
+            assert operation in done
+            assert operation.result() is None
+        finally:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            await provider.aclose()
+
+
+async def test_page_evaluation_exception_details_are_bounded() -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            details = {
+                "exceptionId": 1,
+                "text": "Error: " + "x" * 500,
+                "lineNumber": 0,
+                "columnNumber": 0,
+            }
+            await ws.send(json.dumps({
+                "id": request["id"],
+                "result": {"result": {"type": "undefined"}, "exceptionDetails": details},
+            }))
+
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            with pytest.raises(cdp.CDPError) as caught:
+                await provider._eval("tab", "throw Error('payload')")
+            assert len(str(caught.value)) <= engine.sanitize.MAX_ERROR_CHARS
+            assert "x" * 50 in str(caught.value)
+        finally:
+            await provider.aclose()
+
+
+def test_a_sub_frame_navigation_does_not_replace_the_main_documents_response() -> None:
+    responses = engine._MainResponse()
+    for loader, status in (("main", 200), ("child", 403)):
+        responses._on_response({
+            "requestId": loader, "loaderId": loader,
+            "response": {"status": status, "mimeType": "text/html", "headers": {}},
+        })
+    responses._on_frame_navigated({"frame": {"id": "root", "loaderId": "main"}})
+    responses._on_frame_navigated({"frame": {"id": "ad", "parentId": "root", "loaderId": "child"}})
+    selected = responses.main(None)
+    assert selected is not None and selected["status"] == 200
+
+
+def test_an_unobserved_document_is_not_classified_from_another_documents_response() -> None:
+    responses = engine._MainResponse()
+    responses._on_response({
+        "requestId": "observed", "loaderId": "observed",
+        "response": {"status": 200, "mimeType": "text/html", "headers": {}},
+    })
+    for loader in ("unobserved", None):
+        selected = responses.main(loader)
+        assert engine.classify.classify(selected, False, "An article", "Some content") == "unknown"

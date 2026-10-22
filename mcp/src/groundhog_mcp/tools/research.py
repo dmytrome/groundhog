@@ -26,12 +26,10 @@ from ..search import SearchHit
 
 _DEFAULT_MAX_SOURCES = 5
 _MAX_SOURCES = 10
-_OVERFETCH = 3  # headroom for the same-domain hits that dedupe discards
+_OVERFETCH = 3
 _DEADLINE_S = 90.0
 _STARTS_WITHIN_S = _DEADLINE_S / 3
 _CANCEL_DRAIN_S = 5.0
-# Per source, not per page: the fan-out multiplies the report by `max_sources`,
-# and `threats` sits outside the caller's token budget.
 _MAX_THREATS_PER_SOURCE = 10
 _MAX_AIM_CHARS = 200
 _MAX_DOMAINS = 50
@@ -61,10 +59,7 @@ class Passage(TypedDict):
 class Source(TypedDict):
     url: str
     title: str
-    # Whether the fetch itself succeeded, failed the SSRF guard, timed out, or errored.
     status: SourceStatus
-    # What that fetch returned when it succeeded (a challenge page, a non-text body, …),
-    # per `classify`; None when the fetch never produced a page.
     page_status: classify.RetrievalStatus | None
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance | None
@@ -198,13 +193,6 @@ def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], 
 
 
 def _status_of(exc: BaseException) -> tuple[SourceStatus, str]:
-    """Map a failed fetch to a status and a message that is safe to return.
-
-    The message reaches the model, and on a search-chosen URL the exception text
-    can be attacker-authored (a page can make an eval throw with a payload of its
-    choosing) or carry our own internal addresses. So: never echo a blocked
-    address, and strip/cap everything else.
-    """
     if isinstance(exc, safety.BlockedURLError):
         status: SourceStatus = "blocked"
     elif isinstance(exc, TimeoutError):
@@ -224,12 +212,6 @@ def _retire(task: asyncio.Task[document.Document]) -> None:
 
 
 async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]:
-    """Fetch every URL concurrently, bounded overall.
-
-    Page loads can otherwise outlast a client's MCP timeout. Whatever finished is
-    kept; the rest are cancelled so one slow source cannot cost the caller the
-    others.
-    """
     tasks = [
         asyncio.create_task(document.fetch_document(url, max_threats=_MAX_THREATS_PER_SOURCE))
         for url in urls
@@ -239,7 +221,6 @@ async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]
         for task in pending:
             task.cancel()
         if pending:
-            # Bounded too: a dead websocket can stall a cancelled fetch's teardown.
             await asyncio.wait(pending, timeout=_CANCEL_DRAIN_S)
     finally:
         for task in tasks:
@@ -349,10 +330,8 @@ async def research(
             executed, cfg, _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH
         )
     except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
-        raise  # our own text, and the caller needs it to fix the backend
+        raise
     except Exception as exc:
-        # The same boundary `search` has: the SERP leg runs through the browser, so
-        # its failures can name internal addresses or carry page-chosen text.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     unique: dict[str, SearchHit] = {}
     for hit in found:
@@ -394,8 +373,6 @@ async def research(
     hashes: dict[str, str] = {}
     for hit, outcome in zip(chosen, outcomes, strict=True):
         if isinstance(outcome, engine.BrowserUnavailableError):
-            # Infrastructure, not a property of this source: every source would
-            # carry the same failure, and the caller needs the remediation.
             raise outcome
         if isinstance(outcome, BaseException):
             status, detail = _status_of(outcome)
@@ -451,8 +428,6 @@ async def research(
         hashes[outcome.final_url] = outcome.provenance["content_hash"]
         chunks.extend(retrieval.chunk_document(outcome.markdown, source=outcome.final_url))
 
-    # One BM25 pass over every passage from every source, so a passage from the
-    # last source is directly comparable to one from the first.
     ranked, left_out, set_aside = retrieval.rank(
         chunks, query, limit, floor=retrieval.RELEVANCE_FLOOR
     )
@@ -460,11 +435,7 @@ async def research(
     passages: list[Passage] = []
     for scored in ranked:
         if not scored.chunk.source:
-            # Never hand the model a passage it would present as grounded without a
-            # citation. Unreachable today; kept so the invariant fails closed.
             continue
-        # rank() admits its top passage unconditionally, so a single huge block
-        # can still exceed the budget — clamp it and keep `truncated` honest.
         text, over_budget = extract.truncate(scored.chunk.text, limit)
         clamped = clamped or over_budget
         start = scored.chunk.offset

@@ -44,9 +44,7 @@ async def search(
     try:
         hits, backend = await search_backend.search(query, load_config(), capped)
     except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
-        raise  # our own text: it tells the operator how to fix the backend, verbatim
+        raise
     except Exception as exc:
-        # Same boundary the other two tools have: a third party's payload must not
-        # decide the text, or the length, of what the caller's model reads.
         raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
     return {"query": query, "backend": backend, "hits": hits}
