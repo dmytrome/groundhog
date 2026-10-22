@@ -444,7 +444,7 @@ class RenderedPage:
                 for key, value in (meta_pairs if isinstance(meta_pairs, dict) else {}).items()
                 if isinstance(key, str) and isinstance(value, str)
                 if (
-                    cleaned := safety.safe_url(value.strip())
+                    cleaned := safety.safe_url(value.strip(" \t\n\r\f"))
                     if key.lower() == "canonical"
                     else sanitize.clean_field(value, sanitize.MAX_URL_CHARS)
                 )

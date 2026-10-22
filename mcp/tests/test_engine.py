@@ -1381,7 +1381,8 @@ def test_a_canonical_metadata_url_padded_with_whitespace_is_kept_stripped(
 
 
 @pytest.mark.parametrize(
-    "canonical", ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000]
+    "canonical",
+    ["https://ex.com/a\u200bb", "https://ex.com/" + "a" * 3000, "\u00a0https://ex.com/a"],
 )
 def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     make_page: Callable[..., engine.RenderedPage], canonical: str
