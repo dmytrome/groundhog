@@ -10,11 +10,20 @@ RetrievalStatus = Literal[
     "not_found",
     "server_error",
     "unsupported_content",
+    "empty",
     "unknown",
 ]
 
 NOT_CONTENT: frozenset[str] = frozenset(
-    {"challenge", "blocked", "rate_limited", "not_found", "server_error", "unsupported_content"}
+    {
+        "challenge",
+        "blocked",
+        "rate_limited",
+        "not_found",
+        "server_error",
+        "unsupported_content",
+        "empty",
+    }
 )
 
 # Tier 1 — headers that exist only to announce mitigation, so unlike a CDN's `server`

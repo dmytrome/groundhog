@@ -936,3 +936,52 @@ async def test_page_chosen_reasons_cannot_forge_a_report_notice(
         }
     ]
     assert not any(t["type"] == "report_truncated" for t in doc.threats)
+
+
+@pytest.mark.parametrize(
+    ("html", "text"),
+    [
+        ("<html><body></body></html>", ""),
+        ('<html><body><article><img src="x.png"><hr></article></body></html>', "\n"),
+        ("<html><body><p>​​</p></body></html>", "​​"),
+    ],
+)
+@pytest.mark.parametrize("format", ["markdown", "text"])
+@pytest.mark.parametrize("observed", ["ok", "unknown"])
+async def test_a_page_with_nothing_to_read_is_empty(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+    html: str,
+    text: str,
+    format: str,
+    observed: str,
+) -> None:
+    fake_provider(make_page(html=html, text=text, retrieval_status=observed))
+    doc = await fetch_document("https://ex.com/p", format=format)
+    assert doc.status == "empty"
+
+
+@pytest.mark.parametrize("status", ["not_found", "challenge", "server_error"])
+async def test_a_blank_error_page_keeps_its_error_status(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+    status: str,
+) -> None:
+    fake_provider(make_page(html="<html><body></body></html>", text="", retrieval_status=status))
+    doc = await fetch_document("https://ex.com/p")
+    assert doc.status == status
+
+
+async def test_an_article_of_invisible_characters_falls_back_to_the_rendered_text(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    blank = "⠀" * 200
+    html = (
+        "<html><body><nav>Home About Contact</nav>"
+        f"<article><p>{blank}</p></article></body></html>"
+    )
+    fake_provider(make_page(html=html, text=f"Home About Contact\n{blank}"))
+    doc = await fetch_document("https://ex.com/p")
+    assert doc.status == "ok"
+    assert "Home About Contact" in doc.markdown

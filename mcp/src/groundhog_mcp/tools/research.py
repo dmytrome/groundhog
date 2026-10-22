@@ -391,7 +391,7 @@ async def research(
             )
             continue
         dated = _date(outcome.provenance["published"]) or _date(hit["published"])
-        empty = outcome.status in classify.NOT_CONTENT or not outcome.markdown.strip()
+        empty = outcome.status in classify.NOT_CONTENT
         outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
         if excluded and (_host(outcome.final_url) is None or _within(outcome.final_url, excluded)):

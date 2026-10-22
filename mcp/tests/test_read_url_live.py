@@ -160,3 +160,32 @@ async def test_include_hidden_keeps_the_byline_the_extractor_finds_by_class(
 
     assert kept["provenance"]["author"] == "Ada Lovelace"
     assert "HIDDEN_NOTE" in unescaped(kept["markdown"])
+
+
+_SHADOW_ONLY = (
+    "<html><body><div id='host'></div><script>"
+    "document.getElementById('host').attachShadow({mode: 'open'}).innerHTML ="
+    " '<p>Tomatoes need full sun and steady watering.</p>';"
+    "</script></body></html>"
+)
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [
+        ("<html><body></body></html>", "empty"),
+        ('<html><body><img src="/x.png" alt="a tomato"></body></html>', "empty"),
+        ("<html><body><hr></body></html>", "empty"),
+        (_SHADOW_ONLY, "ok"),
+    ],
+)
+async def test_a_page_a_reader_sees_nothing_on_is_empty(monkeypatch, body, status):
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", "false")
+    await engine.shutdown_provider()
+    srv = _serve_paths({"/": (200, body)})
+    try:
+        result = await read_url(f"http://{PAGE_HOST}:{srv.server_address[1]}/")
+    finally:
+        srv.shutdown()
+
+    assert result["status"] == status

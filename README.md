@@ -101,7 +101,7 @@ container after removing an unreachable one named `groundhog-browser`.
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
 | `fetched_at` | UTC ISO-8601 timestamp |
-| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
+| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `empty` means the page rendered no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count). `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
 | `threats`    | What was stripped; empty when nothing was found |
@@ -157,8 +157,8 @@ Searches, reads the top sources and ranks passages from all of them in one pass.
   `id` stays stable while the page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
   (as in `read_url`), `threats`, `provenance`, `filtered`. A failed source doesn't fail the
-  call. A challenge, an error page or a page with no text (whose `page_status` stays `ok`)
-  counts as `not_content` and contributes no passages.
+  call. A challenge, an error page or an `empty` page counts as `not_content` and
+  contributes no passages.
 - One page per registrable domain unless `include_domains` is set, and then no more pages
   per site than `GROUNDHOG_MAX_CONCURRENT_PAGES`; `max_sources` goes up to 10.
 
