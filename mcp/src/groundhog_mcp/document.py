@@ -146,10 +146,10 @@ async def fetch_document(
         markdown = text
     elif not include_hidden:
         markdown = sanitize.strip_invisible(markdown, scans[0])
-    if format == "markdown" and not extract.readable(markdown):
+    if format == "markdown" and not markdown.strip():
         markdown = extract.fenced(text)
     status = page.retrieval_status
-    if status == "ok" and not visible_text.strip() and not extract.readable(markdown):
+    if status == "ok" and not visible_text.strip():
         status = "empty"
     threats = _capped(
         char_threats,

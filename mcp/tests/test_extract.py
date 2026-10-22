@@ -1,7 +1,6 @@
-import pytest
 from markdown_it import MarkdownIt
 
-from groundhog_mcp.extract import fenced, readable, to_document, truncate
+from groundhog_mcp.extract import fenced, to_document, truncate
 
 META_HTML = """
 <html lang="en"><head><title>Real Title</title>
@@ -81,19 +80,3 @@ def test_fenced_text_parses_as_one_literal_block() -> None:
 
 def test_blank_text_is_not_fenced() -> None:
     assert fenced(" \n ") == ""
-
-
-@pytest.mark.parametrize(
-    ("markdown", "expected"),
-    [
-        ("![](x.png)\n\n---", False),
-        ("[](https://ex.com/a)", False),
-        ("![a tomato](x.png)", False),
-        ("![](https://upload.wikimedia.org/a_(1).png)", False),
-        ("![a [b] c](x.png)", False),
-        ("[Cats](https://ex.com/cats)", True),
-        ("# Cats\n\nCats nap.", True),
-    ],
-)
-def test_markdown_is_readable_only_when_it_carries_words(markdown: str, expected: bool) -> None:
-    assert readable(markdown) is expected

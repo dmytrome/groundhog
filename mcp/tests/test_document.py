@@ -1007,22 +1007,25 @@ async def test_rendered_text_standing_in_for_an_invisible_article_is_fenced(
     assert doc.markdown.endswith("\n```")
 
 
-async def test_a_page_whose_text_only_the_extractor_finds_is_not_empty(
+async def test_a_page_that_renders_no_text_is_empty_and_keeps_what_the_extractor_found(
     fake_provider: Callable[[RenderedPage], None],
     make_page: Callable[..., RenderedPage],
 ) -> None:
     fake_provider(make_page(text=""))
     doc = await fetch_document("https://ex.com/p")
-    assert doc.status == "ok"
+    assert doc.status == "empty"
     assert "Cats" in doc.markdown
 
 
-@pytest.mark.parametrize("extracted", ["", "![](https://ex.com/hero_(1).png)"])
-async def test_rendered_text_is_fenced_when_the_extractor_finds_no_words(
+@pytest.mark.parametrize(
+    ("extracted", "fallback"), [("", True), ("![chart](https://ex.com/c.png)", False)]
+)
+async def test_rendered_text_is_fenced_only_when_the_extractor_finds_nothing(
     monkeypatch: pytest.MonkeyPatch,
     fake_provider: Callable[[RenderedPage], None],
     make_page: Callable[..., RenderedPage],
     extracted: str,
+    fallback: bool,
 ) -> None:
     monkeypatch.setattr(
         extract, "to_document", lambda html, url: (extracted, extract.ExtractMeta(None, None, None))
@@ -1031,7 +1034,7 @@ async def test_rendered_text_is_fenced_when_the_extractor_finds_no_words(
     fake_provider(make_page(text=text))
     doc = await fetch_document("https://ex.com/p")
     assert doc.status == "ok"
-    assert doc.markdown == f"```\n{text}\n```"
+    assert doc.markdown == (f"```\n{text}\n```" if fallback else extracted)
 
 
 async def test_a_blank_page_read_with_its_hidden_text_is_still_empty(
