@@ -1164,6 +1164,23 @@ async def test_each_source_keeps_its_own_threat_budget_outside_the_passage_budge
         assert any(t["type"] == "report_truncated" for t in source["threats"])
 
 
+async def test_a_chunk_without_a_source_yields_no_passage(
+    monkeypatch: pytest.MonkeyPatch, fake_web: FakeWeb
+) -> None:
+    url = "https://a.com/x"
+    fake_web([_hit(url)], {url: _doc(url, "# Cats\n\nCats nap all day.")})
+    chunk_document = retrieval.chunk_document
+    monkeypatch.setattr(
+        retrieval,
+        "chunk_document",
+        lambda markdown, source=None: chunk_document(markdown),
+    )
+
+    result = await research("cats")
+
+    assert result["passages"] == []
+
+
 @pytest.mark.parametrize(
     "failure",
     [
