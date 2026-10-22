@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.2] - 2026-10-22
+
+### Fixed
+
+- A canonical URL from page metadata is trimmed of ASCII whitespace only, as browsers do,
+  so one padded with a non-breaking space is dropped instead of reported.
+- A page script that throws `""`, `false` or `null` is reported by that value instead of
+  the raw exception record.
+
 ## [0.18.1] - 2026-10-22
 
 ### Changed
@@ -957,6 +966,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.18.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.2
 [0.18.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.1
 [0.18.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.0
 [0.17.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.2
