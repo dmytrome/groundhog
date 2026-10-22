@@ -495,6 +495,16 @@ def test_a_long_paragraph_is_cut_at_sentence_ends() -> None:
     assert "".join(c.text for c in chunks) == markdown.rstrip("\n")
 
 
+def test_a_hard_cut_never_separates_an_escape_from_the_character_it_escapes() -> None:
+    markdown = "a" * (retrieval._MAX_CHUNK_CHARS - 1) + "\\# heading" + "b" * 3000
+
+    chunks = chunk_document(markdown)
+
+    assert len(chunks) > 1
+    assert not any(c.text.endswith("\\") for c in chunks[:-1])
+    assert "".join(c.text for c in chunks) == markdown
+
+
 def test_a_long_block_that_is_wholly_relevant_comes_back_unchanged() -> None:
     block = "\n".join(f"line {i} about the kitten diet and feeding schedule" for i in range(120))
     markdown = f"# Feeding\n\n{block}\n\n# Other\n\nDogs guard the house.\n"

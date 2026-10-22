@@ -146,6 +146,7 @@ def _pieces(text: str) -> list[str]:
         if cut <= start:
             ends = [m.end() for m in _SENTENCE_END_RE.finditer(text, start, end)]
             cut = ends[-1] if ends and ends[-1] > start else end
+        cut = max(start + len(text[start:cut].rstrip("\\")), start + 1)
         pieces.append(text[start:cut])
         start = cut
     pieces.append(text[start:])

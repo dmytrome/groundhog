@@ -14,8 +14,22 @@ class ExtractMeta:
     canonical: str | None
 
 
+_INLINE_MARKUP_RE = re.compile(r"([\\`*_~\[\]<])")
+_BLOCK_START_RE = re.compile(r"^([ \t]*)([#>+-]|\d+(?=[.)]))", re.MULTILINE)
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_LINK_TARGET_RE = re.compile(r"\]\([^)]*\)")
+
+
 def escaped(text: str) -> str:
-    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", text)
+    inline = _INLINE_MARKUP_RE.sub(r"\\\1", text)
+    return _BLOCK_START_RE.sub(
+        lambda m: m[1] + (m[2] + "\\" if m[2][0].isdigit() else "\\" + m[2]), inline
+    )
+
+
+def readable(markdown: str) -> bool:
+    words = _LINK_TARGET_RE.sub("]", _IMAGE_RE.sub("", markdown))
+    return any(ch.isalnum() for ch in words)
 
 
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
@@ -25,7 +39,7 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     cut = text.rfind("\n\n", 0, limit)
     if cut <= 0:
         cut = limit
-    return text[:cut].rstrip() + _TRUNCATION_MARKER, True
+    return text[:cut].rstrip().rstrip("\\") + _TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
