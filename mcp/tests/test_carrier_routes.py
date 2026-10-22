@@ -13,6 +13,7 @@ import pytest
 
 from groundhog_mcp import extract
 
+from .conftest import unescaped
 from .test_engine_live import _fetch_local
 
 pytestmark = pytest.mark.skipif(
@@ -93,7 +94,7 @@ ROUTES = {
 async def test_no_route_delivers_hidden_text_to_the_model(route):
     page = await _fetch_local(ROUTES[route])
     markdown, _ = extract.to_document(page.html, page.final_url)
-    assert "ROUTE_PAYLOAD" not in markdown, f"{route}: reached the extracted markdown"
+    assert "ROUTE_PAYLOAD" not in unescaped(markdown), f"{route}: reached the extracted markdown"
     assert "ROUTE_PAYLOAD" not in page.text, f"{route}: reached the rendered text"
     assert "ROUTE_PAYLOAD" not in page.html, f"{route}: survived in the returned markup"
     assert "Cats are small carnivorous" in page.text, f"{route}: destroyed the real content"

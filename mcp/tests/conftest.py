@@ -1,4 +1,5 @@
 import os
+import re
 
 import pytest
 
@@ -36,6 +37,10 @@ ZERO_WIDTH = "\u200b"
 RTL_OVERRIDE = "\u202e"
 TAG_I = "\U000e0049"  # Unicode Tag block: an invisible ASCII mirror
 INVISIBLES = (ZERO_WIDTH, RTL_OVERRIDE, TAG_I)
+
+
+def unescaped(markdown: str) -> str:
+    return re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", markdown)
 
 
 @pytest.fixture(autouse=True)

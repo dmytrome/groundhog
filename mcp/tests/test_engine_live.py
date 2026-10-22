@@ -16,6 +16,8 @@ from groundhog_mcp.config import load_config
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
 
+from .conftest import unescaped
+
 PAGE_HOST = os.environ.get("GROUNDHOG_TEST_PAGE_HOST") or (
     "host.docker.internal" if load_config().browser == "stealth" else "127.0.0.1"
 )
@@ -721,7 +723,7 @@ async def test_attribute_text_never_reaches_the_model_whatever_its_length():
     for marker in ("SHORT_ALT", "SHORT_ARIA"):
         assert marker not in page.html, marker
         assert marker not in page.text, marker
-        assert marker not in markdown, marker
+        assert marker not in unescaped(markdown), marker
 
 
 _SHADOW_PAD = " and keeps going well past the length any real label or caption would need"
@@ -1065,7 +1067,7 @@ async def test_a_payload_is_stripped_from_the_content_even_when_its_finding_is_d
         srv.shutdown()
     assert not any(t["excerpt"].startswith("EVICTED_PAYLOAD") for t in doc.threats)
     assert [t for t in doc.threats if t["type"] == "report_truncated"], doc.threats
-    assert "EVICTED_PAYLOAD" not in doc.markdown
+    assert "EVICTED_PAYLOAD" not in unescaped(doc.markdown)
     assert "carnivorous mammals" in doc.markdown
 
 
