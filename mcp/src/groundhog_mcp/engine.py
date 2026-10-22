@@ -903,24 +903,28 @@ class EngineProvider:
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _SETTLE_TIMEOUT_S
         prev: object = None
         quiet_since = loop.time()
-        ctx = await self._isolated_context(session_id)
-        while loop.time() < deadline:
-            try:
-                current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
-            except CDPError:
+        try:
+            async with asyncio.timeout(_SETTLE_TIMEOUT_S) as cap:
                 ctx = await self._isolated_context(session_id)
-                prev, quiet_since = None, loop.time()
-                await asyncio.sleep(_SETTLE_POLL_S)
-                continue
-            if current != prev or inflight.busy:
-                prev = current
-                quiet_since = loop.time()
-            elif loop.time() - quiet_since >= _SETTLE_QUIET_S:
-                return
-            await asyncio.sleep(_SETTLE_POLL_S)
+                while True:
+                    try:
+                        current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
+                    except CDPError:
+                        ctx = await self._isolated_context(session_id)
+                        prev, quiet_since = None, loop.time()
+                        await asyncio.sleep(_SETTLE_POLL_S)
+                        continue
+                    if current != prev or inflight.busy:
+                        prev = current
+                        quiet_since = loop.time()
+                    elif loop.time() - quiet_since >= _SETTLE_QUIET_S:
+                        return
+                    await asyncio.sleep(_SETTLE_POLL_S)
+        except TimeoutError:
+            if not cap.expired():
+                raise
 
     async def _isolated_context(self, session_id: str) -> int | None:
         try:
