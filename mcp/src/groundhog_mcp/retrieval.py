@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import NamedTuple, TypedDict
 
-from . import extract, sanitize
+from . import sanitize
 
 _CHARS_PER_TOKEN = 4
 _UNSPACED = (
@@ -146,8 +146,6 @@ def _pieces(text: str) -> list[str]:
         if cut <= start:
             ends = [m.end() for m in _SENTENCE_END_RE.finditer(text, start, end)]
             cut = ends[-1] if ends and ends[-1] > start else end
-        if cut - 1 > start and extract.dangling_escape(text[start:cut]):
-            cut -= 1
         pieces.append(text[start:cut])
         start = cut
     pieces.append(text[start:])

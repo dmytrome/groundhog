@@ -33,14 +33,6 @@ def readable(markdown: str) -> bool:
     return any(ch.isalnum() for ch in words)
 
 
-def dangling_escape(text: str) -> bool:
-    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
-
-
-def _whole_escapes(text: str) -> str:
-    return text[:-1] if dangling_escape(text) else text
-
-
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     limit = max_tokens * _CHARS_PER_TOKEN
     if len(text) <= limit:
@@ -48,7 +40,7 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     cut = text.rfind("\n\n", 0, limit)
     if cut <= 0:
         cut = limit
-    return _whole_escapes(text[:cut].rstrip()) + _TRUNCATION_MARKER, True
+    return text[:cut].rstrip() + _TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:

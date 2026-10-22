@@ -97,10 +97,3 @@ def test_blank_text_is_not_fenced() -> None:
 )
 def test_markdown_is_readable_only_when_it_carries_words(markdown: str, expected: bool) -> None:
     assert readable(markdown) is expected
-
-
-@pytest.mark.parametrize(("tail", "kept"), [("\\", ""), ("\\\\", "\\\\")])
-def test_truncation_drops_only_a_dangling_escape(tail: str, kept: str) -> None:
-    text, cut = truncate("a" * (40 - len(tail)) + tail + "#" + "b" * 100, 10)
-    assert cut is True
-    assert text == "a" * (40 - len(tail)) + kept + "\n\n[... truncated]"
