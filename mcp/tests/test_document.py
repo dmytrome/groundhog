@@ -1044,3 +1044,15 @@ async def test_a_blank_page_read_with_its_hidden_text_is_still_empty(
     fake_provider(make_page(html="<html><body></body></html>", text="\u200b"))
     doc = await fetch_document("https://ex.com/p", include_hidden=True)
     assert doc.status == "empty"
+
+
+async def test_fenced_fallback_text_has_the_provenance_of_the_text_itself(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(make_page(html="<html><body></body></html>", text="Cats nap."))
+    fenced = await fetch_document("https://ex.com/p")
+    plain = await fetch_document("https://ex.com/p", format="text")
+    assert fenced.markdown == "```\nCats nap.\n```"
+    assert fenced.provenance["word_count"] == 2
+    assert fenced.provenance["content_hash"] == plain.provenance["content_hash"]
