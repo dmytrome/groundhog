@@ -1427,6 +1427,42 @@ async def test_a_real_page_exception_is_reported_by_its_message(
     assert str(caught.value).startswith(message)
 
 
+@pytest.mark.parametrize(("context_id", "context"), [(None, {}), (7, {"contextId": 7})])
+async def test_a_page_evaluation_sends_one_awaited_by_value_evaluate_to_its_tab(
+    context_id: int | None, context: dict[str, int]
+) -> None:
+    result = json.loads((_FIXTURES / "cdp_evaluate_result.json").read_text())
+    requests: list[dict[str, object]] = []
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            requests.append(request)
+            await ws.send(json.dumps({"id": request["id"], "result": result}))
+
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            value = await provider._eval("tab", "document.title.length + 1", context_id)
+        finally:
+            await provider._cdp.close()
+    assert value == 1
+    assert [(r["method"], r["params"], r["sessionId"]) for r in requests] == [
+        (
+            "Runtime.evaluate",
+            {
+                "expression": "document.title.length + 1",
+                "returnByValue": True,
+                "awaitPromise": True,
+                **context,
+            },
+            "tab",
+        )
+    ]
+
+
 class _NoEvents(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
         return lambda: None
