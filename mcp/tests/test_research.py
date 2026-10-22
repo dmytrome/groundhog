@@ -1147,7 +1147,7 @@ async def test_each_source_keeps_its_own_threat_budget_outside_the_passage_budge
     urls = ["https://a.com/x", "https://b.com/y"]
 
     async def _search(query: str, cfg: Config, limit: int) -> tuple[list[SearchHit], str]:
-        return [_hit(url) for url in urls], "serp"
+        return [_hit(url) for url in urls][:limit], "serp"
 
     monkeypatch.setattr(search_module, "search", _search)
     hidden: list[engine.HiddenSpan] = [
