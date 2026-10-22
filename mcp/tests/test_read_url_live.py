@@ -179,7 +179,9 @@ _SHADOW_ONLY = (
         (_SHADOW_ONLY, "ok"),
     ],
 )
-async def test_a_page_a_reader_sees_nothing_on_is_empty(monkeypatch, body, status):
+async def test_a_page_a_reader_sees_nothing_on_is_empty(
+    monkeypatch: pytest.MonkeyPatch, body: str, status: str
+) -> None:
     monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", "false")
     await engine.shutdown_provider()
     srv = _serve_paths({"/": (200, body)})

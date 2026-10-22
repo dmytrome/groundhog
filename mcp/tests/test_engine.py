@@ -1661,7 +1661,9 @@ async def _settle_against(
     return elapsed
 
 
-@pytest.mark.parametrize("stalls", ["Runtime.evaluate", "Page.getFrameTree"])
+@pytest.mark.parametrize(
+    "stalls", ["Runtime.evaluate", "Page.getFrameTree", "Page.createIsolatedWorld"]
+)
 async def test_settling_stops_at_its_cap_when_the_page_never_answers(
     monkeypatch: pytest.MonkeyPatch, stalls: str
 ) -> None:
