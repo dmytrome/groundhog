@@ -5,6 +5,7 @@ import pytest
 from groundhog_mcp import engine
 from groundhog_mcp.tools.read_url import ReadResult, read_url
 
+from .conftest import unescaped
 from .test_engine_live import PAGE_HOST, _serve_paths
 
 pytestmark = pytest.mark.skipif(
@@ -95,8 +96,8 @@ async def test_include_hidden_puts_hidden_text_back_into_the_content(
     finally:
         srv.shutdown()
 
-    assert [m for m in _HIDING_MARKUP if m in stripped["markdown"]] == []
-    assert [m for m in _HIDING_MARKUP if m in kept["markdown"]] == list(_HIDING_MARKUP)
+    assert [m for m in _HIDING_MARKUP if m in unescaped(stripped["markdown"])] == []
+    assert [m for m in _HIDING_MARKUP if m in unescaped(kept["markdown"])] == list(_HIDING_MARKUP)
     assert len(kept["threats"]) == len(stripped["threats"]) >= len(_HIDING_MARKUP)
 
 
@@ -129,7 +130,7 @@ document.getElementById('host').attachShadow({{mode: 'open'}}).innerHTML =
 
     kept = await _read_served(monkeypatch, page, include_hidden=True)
 
-    assert "SHADOW_KEPT" in kept["markdown"]
+    assert "SHADOW_KEPT" in unescaped(kept["markdown"])
 
 
 async def test_include_hidden_leaves_layout_text_alone_when_only_scripts_are_flagged(
@@ -158,4 +159,4 @@ async def test_include_hidden_keeps_the_byline_the_extractor_finds_by_class(
     kept = await _read_served(monkeypatch, page, include_hidden=True)
 
     assert kept["provenance"]["author"] == "Ada Lovelace"
-    assert "HIDDEN_NOTE" in kept["markdown"]
+    assert "HIDDEN_NOTE" in unescaped(kept["markdown"])

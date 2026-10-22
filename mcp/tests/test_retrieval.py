@@ -364,7 +364,7 @@ _PAGE_WITH_A_TILDE_LINE = """<html><body><article>
 
 def test_a_fence_line_in_a_real_page_body_costs_no_heading_after_it():
     markdown, _ = extract.to_document(_PAGE_WITH_A_TILDE_LINE, url="https://example.com/x")
-    assert "\n~~~\n" in markdown
+    assert "\n\\~\\~\\~\n" in markdown
     headings = [c.heading for c in chunk_document(markdown)]
     assert set(headings) == {"Intro", "Install", "Notes"}
 
