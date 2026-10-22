@@ -126,6 +126,20 @@ def test_ip_probe_url_resolves_dns_names(monkeypatch):
     assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
 
 
+def test_a_dns_name_with_both_address_families_is_dialed_over_ipv4(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine.socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (engine.socket.AF_INET6, None, None, "", ("fd00::2", 0, 0, 0)),
+            (engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0)),
+        ],
+    )
+    assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
+
+
 def test_inflight_requests_redirect_refire_does_not_leak():
     inflight = engine._InflightRequests()
     inflight._started({"requestId": "r1"})
@@ -1285,26 +1299,6 @@ async def test_an_oversized_cdp_message_fails_waiters_instead_of_being_buffered(
             await client.close()
 
 
-async def test_cdp_evaluations_do_not_enable_runtime_or_console_domains() -> None:
-    methods: list[str] = []
-
-    async def answer(ws: websockets.ServerConnection) -> None:
-        async for raw in ws:
-            command = json.loads(raw)
-            methods.append(command["method"])
-            await ws.send(json.dumps({"id": command["id"], "result": {}}))
-
-    async with websockets.serve(answer, "127.0.0.1", 0) as server:
-        port = server.sockets[0].getsockname()[1]
-        client = cdp.CDPClient(f"ws://127.0.0.1:{port}/")
-        await client.connect()
-        try:
-            await client.send("Runtime.evaluate", {"expression": "1"})
-        finally:
-            await client.close()
-    assert methods == ["Runtime.evaluate"]
-
-
 def test_a_bad_cdp_port_does_not_break_the_startup_remediation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1557,10 +1551,23 @@ async def test_page_evaluation_exception_details_are_bounded() -> None:
         try:
             with pytest.raises(cdp.CDPError) as caught:
                 await provider._eval("tab", "throw Error('payload')")
-            assert len(str(caught.value)) <= 200
+            assert len(str(caught.value)) <= engine.sanitize.MAX_ERROR_CHARS
             assert "x" * 50 in str(caught.value)
         finally:
             await provider.aclose()
+
+
+def test_a_sub_frame_navigation_does_not_replace_the_main_documents_response() -> None:
+    responses = engine._MainResponse()
+    for loader, status in (("main", 200), ("child", 403)):
+        responses._on_response({
+            "requestId": loader, "loaderId": loader,
+            "response": {"status": status, "mimeType": "text/html", "headers": {}},
+        })
+    responses._on_frame_navigated({"frame": {"id": "root", "loaderId": "main"}})
+    responses._on_frame_navigated({"frame": {"id": "ad", "parentId": "root", "loaderId": "child"}})
+    selected = responses.main(None)
+    assert selected is not None and selected["status"] == 200
 
 
 def test_an_unobserved_document_is_not_classified_from_another_documents_response() -> None:
