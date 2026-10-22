@@ -1397,8 +1397,17 @@ def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
     assert result["canonical"] is None
 
 
-async def test_a_real_page_exception_is_reported_by_its_message() -> None:
-    details = json.loads((_FIXTURES / "cdp_exception_details.json").read_text())
+@pytest.mark.parametrize(
+    ("fixture", "message"),
+    [
+        ("cdp_exception_details.json", "Error: " + "x" * 50),
+        ("cdp_thrown_string_details.json", "boom"),
+    ],
+)
+async def test_a_real_page_exception_is_reported_by_its_message(
+    fixture: str, message: str
+) -> None:
+    details = json.loads((_FIXTURES / fixture).read_text())
 
     async def respond(ws: websockets.ServerConnection) -> None:
         async for raw in ws:
@@ -1414,49 +1423,56 @@ async def test_a_real_page_exception_is_reported_by_its_message() -> None:
         await provider._cdp.connect()
         try:
             with pytest.raises(cdp.CDPError) as caught:
-                await provider._eval("tab", "throw new Error('x'.repeat(50))")
+                await provider._eval("tab", "1")
         finally:
             await provider._cdp.close()
-    assert str(caught.value).startswith("Error: " + "x" * 50)
+    assert str(caught.value).startswith(message)
 
 
-class _HangsOnDetection(_ScriptedCDP):
+class _NoEvents(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
         return lambda: None
 
 
-async def _fetch_until_detection_hangs(monkeypatch: pytest.MonkeyPatch) -> _HangsOnDetection:
+def _provider_collecting(
+    monkeypatch: pytest.MonkeyPatch, collected: dict | None
+) -> tuple[engine.EngineProvider, _NoEvents]:
     async def public(url: str, cfg: Config) -> None:
         return None
 
     async def evaluate(sid: str, expression: str, context_id: int | None = None) -> object:
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
-            await asyncio.Event().wait()
+            if collected is None:
+                await asyncio.Event().wait()
+            return collected
         return "https://example.com/" if expression == "document.location.href" else 1
 
     monkeypatch.setattr(engine.safety, "check_url", public)
     monkeypatch.setattr(engine, "_DETECT_TIMEOUT_S", 0.05)
     monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.05)
     provider = engine.EngineProvider(_cfg())
-    fake = _HangsOnDetection(_HEADLESS_UA, _HINTS)
+    fake = _NoEvents(_HEADLESS_UA, _HINTS)
     provider._cdp = fake
     monkeypatch.setattr(provider, "_eval", evaluate)
-    with pytest.raises(cdp.CDPError, match="hidden-text detection timed out"):
-        await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
-    return fake
+    return provider, fake
 
 
 async def test_a_collector_that_never_answers_fails_the_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await _fetch_until_detection_hangs(monkeypatch)
+    provider, _ = _provider_collecting(monkeypatch, None)
+    with pytest.raises(cdp.CDPError, match="hidden-text detection timed out"):
+        await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
 
 
 async def test_a_fetch_never_enables_the_runtime_or_console_domains(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sent = (await _fetch_until_detection_hangs(monkeypatch)).methods()
-    assert {"Page.enable", "Network.enable"} <= set(sent)
+    provider, fake = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+    page = await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+    assert page.text == "Cats nap."
+    sent = fake.methods()
+    assert {"Page.enable", "Network.enable", "Target.closeTarget"} <= set(sent)
     assert not {"Runtime.enable", "Console.enable"} & set(sent)
 
 
