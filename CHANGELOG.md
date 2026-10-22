@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-10-22
+
+### Changed
+
+- Markdown escapes page text that CommonMark would read as syntax (`\_`, `\~`, `\*`, and a
+  leading `#` or `>`), so a page paragraph can't pose as a heading, list or code fence.
+  This comes from trafilatura 2.3.1. The `text` format is unchanged.
+- mcp 2.3.0, websockets 17.2, tldextract 5.4.0 and idna 3.20.
+
+### Fixed
+
+- A canonical URL from page metadata that cleaning would alter is dropped instead of
+  reported in its altered form. Whitespace around it is still trimmed.
+- A script error on the page is reported by its message, or by the thrown value when it
+  isn't an `Error`, instead of a cut-off dump of the exception record.
+
 ## [0.18.0] - 2026-10-21
 
 ### Added
@@ -941,6 +957,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.18.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.1
 [0.18.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.0
 [0.17.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.2
 [0.17.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.17.1
