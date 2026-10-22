@@ -80,18 +80,3 @@ def test_fenced_text_parses_as_one_literal_block() -> None:
 
 def test_blank_text_is_not_fenced() -> None:
     assert fenced(" \n ") == ""
-
-
-def test_a_cut_inside_a_fence_closes_it_before_the_marker() -> None:
-    text, cut = truncate(fenced("a" * 30 + "\n\n" + "b" * 100), 10)
-    tokens = MarkdownIt("commonmark").parse(text)
-    assert cut is True
-    assert [t.type for t in tokens][0] == "fence"
-    assert tokens[0].content == "a" * 30 + "\n"
-    assert tokens[-2].content == "[... truncated]"
-
-
-def test_a_cut_after_a_closed_fence_adds_no_fence() -> None:
-    text, cut = truncate("```\ncode\n```\n\n" + "word " * 100, 10)
-    assert cut is True
-    assert text == "```\ncode\n```\n\n[... truncated]"

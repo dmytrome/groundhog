@@ -15,7 +15,6 @@ class ExtractMeta:
 
 
 _BACKTICKS_RE = re.compile(r"`+")
-_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$", re.MULTILINE)
 
 
 def fenced(text: str) -> str:
@@ -26,17 +25,6 @@ def fenced(text: str) -> str:
     return f"{fence}\n{text}\n{fence}"
 
 
-def _open_fence(markdown: str) -> str | None:
-    fence: str | None = None
-    for marker, rest in _FENCE_RE.findall(markdown):
-        if fence is None:
-            if not (marker[0] == "`" and "`" in rest):
-                fence = marker
-        elif marker[0] == fence[0] and len(marker) >= len(fence) and not rest.strip():
-            fence = None
-    return fence
-
-
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     limit = max_tokens * _CHARS_PER_TOKEN
     if len(text) <= limit:
@@ -44,9 +32,7 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     cut = text.rfind("\n\n", 0, limit)
     if cut <= 0:
         cut = limit
-    body = text[:cut].rstrip()
-    fence = _open_fence(body)
-    return body + (f"\n{fence}" if fence else "") + _TRUNCATION_MARKER, True
+    return text[:cut].rstrip() + _TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
