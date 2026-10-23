@@ -5,7 +5,7 @@ from urllib.parse import unquote
 import pytest
 from markdown_it import MarkdownIt
 
-from groundhog_mcp import links
+from groundhog_mcp import extract, links
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _PAGE = "https://example.com/page"
@@ -118,3 +118,15 @@ def test_the_captured_pages_agree_with_commonmark_too() -> None:
         assert [unquote(url) for url in found] == [
             unquote(href) for href in _commonmark_links(doc["markdown"])
         ]
+
+
+def test_what_the_installed_extractor_writes_is_read_as_commonmark_reads_it() -> None:
+    html = (_FIXTURES / "trafilatura_links.html").read_text()
+    markdown, _ = extract.to_document(html, _PAGE)
+
+    found = [link.url for link in links.find(markdown, _PAGE)]
+
+    assert "https://example.com/spec/v2" in found
+    assert [unquote(url) for url in found] == [
+        unquote(href) for href in _commonmark_links(markdown)
+    ]
