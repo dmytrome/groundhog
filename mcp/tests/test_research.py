@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 import pytest
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
 
 from groundhog_mcp import (
     cdp,
@@ -1486,7 +1486,6 @@ async def test_a_page_at_the_depth_limit_offers_nothing(
     deep = "https://deep.org/3"
     token = tokens.issue(
         fetch_url=deep,
-        identity=deep,
         depth=tokens.MAX_DEPTH,
         parent_source_url=_HUB,
         parent_passage_id="p:x:0-1",
@@ -1529,11 +1528,15 @@ async def _call(arguments: dict[str, object]) -> dict[str, object]:
     called = await server.build_server().call_tool("research", arguments)
     assert isinstance(called, CallToolResult)
     assert called.structured_content is not None
-    return called.structured_content
+    (content,) = called.content
+    assert isinstance(content, TextContent)
+    return {**called.structured_content, "wire_size": len(content.text)}
 
 
 def _wire_size(structured: dict[str, object]) -> int:
-    return len(json.dumps(structured, separators=(",", ":")))
+    size = structured["wire_size"]
+    assert isinstance(size, int)
+    return size
 
 
 async def test_long_passages_are_cut_to_the_ceiling_and_say_so(fake_web: FakeWeb) -> None:
@@ -1612,7 +1615,6 @@ async def test_the_ceiling_holds_for_a_follow_of_long_urls(fake_web: FakeWeb) ->
         {
             "token": tokens.issue(
                 fetch_url=url,
-                identity=url,
                 depth=1,
                 parent_source_url=url,
                 parent_passage_id="p:x:0-1",
@@ -1628,3 +1630,126 @@ async def test_the_ceiling_holds_for_a_follow_of_long_urls(fake_web: FakeWeb) ->
 
     assert _wire_size(structured) <= research_mod.CEILING_CHARS
     assert [entry["outcome"] for entry in structured["followed"]] == ["failed"] * 8
+
+
+async def test_text_in_any_script_is_counted_as_the_characters_sent(fake_web: FakeWeb) -> None:
+    sentence = "猫は一日の大半を眠って過ごし、夕方に狩りをする。"
+    pages = {
+        f"https://{name}.jp/neko": "# 猫\n\n"
+        + "".join(f"{name}{i} " + sentence * 40 + "\n\n" for i in range(6))
+        for name in "ab"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "猫 眠って", "max_tokens": 50_000})
+
+    assert len(structured["passages"]) == 12
+    assert structured["receipt"]["passages_omitted"] == 0
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+
+
+async def test_a_code_block_too_big_for_the_budget_leaves_room_for_the_prose(
+    fake_web: FakeWeb,
+) -> None:
+    code = "\n".join(f"kitten_eats_meat_{i} = feed({i})  # kitten eats meat" for i in range(30))
+    markdown = f"```python\n{code}\n```\n\n# Diet\n\nA kitten eats meat several times a day.\n"
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=200)
+
+    assert [p["text"] for p in result["passages"]] == ["A kitten eats meat several times a day."]
+
+
+async def test_a_followed_page_with_nothing_to_read_says_so(fake_web: FakeWeb) -> None:
+    gate, twin, copy = "https://gate.org/x", "https://twin.org/a", "https://copy.org/b"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap: [g]({gate}) [t]({twin}) [c]({copy})."),
+        gate: _doc(gate, "Just a moment", status="challenge"),
+        twin: _doc(twin, "# Sleep\n\nCats nap a lot."),
+        copy: _doc(copy, "# Sleep\n\nCats nap a lot."),
+    }
+    cards = _cards_of(await _offered(fake_web, docs))
+
+    result = await research(
+        "cats nap",
+        follow=[{"token": cards[url]["token"], "why": "sleep"} for url in (gate, twin, copy)],
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "not_content",
+        "read",
+        "duplicate",
+    ]
+
+
+async def test_follows_to_one_site_stop_where_they_would_miss_the_deadline(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = [f"https://slow.org/{i}" for i in range(4)]
+    docs = {_HUB: _doc(_HUB, "# Cats\n\nCats nap: " + " ".join(f"[{u}]({u})" for u in pages))}
+    docs |= {url: _doc(url, f"# Cats\n\nCats nap at {url}.") for url in pages}
+    tokens_by_url = {
+        url: tokens.issue(
+            fetch_url=url, depth=1, parent_source_url=_HUB, parent_passage_id="p:x:0-1", label=url
+        )
+        for url in pages
+    }
+    fake_web([], docs)
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "30000")
+
+    result = await research(
+        "cats nap", follow=[{"token": tokens_by_url[url], "why": "w"} for url in pages]
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "read",
+        "read",
+        "same_domain_limit",
+        "same_domain_limit",
+    ]
+    assert fetched == pages[:2]
+
+
+async def test_an_expired_token_is_reported_without_reading_anything(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = tokens.issue(
+        fetch_url="https://a.org/x",
+        depth=1,
+        parent_source_url=_HUB,
+        parent_passage_id="p:x:0-1",
+        label="x",
+    )
+    fake_web([], {})
+    later = tokens.time.monotonic() + tokens.TTL_S + 1
+    monkeypatch.setattr(tokens.time, "monotonic", lambda: later)
+
+    result = await research("cats", follow=[{"token": token, "why": "w"}])
+
+    assert result["followed"] == [{"url": None, "why": "w", "outcome": "expired"}]
+    assert fetched == []
+    assert searched == []
+
+
+async def test_the_longest_why_and_query_allowed_are_accepted(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+
+    result = await research("q" * 2000, follow=[{"token": "x.y", "why": "w" * 160}])
+
+    assert result["followed"][0]["outcome"] == "invalid_token"
+
+
+async def test_a_link_whose_words_match_the_question_comes_first(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [here](https://a.org/1), [the cats nap study](https://b.org/2), "
+        "[edit the cats nap page](https://c.org/edit)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert [card["label"] for card in result["candidates"]] == [
+        "the cats nap study",
+        "here",
+        "edit the cats nap page",
+    ]

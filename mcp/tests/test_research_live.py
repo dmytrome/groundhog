@@ -85,7 +85,6 @@ async def test_a_token_for_a_private_address_is_still_refused() -> None:
     url = "http://127.0.0.1:9/"
     token = tokens.issue(
         fetch_url=url,
-        identity=url,
         depth=1,
         parent_source_url="https://example.com/",
         parent_passage_id="p:x:0-1",

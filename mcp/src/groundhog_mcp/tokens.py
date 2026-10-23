@@ -18,10 +18,10 @@ Refusal = Literal["invalid_token", "expired"]
 class Grant(TypedDict):
     v: int
     fetch_url: str
-    identity: str
     depth: int
     max_depth: int
     issued: float
+    issued_at: float
     parent_source_url: str
     parent_passage_id: str
     label: str
@@ -41,7 +41,6 @@ def _mac(body: bytes) -> str:
 def issue(
     *,
     fetch_url: str,
-    identity: str,
     depth: int,
     parent_source_url: str,
     parent_passage_id: str,
@@ -50,10 +49,10 @@ def issue(
     grant: Grant = {
         "v": _VERSION,
         "fetch_url": fetch_url,
-        "identity": identity,
         "depth": depth,
         "max_depth": MAX_DEPTH,
         "issued": time.monotonic(),
+        "issued_at": time.time(),
         "parent_source_url": parent_source_url,
         "parent_passage_id": parent_passage_id,
         "label": label,
@@ -64,7 +63,7 @@ def issue(
 
 def redeem(token: str) -> Grant:
     body, _, mac = token.partition(".")
-    if not body or not hmac.compare_digest(_mac(body.encode()), mac):
+    if not body or not hmac.compare_digest(_mac(body.encode()).encode(), mac.encode()):
         raise TokenError("invalid_token")
     try:
         grant: Grant = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
@@ -72,6 +71,7 @@ def redeem(token: str) -> Grant:
         raise TokenError("invalid_token") from exc
     if grant.get("v") != _VERSION or not 0 < grant["depth"] <= grant["max_depth"] <= MAX_DEPTH:
         raise TokenError("invalid_token")
-    if not 0 <= time.monotonic() - grant["issued"] <= TTL_S:
+    awake, wall = time.monotonic() - grant["issued"], time.time() - grant["issued_at"]
+    if not (0 <= awake <= TTL_S and wall <= TTL_S):
         raise TokenError("expired")
     return grant
