@@ -11,6 +11,7 @@ RetrievalStatus = Literal[
     "server_error",
     "unsupported_content",
     "empty",
+    "too_large",
     "unknown",
 ]
 
@@ -23,6 +24,7 @@ NOT_CONTENT: frozenset[str] = frozenset(
         "server_error",
         "unsupported_content",
         "empty",
+        "too_large",
     }
 )
 

@@ -1250,3 +1250,4 @@ async def test_sources_can_finish_while_an_earlier_source_is_waiting(
     result = await research("cats")
 
     assert [s["status"] for s in result["sources"]] == ["ok", "ok"]
+

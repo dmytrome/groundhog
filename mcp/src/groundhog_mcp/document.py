@@ -7,6 +7,8 @@ from . import classify, engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
+MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 _ATTRIBUTE_REASON_PREFIX = "attribute:"
 _TEMPLATE_REASON = "template"
 _LOW_SIGNAL_CARRIERS = ("hidden_attribute", "hidden_template")
@@ -130,10 +132,12 @@ async def fetch_document(
     page = await provider.fetch(url, strip_hidden=not include_hidden)
     final_url = page.final_url or url
 
-    if format == "text":
+    too_large = len(page.html.encode()) > MAX_HTML_BYTES
+    if format == "text" or too_large:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
+    too_large = too_large or len(markdown.encode()) > MAX_MARKDOWN_BYTES
 
     scans = [sanitize.counts(markdown)]
     if markdown is not page.text:
@@ -151,6 +155,10 @@ async def fetch_document(
     status = page.retrieval_status
     if status == "ok" and not visible_text.strip():
         status = "empty"
+    if too_large:
+        markdown = ""
+        if status not in classify.NOT_CONTENT:
+            status = "too_large"
     threats = _capped(
         char_threats,
         _folded(_hidden_threats(page.hidden_spans))

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from groundhog_mcp import extract, sanitize
+from groundhog_mcp import document, extract, sanitize
 from groundhog_mcp.document import _hidden_threats, _merged, _ranked, fetch_document
 from groundhog_mcp.engine import HiddenSpan, RenderedPage
 
@@ -1044,3 +1044,37 @@ async def test_a_blank_page_read_with_its_hidden_text_is_still_empty(
     fake_provider(make_page(html="<html><body></body></html>", text="\u200b"))
     doc = await fetch_document("https://ex.com/p", include_hidden=True)
     assert doc.status == "empty"
+
+
+async def test_a_page_over_the_html_limit_in_bytes_returns_no_content(fake_provider, make_page):
+    wide = "é" * (document.MAX_HTML_BYTES // 2 + 1)
+    assert len(wide) < document.MAX_HTML_BYTES < len(wide.encode())
+    fake_provider(make_page(html=f"<html><body><p>Cats {wide}</p></body></html>", text="Cats"))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_text_over_the_markdown_limit_returns_no_content(fake_provider, make_page):
+    fake_provider(make_page(text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1)))
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_an_oversized_challenge_page_keeps_its_own_status(fake_provider, make_page):
+    fake_provider(
+        make_page(
+            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+            retrieval_status="challenge",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "challenge"
+    assert doc.markdown == ""

@@ -145,3 +145,13 @@ async def test_page_chosen_errors_are_cleaned_and_bounded(monkeypatch: pytest.Mo
     assert detail.startswith("RuntimeError: boom")
     assert ZERO_WIDTH not in detail and TAG_I not in detail
     assert len(detail) <= sanitize.MAX_ERROR_CHARS
+
+
+async def test_an_oversized_page_is_read_as_too_large_with_no_content(fake_provider, make_page):
+    fake_provider(make_page(text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1)))
+
+    result = await read_url("https://ex.com/p", format="text", query="cats")
+
+    assert result["status"] == "too_large"
+    assert result["markdown"] == ""
+    assert result["matches"] == []
