@@ -41,13 +41,16 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
-    markdown = trafilatura.extract(
-        html,
-        url=url,
-        output_format="markdown",
-        include_links=True,
-        include_tables=True,
-    ) or ""
+    markdown = (
+        trafilatura.extract(
+            html,
+            url=url,
+            output_format="markdown",
+            include_links=True,
+            include_tables=True,
+        )
+        or ""
+    )
     doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
     doc_url = getattr(doc, "url", None)
     canonical = doc_url if doc_url != url else None
@@ -57,5 +60,3 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
         canonical=canonical,
     )
     return markdown, meta
-
-

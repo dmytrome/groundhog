@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 import pytest
+from mcp.types import CallToolResult
 
 from groundhog_mcp import (
     cdp,
@@ -18,6 +19,7 @@ from groundhog_mcp import (
     safety,
     sanitize,
     search as search_module,
+    server,
     tokens,
 )
 from groundhog_mcp.config import Config
@@ -1521,3 +1523,108 @@ async def test_a_query_too_long_to_echo_is_refused(fake_web: FakeWeb) -> None:
 
     with pytest.raises(safety.InvalidArgument):
         await research("cats " * 401)
+
+
+async def _call(arguments: dict[str, object]) -> dict[str, object]:
+    called = await server.build_server().call_tool("research", arguments)
+    assert isinstance(called, CallToolResult)
+    assert called.structured_content is not None
+    return called.structured_content
+
+
+def _wire_size(structured: dict[str, object]) -> int:
+    return len(json.dumps(structured, separators=(",", ":")))
+
+
+async def test_long_passages_are_cut_to_the_ceiling_and_say_so(fake_web: FakeWeb) -> None:
+    paragraph = "Cats nap in the sun for most of the day, then hunt at dusk.\n\n"
+    pages = {f"https://{name}.org/cats": "# Cats\n\n" + paragraph * 600 for name in "abcde"}
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "cats nap sun", "max_tokens": 50_000})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    receipt = structured["receipt"]
+    assert receipt["passages_omitted"] > 0
+    assert receipt["metadata_compacted"] == []
+    assert research_mod._OMITTED_NOTE in structured["notes"]
+    for passage in structured["passages"]:
+        assert pages[passage["source_url"]][passage["start"] : passage["end"]] == passage["text"]
+
+
+def _long_domain(first: str) -> str:
+    return ".".join([first + "a" * (63 - len(first)), "b" * 63, "c" * 63, "d" * 61])
+
+
+_ESCAPED = '"\\\U0001f600'
+
+
+def _escaped_url(domain: str, n: int) -> str:
+    head = f"https://{domain}/{n}/"
+    return head + (_ESCAPED * 2048)[: 2048 - len(head)]
+
+
+async def test_the_ceiling_holds_with_every_field_at_its_longest(fake_web: FakeWeb) -> None:
+    included = [_long_domain(c) for c in "abcdefgh"]
+    excluded = [_long_domain(f"x{i:02d}") for i in range(50)]
+    urls = [_escaped_url(included[i % 8], i) for i in range(10)]
+    threat: sanitize.Threat = {
+        "type": "hidden_css",
+        "reason": _ESCAPED * 26,
+        "location": _ESCAPED * 40,
+        "excerpt": _ESCAPED * 26,
+    }
+    docs = {
+        url: dataclasses.replace(
+            _doc(url, "# Cats\n\n" + "Cats nap. " * 3000),
+            title=_ESCAPED * 100,
+            threats=[threat] * 10 + [sanitize.notice("strip_incomplete", "rebuilt")],
+            hidden_found=40,
+        )
+        for url in urls
+    }
+    fake_web([_hit(url) for url in urls], docs)
+
+    structured = await _call(
+        {
+            "query": (_ESCAPED * 700)[:2000],
+            "max_sources": 10,
+            "include_domains": included,
+            "exclude_domains": excluded,
+            "aim": (_ESCAPED * 70)[:200],
+        }
+    )
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    receipt = structured["receipt"]
+    assert receipt["metadata_compacted"]
+    shown = sum(source["threat_total"] for source in structured["sources"])
+    hidden = (structured["omitted_safety"] or {"threat_total": 0})["threat_total"]
+    assert shown + hidden == 10 * 40
+    notices = {n for s in structured["sources"] for n in s["threat_counts"]}
+    notices |= set((structured["omitted_safety"] or {"notices": []})["notices"])
+    assert "strip_incomplete" in notices
+
+
+async def test_the_ceiling_holds_for_a_follow_of_long_urls(fake_web: FakeWeb) -> None:
+    urls = [_escaped_url(_long_domain(c), i) for i, c in enumerate("abcdefgh")]
+    picks = [
+        {
+            "token": tokens.issue(
+                fetch_url=url,
+                identity=url,
+                depth=1,
+                parent_source_url=url,
+                parent_passage_id="p:x:0-1",
+                label=(_ESCAPED * 60)[:160],
+            ),
+            "why": (_ESCAPED * 60)[:160],
+        }
+        for url in urls
+    ]
+    fake_web([], {}, failures={url: TimeoutError() for url in urls})
+
+    structured = await _call({"query": (_ESCAPED * 700)[:2000], "follow": picks})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    assert [entry["outcome"] for entry in structured["followed"]] == ["failed"] * 8

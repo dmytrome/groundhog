@@ -88,8 +88,12 @@ class Ranked(NamedTuple):
     set_aside: int
 
 
+def opens_fence(text: str) -> bool:
+    return bool(_FENCE_OPEN_RE.match(text.split("\n", 1)[0]))
+
+
 def is_fenced(chunk: Chunk) -> bool:
-    return chunk.fence is not None or bool(_FENCE_OPEN_RE.match(chunk.text.split("\n", 1)[0]))
+    return chunk.fence is not None or opens_fence(chunk.text)
 
 
 def tokenize(text: str) -> list[str]:
@@ -246,9 +250,7 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def rank(
-    chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
-) -> Ranked:
+def rank(chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0) -> Ranked:
     terms = tokenize(query)
     scores = _bm25(chunks, terms)
     by_relevance = sorted(
