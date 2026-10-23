@@ -28,6 +28,7 @@ _EVAL_TIMEOUT_S = 20.0
 _SETTLE_POLL_S = 0.25
 _SETTLE_QUIET_S = 1.0
 _SETTLE_TIMEOUT_S = 8.0
+_SETTLE_STALL_S = 2.0
 _DOM_SIZE_EXPR = (
     "document.querySelectorAll('*').length + '|' + "
     "(document.body ? document.body.innerText.length : 0)"
@@ -904,18 +905,21 @@ class EngineProvider:
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         loop = asyncio.get_running_loop()
         prev: object = None
-        quiet_since = loop.time()
+        quiet_since = heard = loop.time()
         try:
             async with asyncio.timeout(_SETTLE_TIMEOUT_S) as cap:
                 ctx = await self._isolated_context(session_id)
                 while True:
+                    heard = loop.time()
                     try:
                         current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
                     except CDPError:
+                        heard = loop.time()
                         ctx = await self._isolated_context(session_id)
                         prev, quiet_since = None, loop.time()
                         await asyncio.sleep(_SETTLE_POLL_S)
                         continue
+                    heard = loop.time()
                     if current != prev or inflight.busy:
                         prev = current
                         quiet_since = loop.time()
@@ -923,7 +927,7 @@ class EngineProvider:
                         return
                     await asyncio.sleep(_SETTLE_POLL_S)
         except TimeoutError:
-            if not cap.expired():
+            if not cap.expired() or loop.time() - heard >= _SETTLE_STALL_S:
                 raise
 
     async def _isolated_context(self, session_id: str) -> int | None:
