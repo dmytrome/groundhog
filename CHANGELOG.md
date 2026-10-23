@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `research` offers `candidates`: links inside the returned passages, each with a signed
+  token. Passing tokens in `follow` reads those pages without searching, up to three links
+  deep from a search result. Tokens expire after 30 minutes or on restart.
+- A `research` response never exceeds 40,000 characters; what does not fit is counted in the
+  receipt, and the safety counts of any source left out are kept.
+- A `too_large` status for pages over 5 MiB of HTML or 2 MiB of text, which return no content.
+
+### Fixed
+
+- A passage cut short to fit `max_tokens` reports its own end and id, and a code block is left
+  out rather than cut.
+
+### Changed
+
+- `research` refuses a query over 2,000 characters.
+
 ## [0.19.1] - 2026-10-23
 
 ### Fixed

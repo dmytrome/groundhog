@@ -101,7 +101,7 @@ container after removing an unreachable one named `groundhog-browser`.
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
 | `fetched_at` | UTC ISO-8601 timestamp |
-| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
+| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `too_large` means the page had over 5 MiB of HTML or 2 MiB of text and nothing of it is returned. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
 | `threats`    | What was stripped; empty when nothing was found |
@@ -146,17 +146,20 @@ URL would change under cleaning, isn't `http(s)`, carries credentials or exceeds
 characters is dropped. A backend that can't answer raises an error instead of returning an
 empty web.
 
-### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None)`
+### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None)`
 
 Searches, reads the top sources and ranks passages from all of them in one pass.
 
 - `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
-  `fence`. `text` is exactly `markdown[start:end]` unless `clamped`. A passage cut from a
+  `fence`. `text` is exactly `markdown[start:end]`; `clamped` says it was cut short to fit
+  the budget. A code block is never cut short, only left out. A passage cut from a
   long code block carries the block's opening line in `fence`: reopen with it when `text`
   doesn't start with it, and close the block when `text` doesn't end with a closing fence.
   `id` stays stable while the page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
-  (as in `read_url`), `threats`, `provenance`, `filtered`. A failed source doesn't fail the
+  (as in `read_url`), `threats`, `threat_total`, `threat_counts`, `provenance`, `filtered`,
+  `depth` and `discovered_via` (the candidate it was followed from, with your `why`). A
+  failed source doesn't fail the
   call. A challenge, an error page, an `empty` page or any page whose `markdown` is blank
   counts as `not_content` and contributes no passages.
 - One page per registrable domain unless `include_domains` is set, and then no more pages
@@ -177,6 +180,24 @@ fetched (`hits_excluded`, `hits_outside_domains`, `hits_before_date`, `hits_same
 once as `failed`, `not_content`, `filtered` or `usable`, `outside_domains`, `unknown_dates`,
 and the passages `omitted`, `set_aside` or `clamped`. Read it before concluding the web has
 no answer.
+
+`candidates` are links inside the returned passages, at most 12, no more than 4 from one
+page and 3 to one domain. Each has a `token`, `url`, `domain`, `label` (the link text, which
+the page wrote), `parent_source_url`, `parent_passage_id`, `depth` and `flags`
+(`parent_strip_incomplete`, `parent_detection_degraded`, `parent_threats=N`,
+`likely_unsupported_format`, `same_domain_pages=N`). Links back to the page, to pages already
+read in the call, outside the domain filters, or from a page three links deep are not
+offered. To read some, call again with `follow=[{"token": ..., "why": ...}]` (up to 8, each
+`why` up to 160 characters) and the same `query` and filters: nothing is remembered between
+calls. A follow runs no search, and `followed` says for each entry whether it was `read`,
+`failed`, `filtered`, a `duplicate`, an `invalid_token` or `expired`. Tokens are signed by
+the server and expire after 30 minutes or on restart.
+
+A response never exceeds 40,000 characters. When it would, cards go first, then threat
+excerpts, then passages, then metadata, each counted in the receipt (`candidates_omitted`,
+`threat_excerpts_omitted`, `passages_omitted`, `sources_omitted`, `metadata_compacted`);
+safety counts from sources left out are kept in `omitted_safety`, and `notes` says another
+call returns what did not fit.
 
 ### `status()`
 
