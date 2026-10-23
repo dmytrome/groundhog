@@ -1635,7 +1635,7 @@ async def _settle_against(
         if request["method"] == stalls:
             if not reply_late:
                 return
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.6)
         await ws.send(json.dumps({"id": request["id"], "result": replies[request["method"]]}))
 
     async def respond(ws: websockets.ServerConnection) -> None:
@@ -1643,8 +1643,8 @@ async def _settle_against(
             async for raw in ws:
                 group.create_task(answer(ws, json.loads(raw)))
 
-    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.1)
-    monkeypatch.setattr(engine, "_SETTLE_STALL_S", 0.05)
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(engine, "_SETTLE_STALL_S", 0.2)
     monkeypatch.setattr(engine, "_SETTLE_POLL_S", 0.01)
     server = await websockets.serve(respond, "127.0.0.1", 0)
     provider = engine.EngineProvider(_cfg())
@@ -1661,7 +1661,7 @@ async def _settle_against(
         except TimeoutError as exc:
             error = exc
         elapsed = time.monotonic() - started
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.6)
         assert (await provider._cdp.send("Browser.getVersion")) == {"product": "Chrome/155"}
         assert not provider._cdp.closed
     finally:
@@ -1678,7 +1678,7 @@ async def test_a_page_that_stops_answering_fails_the_fetch_at_the_settle_cap(
 ) -> None:
     elapsed, error = await _settle_against(monkeypatch, stalls)
     assert isinstance(error, TimeoutError)
-    assert elapsed < 0.5
+    assert elapsed < 0.6
 
 
 async def test_a_reply_arriving_after_settling_gave_up_is_ignored(
@@ -1686,7 +1686,7 @@ async def test_a_reply_arriving_after_settling_gave_up_is_ignored(
 ) -> None:
     elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", reply_late=True)
     assert isinstance(error, TimeoutError)
-    assert elapsed < 0.5
+    assert elapsed < 0.6
 
 
 async def test_a_page_that_answers_but_never_goes_quiet_settles_at_the_cap(
@@ -1694,7 +1694,7 @@ async def test_a_page_that_answers_but_never_goes_quiet_settles_at_the_cap(
 ) -> None:
     elapsed, error = await _settle_against(monkeypatch, "", busy=True)
     assert error is None
-    assert 0.1 <= elapsed < 0.5
+    assert 0.3 <= elapsed < 0.6
 
 
 async def test_an_evaluation_timeout_inside_settling_still_fails_the_fetch(
