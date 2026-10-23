@@ -25,6 +25,8 @@ class Document:
     http_status: int | None
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance
+    hidden_found: int = 0
+    characters_found: int = 0
 
 
 def _carrier_type(reason: str) -> sanitize.ThreatType:
@@ -159,11 +161,14 @@ async def fetch_document(
         markdown = ""
         if status not in classify.NOT_CONTENT:
             status = "too_large"
-    threats = _capped(
-        char_threats,
+    hidden = (
         _folded(_hidden_threats(page.hidden_spans))
         if page.isolated
-        else _hidden_threats(page.hidden_spans),
+        else _hidden_threats(page.hidden_spans)
+    )
+    threats = _capped(
+        char_threats,
+        hidden,
         max_threats,
         page.spans_dropped,
         trusted=page.isolated,
@@ -199,4 +204,6 @@ async def fetch_document(
         http_status=page.http_status,
         threats=threats,
         provenance=provenance.build(markdown, meta, page.meta),
+        hidden_found=sum(t.get("seen", 1) for t in hidden) + page.spans_dropped,
+        characters_found=len(char_threats),
     )

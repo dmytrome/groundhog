@@ -1078,3 +1078,20 @@ async def test_an_oversized_challenge_page_keeps_its_own_status(fake_provider, m
 
     assert doc.status == "challenge"
     assert doc.markdown == ""
+
+
+async def test_the_totals_count_every_finding_whatever_the_report_kept(fake_provider, make_page):
+    repeated = [{"reason": "display:none", "text": "same", "path": "d"}] * 3
+    distinct = [{"reason": "display:none", "text": f"p{i}", "path": "d"} for i in range(4)]
+    fake_provider(
+        make_page(
+            hidden=repeated + distinct,
+            spans_dropped=5,
+            text=f"Cats{ZERO_WIDTH} nap{TAG_I}.",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text", max_threats=2)
+
+    assert doc.hidden_found == 3 + 4 + 5
+    assert doc.characters_found == 2
