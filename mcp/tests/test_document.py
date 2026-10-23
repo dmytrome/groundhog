@@ -1095,3 +1095,14 @@ async def test_the_totals_count_every_finding_whatever_the_report_kept(fake_prov
 
     assert doc.hidden_found == 3 + 4 + 5
     assert doc.characters_found == 2
+
+
+async def test_a_page_exactly_at_the_html_limit_is_read(fake_provider, make_page):
+    html = "<html><body><p>Cats nap.</p></body></html>"
+    padding = "<!--" + "x" * (document.MAX_HTML_BYTES - len(html) - 7) + "-->"
+    fake_provider(make_page(html=html[:-14] + padding + html[-14:], text="Cats nap."))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert len((html[:-14] + padding + html[-14:]).encode()) == document.MAX_HTML_BYTES
+    assert doc.status == "ok"

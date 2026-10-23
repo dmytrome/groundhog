@@ -123,6 +123,10 @@ def _capped(
     ]
 
 
+def _over(text: str, limit: int) -> bool:
+    return len(text) > limit or (len(text) * 4 > limit and len(text.encode()) > limit)
+
+
 async def fetch_document(
     url: str,
     *,
@@ -134,12 +138,12 @@ async def fetch_document(
     page = await provider.fetch(url, strip_hidden=not include_hidden)
     final_url = page.final_url or url
 
-    too_large = len(page.html.encode()) > MAX_HTML_BYTES
+    too_large = _over(page.html, MAX_HTML_BYTES)
     if format == "text" or too_large:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
-    too_large = too_large or len(markdown.encode()) > MAX_MARKDOWN_BYTES
+    too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
 
     scans = [sanitize.counts(markdown)]
     if markdown is not page.text:
