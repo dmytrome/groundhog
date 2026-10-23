@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 import trafilatura
@@ -11,6 +12,17 @@ class ExtractMeta:
     author: str | None
     published: str | None
     canonical: str | None
+
+
+_BACKTICKS_RE = re.compile(r"`+")
+
+
+def fenced(text: str) -> str:
+    if not text.strip():
+        return ""
+    longest = max((len(run) for run in _BACKTICKS_RE.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
 
 
 def truncate(text: str, max_tokens: int) -> tuple[str, bool]:

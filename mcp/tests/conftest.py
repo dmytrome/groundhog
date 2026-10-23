@@ -74,6 +74,7 @@ def make_page():
         *,
         title: str = "Doc",
         text: str = "unused",
+        html: str = _PAGE_HTML,
         final_url: str = "https://ex.com/p",
         meta: PageMeta | None = None,
         isolated: bool = True,
@@ -83,7 +84,7 @@ def make_page():
         retrieval_status: classify.RetrievalStatus = "ok",
     ) -> RenderedPage:
         return RenderedPage(
-            html=_PAGE_HTML,
+            html=html,
             text=text,
             final_url=final_url,
             title=title,

@@ -1051,15 +1051,25 @@ async def test_captured_searxng_dates_leave_out_the_older_hits_before_fetching(
 
 
 @pytest.mark.parametrize("markdown", ["", "\n  \n"])
-async def test_two_pages_that_extract_to_nothing_are_not_content(
+async def test_a_page_that_extracts_to_nothing_is_not_content(
     fake_web: FakeWeb, markdown: str
 ) -> None:
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat")
+
+    assert result["receipt"]["not_content"] == 1
+    assert result["receipt"]["usable"] == 0
+
+
+async def test_two_empty_pages_are_not_content(fake_web: FakeWeb) -> None:
     pages = ["https://a.com/x", "https://b.com/y"]
-    fake_web([_hit(url) for url in pages], {url: _doc(url, markdown) for url in pages})
+    fake_web([_hit(url) for url in pages], {url: _doc(url, "", "empty") for url in pages})
 
     result = await research("kitten eats meat")
 
     assert [s["filtered"] for s in result["sources"]] == [None, None]
+    assert [s["page_status"] for s in result["sources"]] == ["empty", "empty"]
     assert result["receipt"]["not_content"] == 2
     assert result["receipt"]["usable"] == 0
     assert result["passages"] == []

@@ -1619,3 +1619,113 @@ def test_an_unobserved_document_is_not_classified_from_another_documents_respons
     for loader in ("unobserved", None):
         selected = responses.main(loader)
         assert engine.classify.classify(selected, False, "An article", "Some content") == "unknown"
+
+
+async def _settle_against(
+    monkeypatch: pytest.MonkeyPatch, stalls: str, reply_late: bool = False, busy: bool = False
+) -> tuple[float, BaseException | None]:
+    replies = {
+        "Page.getFrameTree": json.loads((_FIXTURES / "cdp_frame_tree.json").read_text()),
+        "Page.createIsolatedWorld": json.loads((_FIXTURES / "cdp_isolated_world.json").read_text()),
+        "Runtime.evaluate": json.loads((_FIXTURES / "cdp_evaluate_result.json").read_text()),
+        "Browser.getVersion": {"product": "Chrome/155"},
+    }
+
+    async def answer(ws: websockets.ServerConnection, request: dict[str, object]) -> None:
+        if request["method"] == stalls:
+            if not reply_late:
+                return
+            await asyncio.sleep(0.6)
+        await ws.send(json.dumps({"id": request["id"], "result": replies[request["method"]]}))
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async with asyncio.TaskGroup() as group:
+            async for raw in ws:
+                group.create_task(answer(ws, json.loads(raw)))
+
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(engine, "_SETTLE_STALL_S", 0.2)
+    monkeypatch.setattr(engine, "_SETTLE_POLL_S", 0.01)
+    server = await websockets.serve(respond, "127.0.0.1", 0)
+    provider = engine.EngineProvider(_cfg())
+    provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+    await provider._cdp.connect()
+    inflight = engine._InflightRequests()
+    if busy:
+        inflight._started({"requestId": "never-finishes"})
+    error: BaseException | None = None
+    started = time.monotonic()
+    try:
+        try:
+            await provider._settle("tab", inflight)
+        except TimeoutError as exc:
+            error = exc
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(0.6)
+        assert (await provider._cdp.send("Browser.getVersion")) == {"product": "Chrome/155"}
+        assert not provider._cdp.closed
+    finally:
+        await provider._cdp.close()
+        server.close()
+    return elapsed, error
+
+
+@pytest.mark.parametrize(
+    "stalls", ["Runtime.evaluate", "Page.getFrameTree", "Page.createIsolatedWorld"]
+)
+async def test_a_page_that_stops_answering_fails_the_fetch_at_the_settle_cap(
+    monkeypatch: pytest.MonkeyPatch, stalls: str
+) -> None:
+    elapsed, error = await _settle_against(monkeypatch, stalls)
+    assert isinstance(error, TimeoutError)
+    assert elapsed < 0.6
+
+
+async def test_a_reply_arriving_after_settling_gave_up_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", reply_late=True)
+    assert isinstance(error, TimeoutError)
+    assert elapsed < 0.6
+
+
+async def test_a_page_that_answers_but_never_goes_quiet_settles_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    elapsed, error = await _settle_against(monkeypatch, "", busy=True)
+    assert error is None
+    assert 0.3 <= elapsed < 0.6
+
+
+async def test_an_evaluation_timeout_inside_settling_still_fails_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 5.0)
+    fake = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    provider = engine.EngineProvider(_cfg())
+    provider._cdp = fake
+
+    async def stall(method: str, params: object = None, session_id: object = None) -> object:
+        if method == "Runtime.evaluate":
+            await asyncio.Event().wait()
+        return {}
+
+    monkeypatch.setattr(fake, "send", stall)
+    with pytest.raises(TimeoutError):
+        await provider._settle("tab", engine._InflightRequests())
+
+
+async def test_settling_on_a_closed_connection_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.1)
+    fake = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    provider = engine.EngineProvider(_cfg())
+    provider._cdp = fake
+
+    async def dead(method: str, params: object = None, session_id: object = None) -> object:
+        fake.closed = True
+        raise cdp.CDPError("CDP client is not connected")
+
+    monkeypatch.setattr(fake, "send", dead)
+    with pytest.raises(cdp.CDPError):
+        await provider._settle("tab", engine._InflightRequests())
