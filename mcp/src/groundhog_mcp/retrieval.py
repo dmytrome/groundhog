@@ -250,7 +250,14 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
-def rank(chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0) -> Ranked:
+def rank(
+    chunks: list[Chunk],
+    query: str,
+    max_tokens: int,
+    *,
+    floor: float = 0.0,
+    whole_fences: bool = False,
+) -> Ranked:
     terms = tokenize(query)
     scores = _bm25(chunks, terms)
     by_relevance = sorted(
@@ -270,7 +277,7 @@ def rank(chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
     for i in relevant:
         fence = chunks[i].fence
         blen = len(chunks[i].text) + 2 + (2 * len(fence) + 2 if fence else 0)
-        if chosen and used + blen > limit:
+        if (chosen or (whole_fences and is_fenced(chunks[i]))) and used + blen > limit:
             continue
         chosen.append(i)
         used += blen
