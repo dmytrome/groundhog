@@ -19,8 +19,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
-- Settling stops at its 8-second cap even while a browser call is still pending, and a
-  page that stops answering fails the fetch at the cap instead of up to a minute later.
+- Settling stops at its 8-second cap even while a browser call is pending. A page that
+  stops answering fails the fetch at the cap.
 
 ## [0.18.2] - 2026-10-22
 
