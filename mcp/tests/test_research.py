@@ -12,7 +12,6 @@ from groundhog_mcp import (
     cdp,
     document,
     engine,
-    extract,
     retrieval,
     safety,
     sanitize,
@@ -528,9 +527,23 @@ async def test_a_top_passage_cut_to_the_budget_says_so(fake_web: FakeWeb) -> Non
     top = result["passages"][0]
     assert top["clamped"] is True
     assert result["truncated"] is True
-    assert len(top["text"].removesuffix(extract._TRUNCATION_MARKER)) <= 800
-    kept = top["text"].removesuffix(extract._TRUNCATION_MARKER)
-    assert markdown[top["start"] : top["end"]].startswith(kept)
+    assert len(top["text"]) <= 800
+    assert markdown[top["start"] : top["end"]] == top["text"]
+    assert top["id"] == retrieval.passage_id(
+        "https://a.com/x", hashlib.sha256(markdown.encode()).hexdigest(), top["start"], top["end"]
+    )
+
+
+async def test_a_code_block_over_the_budget_is_left_out_not_cut(fake_web: FakeWeb) -> None:
+    code = "\n".join(f"kitten_eats_meat_{i} = feed({i})" for i in range(60))
+    markdown = "```python\n" + code + "\n```\n"
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=200)
+
+    assert result["passages"] == []
+    assert result["receipt"]["omitted"] == 1
+    assert result["truncated"] is True
 
 
 async def test_a_research_passage_and_a_read_url_match_share_an_id(fake_web: FakeWeb) -> None:

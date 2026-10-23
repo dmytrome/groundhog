@@ -436,10 +436,14 @@ async def research(
     for scored in ranked:
         if not scored.chunk.source:
             continue
-        text, over_budget = extract.truncate(scored.chunk.text, limit)
+        text = extract.cut(scored.chunk.text, limit)
+        over_budget = text != scored.chunk.text
+        if over_budget and retrieval.is_fenced(scored.chunk):
+            left_out += 1
+            continue
         clamped = clamped or over_budget
         start = scored.chunk.offset
-        end = start + len(scored.chunk.text)
+        end = start + len(text)
         passages.append(
             {
                 "id": retrieval.passage_id(

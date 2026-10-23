@@ -88,6 +88,10 @@ class Ranked(NamedTuple):
     set_aside: int
 
 
+def is_fenced(chunk: Chunk) -> bool:
+    return chunk.fence is not None or bool(_FENCE_OPEN_RE.match(chunk.text.split("\n", 1)[0]))
+
+
 def _tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     normalized = _SELECTORS_RE.sub("", unicodedata.normalize("NFKC", text))
