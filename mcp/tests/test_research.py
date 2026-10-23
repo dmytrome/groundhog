@@ -1,7 +1,9 @@
 import asyncio
+import dataclasses
 import gc
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -16,6 +18,7 @@ from groundhog_mcp import (
     safety,
     sanitize,
     search as search_module,
+    tokens,
 )
 from groundhog_mcp.config import Config
 from groundhog_mcp.search import SearchHit, searxng, serp
@@ -70,6 +73,7 @@ def _doc(
 
 
 searched: list[str] = []
+fetched: list[str] = []
 
 
 @pytest.fixture
@@ -79,12 +83,14 @@ def fake_web(monkeypatch):
     def _install(hits, docs, failures=None):
         failures = failures or {}
         searched.clear()
+        fetched.clear()
 
         async def _search(query, cfg, limit):
             searched.append(query)
             return hits[:limit], "serp"
 
         async def _fetch(url, **kwargs):
+            fetched.append(url)
             if url in failures:
                 raise failures[url]
             return docs[url]
@@ -1251,3 +1257,267 @@ async def test_sources_can_finish_while_an_earlier_source_is_waiting(
 
     assert [s["status"] for s in result["sources"]] == ["ok", "ok"]
 
+
+def _cards_of(result: research_mod.ResearchResult) -> dict[str, research_mod.Card]:
+    return {card["url"]: card for card in result["candidates"]}
+
+
+_HUB = "https://hub.org/cats"
+
+
+async def test_links_in_returned_passages_are_offered_as_candidates(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap, says [the sleep study](https://study.org/sleep) and "
+        "[a vet](https://vet.org/naps).\n\n# Boats\n\nBoats float on [water](https://sea.org/)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    cards = _cards_of(result)
+    assert set(cards) == {"https://study.org/sleep", "https://vet.org/naps"}
+    card = cards["https://study.org/sleep"]
+    (passage,) = result["passages"]
+    assert card["label"] == "the sleep study"
+    assert card["parent_source_url"] == _HUB
+    assert card["parent_passage_id"] == passage["id"]
+    assert card["relation"] == f"linked from {passage['id']}"
+    assert card["depth"] == 1
+    assert card["domain"] == "study.org"
+    assert card["kind"] == "link"
+
+
+async def test_a_link_back_to_the_page_or_to_a_page_already_read_is_not_offered(
+    fake_web: FakeWeb,
+) -> None:
+    other = "https://other.org/cats"
+    markdown = (
+        f"# Cats\n\nCats nap, see [above](https://hub.org#top), [this]({_HUB}#s2), "
+        f"[the other]({other}?utm_source=x) and [new](https://new.org/cats)."
+    )
+    fake_web(
+        [_hit(_HUB), _hit(other)],
+        {_HUB: _doc(_HUB, markdown), other: _doc(other, "# Cats\n\nCats nap too.")},
+    )
+
+    result = await research("cats nap")
+
+    assert set(_cards_of(result)) == {"https://new.org/cats"}
+
+
+async def test_one_destination_is_offered_once(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap [here](https://study.org/sleep) and "
+        "[again](https://study.org/sleep?utm_campaign=x#fig2)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert [card["label"] for card in result["candidates"]] == ["here"]
+
+
+async def test_no_page_or_domain_fills_the_slate(fake_web: FakeWeb) -> None:
+    pages = {
+        "https://a.org/x": "# Cats\n\nCats nap "
+        + "".join(f"[s{i}](https://same.org/{i}) " for i in range(5))
+    }
+    for parent in "bcd":
+        pages[f"https://{parent}.org/y"] = "# Cats\n\nCats nap " + "".join(
+            f"[{parent}{i}](https://{parent}{i}.org/) " for i in range(10)
+        )
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    result = await research("cats nap")
+
+    cards = result["candidates"]
+    assert len(cards) == 12
+    assert sum(card["domain"] == "same.org" for card in cards) == 3
+    assert max(Counter(card["parent_source_url"] for card in cards).values()) == 4
+    assert result["receipt"]["candidates_omitted"] == 35 - 12
+
+
+async def test_an_action_link_comes_after_a_reference(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [edit](https://wiki.org/w/index.php?action=edit) "
+        "[share](https://x.org/share) [paper](https://study.org/paper)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert result["candidates"][0]["label"] == "paper"
+
+
+async def test_a_calendar_of_variants_is_cut_and_counted(fake_web: FakeWeb) -> None:
+    days = "".join(f"[{d}](https://cal.org/2026/10/{d}) " for d in range(1, 12))
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, f"# Cats\n\nCats nap {days}")})
+
+    result = await research("cats nap")
+
+    assert result["receipt"]["link_variants_dropped"] == 1
+    assert result["receipt"]["links_examined"] == 11
+
+
+async def test_domain_filters_apply_to_candidates(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap [in](https://docs.hub.org/a) [out](https://blog.org/b) "
+        "[gone](https://spam.hub.org/c)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research(
+        "cats nap", include_domains=["hub.org"], exclude_domains=["spam.hub.org"]
+    )
+
+    assert set(_cards_of(result)) == {"https://docs.hub.org/a"}
+
+
+async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
+    markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
+    doc = dataclasses.replace(
+        _doc(_HUB, markdown),
+        threats=[sanitize.notice("strip_incomplete", "rebuilt")],
+        hidden_found=3,
+        characters_found=1,
+    )
+    other = "https://study.org/about"
+    fake_web(
+        [_hit(_HUB), _hit(other)], {_HUB: doc, other: _doc(other, "# Cats\n\nCats nap often.")}
+    )
+
+    result = await research("cats nap")
+
+    assert _cards_of(result)["https://study.org/sleep.PDF"]["flags"] == [
+        "parent_strip_incomplete",
+        "parent_threats=4",
+        "likely_unsupported_format",
+        "same_domain_pages=1",
+    ]
+
+
+async def test_a_link_split_between_two_passages_is_counted_not_offered(
+    fake_web: FakeWeb,
+) -> None:
+    lead = "cats nap " * 266
+    markdown = f"# Cats\n\n{lead}[see. this](https://split.org/a) cats nap\n"
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert len(result["passages"]) == 2
+    assert result["candidates"] == []
+    assert result["receipt"]["links_straddled"] == 1
+
+
+async def _offered(
+    fake_web: FakeWeb, docs: dict[str, document.Document]
+) -> research_mod.ResearchResult:
+    fake_web([_hit(_HUB)], docs)
+    return await research("cats nap")
+
+
+async def test_following_a_candidate_reads_it_without_searching(fake_web: FakeWeb) -> None:
+    study = "https://study.org/sleep"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap, says [the study]({study})."),
+        study: _doc(study, "# Sleep\n\nCats nap sixteen hours a day."),
+    }
+    card = (await _offered(fake_web, docs))["candidates"][0]
+    searched.clear()
+    fetched.clear()
+
+    result = await research(
+        "cats nap", follow=[{"token": card["token"], "why": "how long cats sleep"}]
+    )
+
+    assert searched == []
+    assert fetched == [study]
+    assert result["receipt"]["executed_query"] is None
+    (source,) = result["sources"]
+    assert source["depth"] == 1
+    assert source["discovered_via"] == {
+        "parent_source_url": _HUB,
+        "parent_passage_id": card["parent_passage_id"],
+        "label": "the study",
+        "why": "how long cats sleep",
+        "candidate": study,
+    }
+    assert result["followed"] == [{"url": study, "why": "how long cats sleep", "outcome": "read"}]
+    assert "sixteen" in result["passages"][0]["text"]
+
+
+async def test_each_follow_entry_reports_its_own_outcome(fake_web: FakeWeb) -> None:
+    good, bad = "https://study.org/sleep", "https://down.org/x"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap, [a]({good}) [b]({bad}) [c](https://spam.org/c)."),
+        good: _doc(good, "# Sleep\n\nCats nap a lot."),
+    }
+    cards = _cards_of(await _offered(fake_web, docs))
+    fake_web([], docs, failures={bad: TimeoutError()})
+
+    result = await research(
+        "cats nap",
+        exclude_domains=["spam.org"],
+        follow=[
+            {"token": cards[good]["token"], "why": "w1"},
+            {"token": cards[good]["token"], "why": "w2"},
+            {"token": cards[bad]["token"], "why": "w3"},
+            {"token": cards["https://spam.org/c"]["token"], "why": "w4"},
+            {"token": "forged.token", "why": "w5"},
+        ],
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "read",
+        "duplicate",
+        "failed",
+        "filtered",
+        "invalid_token",
+    ]
+    assert fetched == [good, bad]
+
+
+async def test_a_page_at_the_depth_limit_offers_nothing(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = "https://deep.org/3"
+    token = tokens.issue(
+        fetch_url=deep,
+        identity=deep,
+        depth=tokens.MAX_DEPTH,
+        parent_source_url=_HUB,
+        parent_passage_id="p:x:0-1",
+        label="deep",
+    )
+    fake_web([], {deep: _doc(deep, "# Cats\n\nCats nap, see [more](https://more.org/).")})
+
+    result = await research("cats nap", follow=[{"token": token, "why": "go deeper"}])
+
+    assert result["passages"]
+    assert result["candidates"] == []
+
+
+@pytest.mark.parametrize(
+    "follow",
+    [
+        [],
+        [{"token": "t", "why": " "}],
+        [{"token": "t", "why": "w" * 161}],
+        [{"token": "t", "why": "w"}] * 9,
+    ],
+)
+async def test_a_malformed_follow_is_refused(
+    fake_web: FakeWeb, follow: list[research_mod.Pick]
+) -> None:
+    fake_web([], {})
+
+    with pytest.raises(safety.InvalidArgument):
+        await research("cats", follow=follow)
+
+
+async def test_a_query_too_long_to_echo_is_refused(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+
+    with pytest.raises(safety.InvalidArgument):
+        await research("cats " * 401)

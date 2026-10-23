@@ -92,7 +92,7 @@ def is_fenced(chunk: Chunk) -> bool:
     return chunk.fence is not None or bool(_FENCE_OPEN_RE.match(chunk.text.split("\n", 1)[0]))
 
 
-def _tokenize(text: str) -> list[str]:
+def tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     normalized = _SELECTORS_RE.sub("", unicodedata.normalize("NFKC", text))
     for run in _RUN_RE.findall(normalized.lower()):
@@ -218,7 +218,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
 
 
 def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
-    docs = [_tokenize(c.text) for c in chunks]
+    docs = [tokenize(c.text) for c in chunks]
     n = len(docs)
     if n == 0:
         return []
@@ -249,7 +249,7 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
 def rank(
     chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
 ) -> Ranked:
-    terms = _tokenize(query)
+    terms = tokenize(query)
     scores = _bm25(chunks, terms)
     by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
@@ -259,7 +259,7 @@ def rank(
         return Ranked([], 0, 0)
     best = by_relevance[0]
     least = scores[best] * floor
-    matched = {i: set(terms) & set(_tokenize(chunks[i].text)) for i in by_relevance}
+    matched = {i: set(terms) & set(tokenize(chunks[i].text)) for i in by_relevance}
     relevant = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
     set_aside = len(by_relevance) - len(relevant)
     limit = max_tokens * _CHARS_PER_TOKEN
