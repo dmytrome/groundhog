@@ -905,21 +905,23 @@ class EngineProvider:
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         loop = asyncio.get_running_loop()
         prev: object = None
-        quiet_since = heard = loop.time()
+        quiet_since = loop.time()
+        ctx: int | None = None
+        pending: asyncio.Future[object] | None = None
         try:
             async with asyncio.timeout(_SETTLE_TIMEOUT_S) as cap:
-                ctx = await self._isolated_context(session_id)
+                pending = asyncio.ensure_future(self._isolated_context(session_id))
+                ctx = await asyncio.shield(pending)
                 while True:
-                    heard = loop.time()
+                    pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
                     try:
-                        current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
+                        current = await asyncio.shield(pending)
                     except CDPError:
-                        heard = loop.time()
-                        ctx = await self._isolated_context(session_id)
+                        pending = asyncio.ensure_future(self._isolated_context(session_id))
+                        ctx = await asyncio.shield(pending)
                         prev, quiet_since = None, loop.time()
                         await asyncio.sleep(_SETTLE_POLL_S)
                         continue
-                    heard = loop.time()
                     if current != prev or inflight.busy:
                         prev = current
                         quiet_since = loop.time()
@@ -927,8 +929,18 @@ class EngineProvider:
                         return
                     await asyncio.sleep(_SETTLE_POLL_S)
         except TimeoutError:
-            if not cap.expired() or loop.time() - heard >= _SETTLE_STALL_S:
+            if not cap.expired():
                 raise
+            if pending is None or pending.done():
+                pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
+            try:
+                await asyncio.wait_for(pending, _SETTLE_STALL_S)
+            except CDPError:
+                if self._cdp.closed:
+                    raise
+        finally:
+            if pending is not None:
+                pending.cancel()
 
     async def _isolated_context(self, session_id: str) -> int | None:
         try:
