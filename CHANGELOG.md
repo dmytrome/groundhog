@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-10-23
+
+### Added
+
+- An `empty` status for a page that rendered no text a reader would see, whatever
+  `markdown` holds. `research` counts it as `not_content`, as it does any page whose
+  `markdown` is blank. With `include_hidden`, text hidden by styling counts as shown.
+
+### Changed
+
+- When the extractor finds nothing, the rendered text comes back inside a code fence, so
+  none of it can read as a heading, link or table.
+
+### Fixed
+
+- Settling stops at its 8-second cap even while a browser call is still pending, and a
+  page that stops answering fails the fetch at the cap instead of up to a minute later.
+
 ## [0.18.2] - 2026-10-22
 
 ### Fixed
@@ -966,6 +984,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.19.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.19.0
 [0.18.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.2
 [0.18.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.1
 [0.18.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.18.0
