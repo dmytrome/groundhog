@@ -2,6 +2,7 @@ import asyncio
 import dataclasses
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -1622,7 +1623,11 @@ def test_an_unobserved_document_is_not_classified_from_another_documents_respons
 
 
 async def _settle_against(
-    monkeypatch: pytest.MonkeyPatch, stalls: str, reply_late: bool = False, busy: bool = False
+    monkeypatch: pytest.MonkeyPatch,
+    stalls: str,
+    stall_from: float = 0.0,
+    stall_until: float = math.inf,
+    busy: bool = False,
 ) -> tuple[float, BaseException | None]:
     replies = {
         "Page.getFrameTree": json.loads((_FIXTURES / "cdp_frame_tree.json").read_text()),
@@ -1632,10 +1637,10 @@ async def _settle_against(
     }
 
     async def answer(ws: websockets.ServerConnection, request: dict[str, object]) -> None:
-        if request["method"] == stalls:
-            if not reply_late:
+        if request["method"] == stalls and time.monotonic() - started >= stall_from:
+            if stall_until == math.inf:
                 return
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(started + stall_until - time.monotonic())
         await ws.send(json.dumps({"id": request["id"], "result": replies[request["method"]]}))
 
     async def respond(ws: websockets.ServerConnection) -> None:
@@ -1684,9 +1689,25 @@ async def test_a_page_that_stops_answering_fails_the_fetch_at_the_settle_cap(
 async def test_a_reply_arriving_after_settling_gave_up_is_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", reply_late=True)
+    elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", stall_until=0.6)
     assert isinstance(error, TimeoutError)
     assert elapsed < 0.6
+
+
+async def test_a_page_that_stops_answering_just_before_the_cap_fails_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", stall_from=0.2)
+    assert isinstance(error, TimeoutError)
+    assert elapsed < 0.6
+
+
+async def test_a_page_that_answers_again_soon_after_the_cap_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    elapsed, error = await _settle_against(monkeypatch, "Runtime.evaluate", stall_until=0.4)
+    assert error is None
+    assert 0.4 <= elapsed < 0.6
 
 
 async def test_a_page_that_answers_but_never_goes_quiet_settles_at_the_cap(
@@ -1714,6 +1735,23 @@ async def test_an_evaluation_timeout_inside_settling_still_fails_the_fetch(
     monkeypatch.setattr(fake, "send", stall)
     with pytest.raises(TimeoutError):
         await provider._settle("tab", engine._InflightRequests())
+
+
+async def test_a_page_answering_with_errors_at_the_cap_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.1)
+    fake = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    provider = engine.EngineProvider(_cfg())
+    provider._cdp = fake
+
+    async def failing(method: str, params: object = None, session_id: object = None) -> object:
+        if method == "Runtime.evaluate":
+            raise cdp.CDPError("Cannot find context with specified id")
+        return {}
+
+    monkeypatch.setattr(fake, "send", failing)
+    await asyncio.wait_for(provider._settle("tab", engine._InflightRequests()), 5)
 
 
 async def test_settling_on_a_closed_connection_raises(monkeypatch: pytest.MonkeyPatch) -> None:
