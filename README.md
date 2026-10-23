@@ -190,14 +190,16 @@ read in the call, outside the domain filters, or from a page three links deep ar
 offered. To read some, call again with `follow=[{"token": ..., "why": ...}]` (up to 8, each
 `why` up to 160 characters) and the same `query` and filters: nothing is remembered between
 calls. A follow runs no search, and `followed` says for each entry whether it was `read`,
-`failed`, `filtered`, a `duplicate`, an `invalid_token` or `expired`. Tokens are signed by
-the server and expire after 30 minutes or on restart.
+`not_content`, `failed`, `filtered`, a `duplicate`, over the `same_domain_limit` (as many
+pages per site as can start before the deadline), an `invalid_token` or `expired`. Tokens are
+signed by the server and expire after 30 minutes or on restart.
 
-A response never exceeds 40,000 characters. When it would, cards go first, then threat
+The JSON text of a response never exceeds 40,000 characters. When it would, cards go first, then threat
 excerpts, then passages, then metadata, each counted in the receipt (`candidates_omitted`,
 `threat_excerpts_omitted`, `passages_omitted`, `sources_omitted`, `metadata_compacted`);
-safety counts from sources left out are kept in `omitted_safety`, and `notes` says another
-call returns what did not fit.
+safety counts from sources left out are kept in `omitted_safety`, and `notes` says so:
+`read_url` on a source returns its page, and a narrower query or fewer sources leaves more
+room.
 
 ### `status()`
 
