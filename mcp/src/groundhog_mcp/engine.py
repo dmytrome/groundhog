@@ -906,14 +906,19 @@ class EngineProvider:
         loop = asyncio.get_running_loop()
         prev: object = None
         quiet_since = loop.time()
+        ctx: int | None = None
+        pending: asyncio.Future[object] | None = None
         try:
             async with asyncio.timeout(_SETTLE_TIMEOUT_S) as cap:
-                ctx = await self._isolated_context(session_id)
+                pending = asyncio.ensure_future(self._isolated_context(session_id))
+                ctx = await asyncio.shield(pending)
                 while True:
+                    pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
                     try:
-                        current = await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
+                        current = await asyncio.shield(pending)
                     except CDPError:
-                        ctx = await self._isolated_context(session_id)
+                        pending = asyncio.ensure_future(self._isolated_context(session_id))
+                        ctx = await asyncio.shield(pending)
                         prev, quiet_since = None, loop.time()
                         await asyncio.sleep(_SETTLE_POLL_S)
                         continue
@@ -926,13 +931,16 @@ class EngineProvider:
         except TimeoutError:
             if not cap.expired():
                 raise
-            async with asyncio.timeout(_SETTLE_STALL_S):
-                ctx = await self._isolated_context(session_id)
-                try:
-                    await self._eval(session_id, _DOM_SIZE_EXPR, ctx)
-                except CDPError:
-                    if self._cdp.closed:
-                        raise
+            if pending is None or pending.done():
+                pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
+            try:
+                await asyncio.wait_for(pending, _SETTLE_STALL_S)
+            except CDPError:
+                if self._cdp.closed:
+                    raise
+        finally:
+            if pending is not None:
+                pending.cancel()
 
     async def _isolated_context(self, session_id: str) -> int | None:
         try:
