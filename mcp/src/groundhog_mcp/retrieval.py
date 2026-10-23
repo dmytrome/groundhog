@@ -104,7 +104,7 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _fenced_lines(lines: list[str]) -> dict[int, int]:
+def fenced_lines(lines: list[str]) -> dict[int, int]:
     closers: list[tuple[str, int]] = []
     for line in lines:
         closing = _FENCE_CLOSE_RE.match(line)
@@ -137,7 +137,7 @@ def _fenced_lines(lines: list[str]) -> dict[int, int]:
     return inside
 
 
-def _lines(markdown: str) -> list[str]:
+def split_lines(markdown: str) -> list[str]:
     return _LINE_RE.findall(markdown)
 
 
@@ -157,8 +157,8 @@ def _pieces(text: str) -> list[str]:
 
 
 def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
-    raws = _lines(markdown)
-    fenced = _fenced_lines([raw.rstrip("\n") for raw in raws])
+    raws = split_lines(markdown)
+    fenced = fenced_lines([raw.rstrip("\n") for raw in raws])
     chunks: list[Chunk] = []
     heading: str | None = None
     lines: list[str] = []
