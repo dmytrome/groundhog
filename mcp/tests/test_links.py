@@ -1,4 +1,6 @@
 import json
+import random
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -84,6 +86,10 @@ def test_a_fragment_on_this_page_or_its_site_root_is_the_same_page() -> None:
     assert not links.same_page("https://example.com/page", _PAGE)
 
 
+def test_a_link_to_a_section_of_the_home_page_is_another_page() -> None:
+    assert not links.same_page("https://example.com/#pricing", _PAGE)
+
+
 def test_pages_that_differ_only_by_numbers_share_a_pattern() -> None:
     assert links.pattern("https://a.org/2026/10/23?page=4") == links.pattern(
         "https://a.org/2025/01/02?page=9"
@@ -130,3 +136,90 @@ def test_what_the_installed_extractor_writes_is_read_as_commonmark_reads_it() ->
     assert [unquote(url) for url in found] == [
         unquote(href) for href in _commonmark_links(markdown)
     ]
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "`open\n```\nclose` [evil](https://evil.org/x)\n```\n",
+        "Text.\n\n```\n[evil](https://evil.org/x)\n",
+        "Text.\n\n    [evil](https://evil.org/x)\n",
+        "- item\n\n      [evil](https://evil.org/x)\n",
+        '<span title="[evil](https://evil.org/x)">a</span>',
+    ],
+)
+def test_a_link_inside_code_or_markup_is_not_offered(markdown: str) -> None:
+    assert _found(markdown) == []
+    assert _commonmark_links(markdown) == []
+
+
+@pytest.mark.parametrize(
+    ("markdown", "url"),
+    [
+        ("See <https://auto.org/q>.", "https://auto.org/q"),
+        ("See [the spec][s].\n\n[s]: https://ref.org/s", "https://ref.org/s"),
+        ("See [S][].\n\n[s]: https://ref.org/s", "https://ref.org/s"),
+        ("See [s].\n\n[S]: https://ref.org/s", "https://ref.org/s"),
+        ("See [a](https://w.org/A_(b_(c))).", "https://w.org/A_(b_(c))"),
+    ],
+)
+def test_every_kind_of_commonmark_link_is_found(markdown: str, url: str) -> None:
+    assert [link.url for link in links.find(markdown, _PAGE)] == [url]
+    assert _commonmark_links(markdown) == [url]
+
+
+def test_a_url_with_a_port_that_is_not_a_number_is_not_offered() -> None:
+    assert _found("[b](https://a.org:bad/x)") == []
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "[" * 250_000,
+        "[](a" * 250_000,
+        "`a" * 250_000,
+        '[a](b "' * 250_000,
+        "[](" + "(a" * 250_000,
+    ],
+)
+def test_a_hostile_page_is_read_in_linear_time(markdown: str) -> None:
+    started = time.perf_counter()
+    links.find(markdown, _PAGE)
+    assert time.perf_counter() - started < 5
+
+
+_PIECES = [
+    "[a](https://a.org/x)",
+    "[b c](<https://b.org/y z>)",
+    '[t](https://t.org/ "title")',
+    "![i](https://i.org/p.png)",
+    "[![logo](https://i.org/l.png)](https://img.org/)",
+    "<https://auto.org/q>",
+    "[ref]",
+    "[x][ref]",
+    "[ref][]",
+    "`code [c](https://c.org/)`",
+    "[l](https://l.org/a_(b))",
+    "word",
+    " ",
+    "\n",
+    "\n\n",
+    "\n\n    [i](https://indented.org/)\n\n",
+    "\n\n```\n[f](https://fenced.org/)\n```\n\n",
+    "\n> ",
+    "\n- ",
+    "\n# ",
+    "*",
+    "_",
+]
+
+
+def test_well_formed_markdown_is_read_as_commonmark_reads_it() -> None:
+    rng = random.Random(20261023)
+    for _ in range(3000):
+        markdown = "".join(rng.choice(_PIECES) for _ in range(rng.randint(1, 20)))
+        if rng.random() < 0.5:
+            markdown += "\n\n[ref]: https://ref.org/r\n"
+        assert [unquote(link.url) for link in links.find(markdown, _PAGE)] == [
+            unquote(url) for url in _commonmark_links(markdown)
+        ], markdown
