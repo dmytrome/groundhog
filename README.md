@@ -101,7 +101,7 @@ container after removing an unreachable one named `groundhog-browser`.
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
 | `fetched_at` | UTC ISO-8601 timestamp |
-| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, the hidden text counts as shown. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
+| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
 | `threats`    | What was stripped; empty when nothing was found |
