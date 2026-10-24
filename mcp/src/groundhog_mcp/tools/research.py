@@ -246,6 +246,10 @@ def _within(url: str, domains: list[str]) -> str | None:
     return max(found, key=len, default=None)
 
 
+def _excluded(url: str, domains: list[str]) -> bool:
+    return bool(domains) and (_host(url) is None or _within(url, domains) is not None)
+
+
 def _per_domain(min_delay_ms: int, pages: int) -> int:
     if min_delay_ms <= 0:
         return min(_MAX_SOURCES, pages)
@@ -376,7 +380,7 @@ def _picked(
         key = links.identity(url)
         domain = engine.registrable_domain(url)
         outcome: FollowOutcome = "read"
-        if _within(url, excluded) or (included and not _within(url, included)):
+        if _excluded(url, excluded) or (included and not _within(url, included)):
             outcome = "filtered"
         elif key in seen:
             outcome = "duplicate"
@@ -454,7 +458,7 @@ def _cards(
             if (
                 links.same_page(url, source)
                 or key in attempted
-                or _within(url, excluded)
+                or _excluded(url, excluded)
                 or (included and not _within(url, included))
             ):
                 continue
@@ -870,7 +874,7 @@ async def research(
         empty = outcome.status in classify.NOT_CONTENT or not outcome.markdown.strip()
         outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
-        if excluded and (_host(outcome.final_url) is None or _within(outcome.final_url, excluded)):
+        if _excluded(outcome.final_url, excluded):
             filtered = "excluded_domain"
         elif outside:
             filtered = "outside_domains"

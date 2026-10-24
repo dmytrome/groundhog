@@ -1376,6 +1376,32 @@ async def test_domain_filters_apply_to_candidates(fake_web: FakeWeb) -> None:
     assert set(_cards_of(result)) == {"https://docs.hub.org/a"}
 
 
+async def test_an_excluded_site_is_not_offered_or_followed_under_a_host_idna_refuses(
+    fake_web: FakeWeb,
+) -> None:
+    odd = "https://a_b.spam.org/p"
+    fake_web(
+        [_hit(_HUB)],
+        {
+            _HUB: _doc(_HUB, f"# Cats\n\nCats nap [odd]({odd})."),
+            odd: _doc(odd, "# Cats\n\nCats nap."),
+        },
+    )
+    token = tokens.issue(
+        fetch_url=odd, depth=1, parent_source_url=_HUB, parent_passage_id="p:x:0-1", label="odd"
+    )
+
+    offered = await research("cats nap", exclude_domains=["spam.org"])
+    fetched.clear()
+    followed = await research(
+        "cats nap", exclude_domains=["spam.org"], follow=[{"token": token, "why": "w"}]
+    )
+
+    assert odd not in _cards_of(offered)
+    assert [entry["outcome"] for entry in followed["followed"]] == ["filtered"]
+    assert fetched == []
+
+
 async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
     markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
     doc = dataclasses.replace(
