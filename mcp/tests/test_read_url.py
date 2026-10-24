@@ -155,3 +155,29 @@ async def test_an_oversized_page_is_read_as_too_large_with_no_content(fake_provi
     assert result["status"] == "too_large"
     assert result["markdown"] == ""
     assert result["matches"] == []
+
+
+async def test_a_match_describes_exactly_the_text_returned(
+    fake_provider: Callable[[engine.RenderedPage], None],
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    text = "Cats nap often in the sun and dream of mice. " * 8
+    fake_provider(make_page(text=text))
+
+    result = await read_url("https://ex.com/p", format="text", query="cats nap", max_tokens=5)
+
+    kept = result["markdown"].removesuffix("\n\n[... truncated]")
+    [match] = result["matches"]
+    assert text[match["offset"] : match["end"]] == kept
+    assert match["clamped"] and result["truncated"]
+
+
+async def test_a_matching_code_block_too_big_to_return_is_left_out_whole(
+    fake_provider: Callable[[engine.RenderedPage], None],
+    make_page: Callable[..., engine.RenderedPage],
+) -> None:
+    fake_provider(make_page(text="Intro.\n\n```\n" + "needle()\n" * 20 + "```"))
+
+    result = await read_url("https://ex.com/p", format="text", query="needle", max_tokens=10)
+
+    assert (result["markdown"], result["matches"], result["truncated"]) == ("", [], True)

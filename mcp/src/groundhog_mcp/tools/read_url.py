@@ -92,11 +92,14 @@ async def read_url(
             source_url=doc.final_url,
             content_hash=doc.provenance["content_hash"],
         )
-        if selected_matches:
+        if selected_matches or selected_truncated:
             body, matches, truncated = selected, selected_matches, selected_truncated
             set_aside = selected_set_aside
-    body, over_budget = extract.truncate(body, limit)
-    truncated = truncated or over_budget
+    if matches:
+        body += extract.TRUNCATION_MARKER if truncated else ""
+    else:
+        body, over_budget = extract.truncate(body, limit)
+        truncated = truncated or over_budget
 
     return {
         "markdown": body,

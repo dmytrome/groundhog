@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A `read_url` match cut short to fit `max_tokens` reports its own end and id and says
+  `clamped`, and a matching code block too large to return is left out instead of cut.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added

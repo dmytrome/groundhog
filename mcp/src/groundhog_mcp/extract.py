@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import trafilatura
 
 _CHARS_PER_TOKEN = 4
-_TRUNCATION_MARKER = "\n\n[... truncated]"
+TRUNCATION_MARKER = "\n\n[... truncated]"
 
 
 @dataclass
@@ -37,7 +37,7 @@ def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
     kept = cut(text, max_tokens)
     if kept == text:
         return text, False
-    return kept + _TRUNCATION_MARKER, True
+    return kept + TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
