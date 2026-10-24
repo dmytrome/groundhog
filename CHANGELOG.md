@@ -24,7 +24,9 @@ All notable changes to this project are documented here. The format is based on
 - A page whose tab closed itself is returned instead of reported as an error, and a tab that
   could not be attached is closed.
 - Grouping URLs by site uses the bundled public suffix list and never fetches it.
-- `GROUNDHOG_MAX_CONCURRENT_PAGES` below 1 is refused instead of hanging every fetch.
+- `GROUNDHOG_MAX_CONCURRENT_PAGES` below 1 is refused instead of hanging every fetch, and an
+  empty `GROUNDHOG_MAX_CONCURRENT_PAGES`, `GROUNDHOG_MIN_DELAY_MS` or `GROUNDHOG_MAX_TOKENS`
+  takes its default.
 
 ### Changed
 

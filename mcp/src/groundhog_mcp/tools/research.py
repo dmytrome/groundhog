@@ -45,6 +45,7 @@ _MAX_WHY_CHARS = 160
 _MAX_CARDS = 12
 _CARDS_PER_PARENT = 4
 _CARDS_PER_DOMAIN = 3
+_CARDS_OVER_PASSAGES = 4
 _LINKS_PER_PAGE = 500
 _VARIANTS_PER_PATTERN = 10
 _UNSUPPORTED_EXTENSIONS = frozenset(
@@ -246,6 +247,10 @@ def _within(url: str, domains: list[str]) -> str | None:
     return max(found, key=len, default=None)
 
 
+def _excluded(url: str, domains: list[str]) -> bool:
+    return bool(domains) and (_host(url) is None or _within(url, domains) is not None)
+
+
 def _per_domain(min_delay_ms: int, pages: int) -> int:
     if min_delay_ms <= 0:
         return min(_MAX_SOURCES, pages)
@@ -347,13 +352,6 @@ class _Target:
     via: Via | None
 
 
-def _threat_counts(threats: list[sanitize.Threat]) -> dict[str, int]:
-    found: Counter[str] = Counter()
-    for threat in threats:
-        found[threat["type"]] += threat.get("seen", 1)
-    return dict(found)
-
-
 def _picked(
     picks: list[Pick], included: list[str], excluded: list[str], per_domain: int
 ) -> tuple[list[_Target], list[Followed]]:
@@ -376,7 +374,7 @@ def _picked(
         key = links.identity(url)
         domain = engine.registrable_domain(url)
         outcome: FollowOutcome = "read"
-        if _within(url, excluded) or (included and not _within(url, included)):
+        if _excluded(url, excluded) or (included and not _within(url, included)):
             outcome = "filtered"
         elif key in seen:
             outcome = "duplicate"
@@ -454,7 +452,7 @@ def _cards(
             if (
                 links.same_page(url, source)
                 or key in attempted
-                or _within(url, excluded)
+                or _excluded(url, excluded)
                 or (included and not _within(url, included))
             ):
                 continue
@@ -600,6 +598,10 @@ def _fit(result: ResearchResult, hashes: dict[str, str]) -> ResearchResult:
 
     if over():
         kept = _most(result, "candidates")
+        if kept < _CARDS_OVER_PASSAGES:
+            result["passages"] = []
+            kept = max(kept, min(_most(result, "candidates"), _CARDS_OVER_PASSAGES))
+            result["passages"] = every
         receipt["candidates_omitted"] += len(result["candidates"]) - kept
         result["candidates"] = result["candidates"][:kept]
     for source in reversed(result["sources"]):
@@ -870,7 +872,7 @@ async def research(
         empty = outcome.status in classify.NOT_CONTENT or not outcome.markdown.strip()
         outside = bool(included) and not _within(outcome.final_url, included)
         filtered: Filter | None = None
-        if excluded and (_host(outcome.final_url) is None or _within(outcome.final_url, excluded)):
+        if _excluded(outcome.final_url, excluded):
             filtered = "excluded_domain"
         elif outside:
             filtered = "outside_domains"
@@ -897,7 +899,8 @@ async def research(
                 "depth": target.depth,
                 "discovered_via": target.via,
                 "threat_total": outcome.hidden_found + outcome.characters_found,
-                "threat_counts": _threat_counts(outcome.threats),
+                "threat_counts": outcome.found_by_type
+                | document.by_type([t for t in outcome.threats if t["type"] in _NOTICE_TYPES]),
             }
         )
         counts["outside"] += filtered == "outside_domains"

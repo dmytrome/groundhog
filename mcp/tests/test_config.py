@@ -154,3 +154,17 @@ def test_a_page_limit_below_one_is_refused(monkeypatch: pytest.MonkeyPatch, valu
 
     with pytest.raises(ValueError, match="GROUNDHOG_MAX_CONCURRENT_PAGES"):
         load_config()
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_a_blank_number_takes_its_default(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    for name in (
+        "GROUNDHOG_MAX_CONCURRENT_PAGES",
+        "GROUNDHOG_MIN_DELAY_MS",
+        "GROUNDHOG_MAX_TOKENS",
+    ):
+        monkeypatch.setenv(name, value)
+
+    cfg = load_config()
+
+    assert (cfg.max_concurrent_pages, cfg.min_delay_ms, cfg.max_tokens) == (4, 5000, 20000)

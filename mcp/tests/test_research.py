@@ -1376,6 +1376,55 @@ async def test_domain_filters_apply_to_candidates(fake_web: FakeWeb) -> None:
     assert set(_cards_of(result)) == {"https://docs.hub.org/a"}
 
 
+async def test_an_excluded_site_is_not_offered_or_followed_under_a_host_idna_refuses(
+    fake_web: FakeWeb,
+) -> None:
+    odd = "https://a_b.spam.org/p"
+    fake_web(
+        [_hit(_HUB)],
+        {
+            _HUB: _doc(_HUB, f"# Cats\n\nCats nap [odd]({odd})."),
+            odd: _doc(odd, "# Cats\n\nCats nap."),
+        },
+    )
+    token = tokens.issue(
+        fetch_url=odd, depth=1, parent_source_url=_HUB, parent_passage_id="p:x:0-1", label="odd"
+    )
+
+    offered = await research("cats nap", exclude_domains=["spam.org"])
+    fetched.clear()
+    followed = await research(
+        "cats nap", exclude_domains=["spam.org"], follow=[{"token": token, "why": "w"}]
+    )
+
+    assert odd not in _cards_of(offered)
+    assert [entry["outcome"] for entry in followed["followed"]] == ["filtered"]
+    assert fetched == []
+
+
+async def test_a_sources_counts_by_type_include_findings_its_report_left_out(
+    fake_web: FakeWeb,
+) -> None:
+    threat: sanitize.Threat = {
+        "type": "hidden_css",
+        "reason": "r",
+        "location": None,
+        "excerpt": "x",
+    }
+    doc = dataclasses.replace(
+        _doc(_HUB, "# Cats\n\nCats nap."),
+        threats=[threat] * 9 + [sanitize.notice("report_truncated", "291 further")],
+        hidden_found=300,
+        found_by_type={"hidden_css": 300},
+    )
+    fake_web([_hit(_HUB)], {_HUB: doc})
+
+    result = await research("cats nap")
+
+    assert result["sources"][0]["threat_total"] == 300
+    assert result["sources"][0]["threat_counts"] == {"hidden_css": 300, "report_truncated": 1}
+
+
 async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
     markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
     doc = dataclasses.replace(
@@ -1649,6 +1698,24 @@ async def test_text_in_any_script_is_counted_as_the_characters_sent(fake_web: Fa
     assert _wire_size(structured) <= research_mod.CEILING_CHARS
 
 
+async def test_pages_with_more_relevant_text_than_fits_still_offer_links(fake_web: FakeWeb) -> None:
+    pages = {
+        f"https://{name}.org/cats": "# Cats\n\n"
+        + "".join(
+            f"{name}{i} " + "cats nap " * 40 + f"[more](https://{name}{i}.net/cats)\n\n"
+            for i in range(30)
+        )
+        for name in "abc"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "cats nap", "max_tokens": 50_000})
+
+    assert structured["receipt"]["passages_omitted"]
+    assert len(structured["candidates"]) == research_mod._CARDS_OVER_PASSAGES
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+
+
 async def test_a_code_block_too_big_for_the_budget_leaves_room_for_the_prose(
     fake_web: FakeWeb,
 ) -> None:
@@ -1778,8 +1845,6 @@ async def test_passages_come_back_once_long_metadata_is_trimmed(fake_web: FakeWe
     assert _wire_size(structured) <= research_mod.CEILING_CHARS
     assert structured["receipt"]["metadata_compacted"]
     assert structured["passages"]
-
-
 
 
 async def test_a_followed_link_does_not_carry_tracking_ids(fake_web: FakeWeb) -> None:

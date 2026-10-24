@@ -198,8 +198,13 @@ def find(markdown: str, base_url: str, within: list[tuple[int, int]] | None = No
                     windows[-1][1] = max(windows[-1][1], high)
                 else:
                     windows.append([low, high])
-        for low, high in windows:
-            found.extend(_scan(text, low, high, base_url, references))
+        if not windows:
+            continue
+        found.extend(
+            link
+            for link in _scan(text, start, windows[-1][1], base_url, references)
+            if any(low <= link.start and link.end <= high for low, high in windows)
+        )
     return found
 
 

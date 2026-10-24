@@ -2,7 +2,7 @@ import app
 import pytest
 from fastapi.testclient import TestClient
 
-from groundhog_mcp import engine, safety
+from groundhog_mcp import cdp, engine, safety
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +43,9 @@ def test_a_visitor_over_their_own_limit_does_not_use_up_everyone_elses(
 
 
 def test_a_blocked_url_is_refused_as_not_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    _fetching(monkeypatch, safety.CallerFacingError("blocked by SSRF policy"))
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", "true")
+    monkeypatch.setenv("GROUNDHOG_AUTO_START_BROWSER", "false")
+    monkeypatch.setattr(engine, "_provider", None)
     client = TestClient(app.app)
 
     response = client.post("/api/fetch", json={"url": "http://169.254.169.254/"})
@@ -76,3 +78,39 @@ def test_a_visitor_who_left_an_hour_ago_is_forgotten(monkeypatch: pytest.MonkeyP
     )
 
     assert set(app._hits) == {"203.0.113.10"}
+
+
+def test_a_failed_fetch_is_not_blamed_on_the_visitor(monkeypatch: pytest.MonkeyPatch) -> None:
+    failure = safety.CallerFacingError("CDPError: net::ERR_NAME_NOT_RESOLVED at 10.0.0.5")
+    failure.__cause__ = cdp.CDPError("net::ERR_NAME_NOT_RESOLVED at 10.0.0.5")
+    _fetching(monkeypatch, failure)
+    client = TestClient(app.app)
+
+    response = client.post("/api/fetch", json={"url": "https://example.com/"})
+
+    assert response.status_code == 502
+    assert "10.0.0.5" not in response.text
+
+
+def test_a_visitor_turned_away_when_busy_does_not_break_the_demo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "_GLOBAL_RATE_LIMIT_PER_MINUTE", 1)
+
+    assert app._admit("203.0.113.1") is None
+    assert app._admit("203.0.113.2") is not None
+    assert app._admit("203.0.113.3") is not None
+    assert set(app._hits) == {"203.0.113.1"}
+
+
+@pytest.mark.parametrize("url", ["http://[::1", "ftp://example.com/", "example.com"])
+def test_a_url_that_is_not_one_is_refused_before_fetching(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    _fetching(monkeypatch, AssertionError("fetched"))
+    client = TestClient(app.app)
+
+    response = client.post("/api/fetch", json={"url": url})
+
+    assert response.status_code == 400
+    assert not app._hits

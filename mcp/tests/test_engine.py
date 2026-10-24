@@ -1807,22 +1807,30 @@ async def test_settling_on_a_closed_connection_raises(monkeypatch: pytest.Monkey
 
 
 class _FailingOn(_NoEvents):
-    def __init__(self, failing: str) -> None:
+    def __init__(self, failing: str, error: Exception | None = None) -> None:
         super().__init__(_HEADLESS_UA, _HINTS)
         self.failing = failing
+        self.error = error or cdp.CDPError(f"{failing}: No target with given id")
 
     async def send(self, method, params=None, session_id=None):
         if method == self.failing:
             self.calls.append((method, params, session_id))
-            raise cdp.CDPError(f"{method}: No target with given id")
+            raise self.error
         return await super().send(method, params, session_id)
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        cdp.CDPError("Target.closeTarget: No target with given id"),
+        websockets.exceptions.ConnectionClosedError(None, None),
+    ],
+)
 async def test_a_tab_that_closed_itself_does_not_lose_the_page_it_returned(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
     provider, _ = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
-    provider._cdp = _FailingOn("Target.closeTarget")
+    provider._cdp = _FailingOn("Target.closeTarget", error)
 
     page = await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
 

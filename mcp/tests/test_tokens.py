@@ -87,6 +87,26 @@ def test_a_wall_clock_set_back_does_not_stretch_a_tokens_life(
     assert _refusal(token) == "expired"
 
 
+def test_a_token_redeemed_after_the_wall_clock_went_back_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _issue()
+    wall = time.time()
+    monkeypatch.setattr(tokens.time, "time", lambda: wall - 3600)
+
+    assert _refusal(token) == "expired"
+
+
+def test_a_small_correction_to_the_wall_clock_leaves_a_fresh_token_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _issue()
+    wall = time.time()
+    monkeypatch.setattr(tokens.time, "time", lambda: wall - 2)
+
+    assert tokens.redeem(token)["depth"] == 1
+
+
 @pytest.mark.parametrize("missing", ["issued_at", "issued", "depth", "fetch_url"])
 def test_a_signed_token_of_another_shape_is_refused(missing: str) -> None:
     body, _ = _issue().split(".")

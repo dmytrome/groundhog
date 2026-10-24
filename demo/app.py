@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from collections import defaultdict, deque
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from groundhog_mcp.engine import BrowserUnavailableError
-from groundhog_mcp.safety import CallerFacingError
+from groundhog_mcp.safety import BlockedURLError, CallerFacingError, safe_url
 from groundhog_mcp.tools.read_url import read_url
 
 _RATE_LIMIT_PER_HOUR = int(os.environ.get("DEMO_RATE_LIMIT_PER_HOUR", "8"))
@@ -26,7 +26,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Groundhog demo")
 _log = logging.getLogger("uvicorn.error")
 
-_hits: dict[str, deque[float]] = defaultdict(deque)
+_hits: dict[str, deque[float]] = {}
 _global_hits: deque[float] = deque()
 
 
@@ -39,7 +39,7 @@ def _admit(ip: str) -> str | None:
     now = time.monotonic()
     for key in [key for key, hits in _hits.items() if now - hits[-1] > _RATE_WINDOW_S]:
         del _hits[key]
-    mine = _hits[ip]
+    mine = _hits.get(ip, deque())
     _drain(mine, _RATE_WINDOW_S, now)
     _drain(_global_hits, _GLOBAL_WINDOW_S, now)
     if len(mine) >= _RATE_LIMIT_PER_HOUR:
@@ -50,6 +50,7 @@ def _admit(ip: str) -> str | None:
     if len(_global_hits) >= _GLOBAL_RATE_LIMIT_PER_MINUTE:
         return "Demo is busy right now, try again in a moment."
     mine.append(now)
+    _hits[ip] = mine
     _global_hits.append(now)
     return None
 
@@ -65,6 +66,8 @@ async def index() -> FileResponse:
 
 @app.post("/api/fetch")
 async def fetch(req: FetchRequest, request: Request) -> dict:
+    if safe_url(req.url) is None:
+        raise HTTPException(400, "Not a valid http(s) URL.")
     ip = request.client.host if request.client else "unknown"
     if refusal := _admit(ip):
         raise HTTPException(429, refusal)
@@ -74,6 +77,9 @@ async def fetch(req: FetchRequest, request: Request) -> dict:
         _log.exception("browser unavailable for %r", req.url)
         raise HTTPException(502, "Could not fetch that URL right now.") from exc
     except CallerFacingError as exc:
+        if not isinstance(exc.__cause__, BlockedURLError):
+            _log.exception("fetch failed for %r", req.url)
+            raise HTTPException(502, "Could not fetch that URL right now.") from exc
         _log.warning("refused url %r: %s", req.url, exc)
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

@@ -89,6 +89,6 @@ def redeem(token: str) -> Grant:
     if grant["v"] != _VERSION or not 0 < grant["depth"] <= grant["max_depth"] <= MAX_DEPTH:
         raise TokenError("invalid_token")
     awake, wall = time.monotonic() - grant["issued"], time.time() - grant["issued_at"]
-    if not (0 <= awake <= TTL_S and wall <= TTL_S):
+    if not (0 <= awake <= TTL_S and -TTL_S <= wall <= TTL_S):
         raise TokenError("expired")
     return grant

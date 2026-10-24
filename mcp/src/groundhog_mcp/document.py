@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import zip_longest
 from typing import Literal
@@ -27,6 +28,7 @@ class Document:
     provenance: provenance.Provenance
     hidden_found: int = 0
     characters_found: int = 0
+    found_by_type: dict[str, int] = field(default_factory=dict)
 
 
 def _carrier_type(reason: str) -> sanitize.ThreatType:
@@ -123,6 +125,13 @@ def _capped(
     ]
 
 
+def by_type(threats: list[sanitize.Threat]) -> Counter[str]:
+    found: Counter[str] = Counter()
+    for threat in threats:
+        found[threat["type"]] += threat.get("seen", 1)
+    return found
+
+
 def _over(text: str, limit: int) -> bool:
     return len(text) > limit or (len(text) * 4 > limit and len(text.encode()) > limit)
 
@@ -145,22 +154,24 @@ async def fetch_document(
         markdown, meta = extract.to_document(page.html, final_url)
     too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
 
-    scans = [sanitize.counts(markdown)]
-    if markdown is not page.text:
+    scans = [sanitize.counts(page.text if too_large else markdown)]
+    if not too_large and markdown is not page.text:
         scans.append(sanitize.counts(page.text))
     found = _merged(scans)
     char_threats = sanitize.threats(found)
-    visible_text = sanitize.strip_invisible(page.text, scans[-1])
-    text = page.text if include_hidden else visible_text
-    if format == "text":
-        markdown = text
-    elif not include_hidden:
-        markdown = sanitize.strip_invisible(markdown, scans[0])
-    if format == "markdown" and not markdown.strip():
-        markdown = extract.fenced(text)
     status = page.retrieval_status
-    if status == "ok" and not visible_text.strip():
-        status = "empty"
+    if not too_large:
+        visible_text = sanitize.strip_invisible(page.text, scans[-1])
+        text = page.text if include_hidden else visible_text
+        if format == "text":
+            markdown = text
+        elif not include_hidden:
+            markdown = sanitize.strip_invisible(markdown, scans[0])
+        if format == "markdown" and not markdown.strip():
+            markdown = extract.fenced(text)
+            too_large = _over(markdown, MAX_MARKDOWN_BYTES)
+        if status == "ok" and not visible_text.strip():
+            status = "empty"
     if too_large:
         markdown = ""
         if status not in classify.NOT_CONTENT:
@@ -210,4 +221,7 @@ async def fetch_document(
         provenance=provenance.build(markdown, meta, page.meta),
         hidden_found=sum(t.get("seen", 1) for t in hidden) + page.spans_dropped,
         characters_found=len(char_threats),
+        found_by_type=dict(
+            by_type(char_threats + hidden) + Counter(hidden_unclassified=page.spans_dropped)
+        ),
     )

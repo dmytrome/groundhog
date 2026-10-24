@@ -2,6 +2,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import pydantic_core
 import pytest
 
 from groundhog_mcp import document, extract, sanitize
@@ -1106,3 +1107,82 @@ async def test_a_page_exactly_at_the_html_limit_is_read(fake_provider, make_page
 
     assert len((html[:-14] + padding + html[-14:]).encode()) == document.MAX_HTML_BYTES
     assert doc.status == "ok"
+
+
+async def test_a_page_with_nothing_to_extract_and_too_much_text_returns_no_content(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(
+            html="<html><body></body></html>",
+            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_an_oversized_page_still_reports_its_invisible_characters(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(text=f"Cats{ZERO_WIDTH} nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1))
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "too_large"
+    assert doc.characters_found >= 1
+
+
+async def test_the_count_by_type_covers_findings_the_report_left_out(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    spans = [{"reason": "display:none", "text": f"p{i}", "path": "d"} for i in range(300)]
+    fake_provider(make_page(hidden=spans, spans_dropped=50, text=f"Cats{ZERO_WIDTH} nap."))
+
+    doc = await fetch_document("https://ex.com/p", max_threats=10)
+
+    assert doc.found_by_type["hidden_css"] == 300
+    assert doc.found_by_type["hidden_unclassified"] == 50
+    assert sum(doc.found_by_type.values()) == doc.hidden_found + doc.characters_found
+
+
+@pytest.mark.parametrize("format", ["text", "markdown"])
+async def test_a_page_holding_lone_surrogates_is_read_and_can_be_sent(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+    format: document.Format,
+) -> None:
+    fake_provider(
+        make_page(
+            [{"reason": "display:none", "text": "hid\ud800den", "path": "d"}],
+            title="Cats\udfff",
+            html="<html><body><p>Cats \ud800 nap.</p></body></html>",
+            text="Cats \ud800 nap.",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format=format)
+
+    assert doc.status == "ok"
+    assert "�" in doc.markdown
+    pydantic_core.to_json(doc)
+
+
+async def test_a_large_page_holding_lone_surrogates_is_measured_not_crashed(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    broken = "\ud800" * (document.MAX_HTML_BYTES // 3 + 1)
+    fake_provider(make_page(html=f"<html><body><p>Cats {broken}</p></body></html>", text="Cats"))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"

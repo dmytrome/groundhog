@@ -59,10 +59,18 @@ def _without_controls(text: str) -> str:
     return "".join(" " if ch < " " or "\x7f" <= ch <= "\x9f" else ch for ch in text)
 
 
+def well_formed(text: str) -> str:
+    try:
+        text.encode()
+    except UnicodeEncodeError:
+        return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return text
+
+
 def clean_field(value: object, max_chars: int) -> str | None:
     if not isinstance(value, str) or not value:
         return None
-    return _without_controls(strip_invisible(value)).strip()[:max_chars] or None
+    return _without_controls(strip_invisible(well_formed(value))).strip()[:max_chars] or None
 
 
 def counts(text: str) -> dict[str, tuple[ThreatType, int]]:

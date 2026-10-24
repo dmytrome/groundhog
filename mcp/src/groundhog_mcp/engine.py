@@ -460,7 +460,7 @@ class RenderedPage:
 
 
 def _as_text(value: object) -> str:
-    return value if isinstance(value, str) else ""
+    return sanitize.well_formed(value) if isinstance(value, str) else ""
 
 
 def _clean_span(span: object) -> HiddenSpan | None:
@@ -908,7 +908,7 @@ class EngineProvider:
             for unsubscribe in unsubscribes:
                 unsubscribe()
             if not self._cdp.closed:
-                with contextlib.suppress(CDPError):
+                with contextlib.suppress(CDPError, OSError, WebSocketException):
                     await self._cdp.send("Target.closeTarget", {"targetId": tid})
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:

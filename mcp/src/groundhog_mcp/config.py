@@ -40,8 +40,13 @@ def _bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be true or false, got {value!r}")
 
 
+def _int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    return int(raw) if raw else default
+
+
 def _positive(name: str, default: int) -> int:
-    value = int(os.environ.get(name, str(default)))
+    value = _int(name, default)
     if value < 1:
         raise ValueError(f"{name} must be at least 1, got {value}")
     return value
@@ -50,9 +55,9 @@ def _positive(name: str, default: int) -> int:
 def load_config() -> Config:
     return Config(
         cdp_url=os.environ.get("CDP_URL", "http://127.0.0.1:9222"),
-        min_delay_ms=int(os.environ.get("GROUNDHOG_MIN_DELAY_MS", "5000")),
+        min_delay_ms=_int("GROUNDHOG_MIN_DELAY_MS", 5000),
         block_private_ips=_bool("GROUNDHOG_BLOCK_PRIVATE_IPS", True),
-        max_tokens=int(os.environ.get("GROUNDHOG_MAX_TOKENS", "20000")),
+        max_tokens=_int("GROUNDHOG_MAX_TOKENS", 20000),
         auto_start_browser=_bool("GROUNDHOG_AUTO_START_BROWSER", True),
         compose_file=os.environ.get("GROUNDHOG_COMPOSE_FILE") or None,
         browser_image=os.environ.get("GROUNDHOG_BROWSER_IMAGE") or _DEFAULT_BROWSER_IMAGE,

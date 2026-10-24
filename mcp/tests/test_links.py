@@ -242,3 +242,27 @@ def test_untracked_drops_only_tracking_ids_and_keeps_the_rest_as_written() -> No
         "https://a.org/P?id=2&q=a+b#top"
     )
     assert links.untracked("https://a.org/p") == "https://a.org/p"
+
+
+def test_a_code_span_opened_before_the_window_is_still_read_as_code() -> None:
+    markdown = "`" + "x" * 5000 + "` [real](https://a.org/r) `code [fake](https://b.org/f)`"
+    passage = (len(markdown) - 60, len(markdown))
+
+    found = [link.url for link in links.find(markdown, _PAGE, within=[passage])]
+
+    assert found == ["https://a.org/r"]
+
+
+def test_finding_links_near_one_passage_does_not_read_the_whole_page() -> None:
+    markdown = "Cats [nap](https://a.org/n).\n\n" + "[b](https://b.org/x) " * 100_000
+    passage = (0, 10)
+
+    started = time.perf_counter()
+    near = links.find(markdown, _PAGE, within=[passage])
+    took = time.perf_counter() - started
+    started = time.perf_counter()
+    links.find(markdown, _PAGE)
+    whole = time.perf_counter() - started
+
+    assert [link.url for link in near] == ["https://a.org/n"]
+    assert took < whole / 4
