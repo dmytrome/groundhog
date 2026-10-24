@@ -222,8 +222,12 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
     return chunks
 
 
+def _scored_text(chunk: Chunk) -> str:
+    return (chunk.heading or "") + "\n" + chunk.text
+
+
 def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
-    docs = [tokenize(c.text) for c in chunks]
+    docs = [tokenize(_scored_text(c)) for c in chunks]
     n = len(docs)
     if n == 0:
         return []
@@ -262,7 +266,7 @@ def relevant(chunks: list[Chunk], query: str, *, floor: float = 0.0) -> tuple[li
         return [], 0
     best = by_relevance[0]
     least = scores[best] * floor
-    matched = {i: set(terms) & set(tokenize(chunks[i].text)) for i in by_relevance}
+    matched = {i: set(terms) & set(tokenize(_scored_text(chunks[i]))) for i in by_relevance}
     kept = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
     return [Scored(chunks[i], scores[i]) for i in kept], len(by_relevance) - len(kept)
 

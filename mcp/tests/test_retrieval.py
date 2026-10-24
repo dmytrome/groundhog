@@ -692,3 +692,17 @@ def test_selecting_from_a_long_page_takes_linear_time(max_tokens: int) -> None:
     assert time.perf_counter() - started < 5
     assert len(body) <= max_tokens * 4
     assert sum(m["end"] - m["offset"] for m in matches) + 2 * (len(matches) - 1) == len(body)
+
+
+_VERSIONED = (
+    "# Soil data\n\n## SoilGrids 1.0\n\n"
+    "The first release mapped organic carbon on a coarse grid.\n\n"
+    "## Methods\n\nSamples were taken from field plots across the region."
+)
+
+
+def test_a_section_is_found_by_the_words_in_its_heading() -> None:
+    body, matches, _, _ = _select(_VERSIONED, "SoilGrids 1.0", 10_000)
+
+    assert body == "The first release mapped organic carbon on a coarse grid."
+    assert [m["heading"] for m in matches] == ["SoilGrids 1.0"]

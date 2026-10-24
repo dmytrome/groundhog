@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format is based on
 - A `read_url` match cut short to fit `max_tokens` reports its own end and id and says
   `clamped`, and a matching code block too large to return is left out instead of cut.
 
+### Changed
+
+- Passages are ranked on their section heading as well as their text, in `read_url` and
+  `research`, so a section found by the version or name in its heading is returned.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added
