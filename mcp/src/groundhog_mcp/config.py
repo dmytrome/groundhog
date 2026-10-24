@@ -29,22 +29,34 @@ class Config:
     chrome_profile: str
 
 
-def _bool(value: str | None, default: bool) -> bool:
-    if value is None:
+def _bool(name: str, default: bool) -> bool:
+    value = (os.environ.get(name) or "").strip().lower()
+    if not value:
         return default
-    return value.strip().lower() in ("1", "true", "yes", "on")
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be true or false, got {value!r}")
+
+
+def _positive(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1, got {value}")
+    return value
 
 
 def load_config() -> Config:
     return Config(
         cdp_url=os.environ.get("CDP_URL", "http://127.0.0.1:9222"),
         min_delay_ms=int(os.environ.get("GROUNDHOG_MIN_DELAY_MS", "5000")),
-        block_private_ips=_bool(os.environ.get("GROUNDHOG_BLOCK_PRIVATE_IPS"), True),
+        block_private_ips=_bool("GROUNDHOG_BLOCK_PRIVATE_IPS", True),
         max_tokens=int(os.environ.get("GROUNDHOG_MAX_TOKENS", "20000")),
-        auto_start_browser=_bool(os.environ.get("GROUNDHOG_AUTO_START_BROWSER"), True),
+        auto_start_browser=_bool("GROUNDHOG_AUTO_START_BROWSER", True),
         compose_file=os.environ.get("GROUNDHOG_COMPOSE_FILE") or None,
         browser_image=os.environ.get("GROUNDHOG_BROWSER_IMAGE") or _DEFAULT_BROWSER_IMAGE,
-        max_concurrent_pages=int(os.environ.get("GROUNDHOG_MAX_CONCURRENT_PAGES", "4")),
+        max_concurrent_pages=_positive("GROUNDHOG_MAX_CONCURRENT_PAGES", 4),
         search_backend=_search_backend(),
         searxng_url=_searxng_url(),
         browser=_browser(),

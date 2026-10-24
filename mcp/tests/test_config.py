@@ -127,3 +127,30 @@ def test_an_invalid_searxng_url_reports_only_its_scheme(monkeypatch: pytest.Monk
     with pytest.raises(ValueError) as caught:
         load_config()
     assert str(caught.value) == "SEARXNG_URL must be http(s), got scheme 'ftp'"
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_a_blank_private_address_switch_keeps_the_guard_on(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", value)
+
+    assert load_config().block_private_ips is True
+
+
+@pytest.mark.parametrize("value", ["enabled", "ture", "2"])
+def test_a_private_address_switch_that_is_not_a_boolean_is_refused(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", value)
+
+    with pytest.raises(ValueError, match="GROUNDHOG_BLOCK_PRIVATE_IPS"):
+        load_config()
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_a_page_limit_below_one_is_refused(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("GROUNDHOG_MAX_CONCURRENT_PAGES", value)
+
+    with pytest.raises(ValueError, match="GROUNDHOG_MAX_CONCURRENT_PAGES"):
+        load_config()
