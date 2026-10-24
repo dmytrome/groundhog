@@ -145,22 +145,24 @@ async def fetch_document(
         markdown, meta = extract.to_document(page.html, final_url)
     too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
 
-    scans = [sanitize.counts(markdown)]
-    if markdown is not page.text:
+    scans = [sanitize.counts(page.text if too_large else markdown)]
+    if not too_large and markdown is not page.text:
         scans.append(sanitize.counts(page.text))
     found = _merged(scans)
     char_threats = sanitize.threats(found)
-    visible_text = sanitize.strip_invisible(page.text, scans[-1])
-    text = page.text if include_hidden else visible_text
-    if format == "text":
-        markdown = text
-    elif not include_hidden:
-        markdown = sanitize.strip_invisible(markdown, scans[0])
-    if format == "markdown" and not markdown.strip():
-        markdown = extract.fenced(text)
     status = page.retrieval_status
-    if status == "ok" and not visible_text.strip():
-        status = "empty"
+    if not too_large:
+        visible_text = sanitize.strip_invisible(page.text, scans[-1])
+        text = page.text if include_hidden else visible_text
+        if format == "text":
+            markdown = text
+        elif not include_hidden:
+            markdown = sanitize.strip_invisible(markdown, scans[0])
+        if format == "markdown" and not markdown.strip():
+            markdown = extract.fenced(text)
+            too_large = _over(markdown, MAX_MARKDOWN_BYTES)
+        if status == "ok" and not visible_text.strip():
+            status = "empty"
     if too_large:
         markdown = ""
         if status not in classify.NOT_CONTENT:

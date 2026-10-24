@@ -1106,3 +1106,34 @@ async def test_a_page_exactly_at_the_html_limit_is_read(fake_provider, make_page
 
     assert len((html[:-14] + padding + html[-14:]).encode()) == document.MAX_HTML_BYTES
     assert doc.status == "ok"
+
+
+async def test_a_page_with_nothing_to_extract_and_too_much_text_returns_no_content(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(
+            html="<html><body></body></html>",
+            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_an_oversized_page_still_reports_its_invisible_characters(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    fake_provider(
+        make_page(text=f"Cats{ZERO_WIDTH} nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1))
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "too_large"
+    assert doc.characters_found >= 1
