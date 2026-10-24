@@ -203,6 +203,18 @@ def find(markdown: str, base_url: str, within: list[tuple[int, int]] | None = No
     return found
 
 
+def _tracking(key: str) -> bool:
+    return key.lower().startswith("utm_") or key.lower() in _TRACKING
+
+
+def untracked(url: str) -> str:
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    kept = [piece for piece in parts.query.split("&") if not _tracking(piece.split("=", 1)[0])]
+    return urlunsplit(parts._replace(query="&".join(kept)))
+
+
 def identity(url: str) -> str:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
@@ -218,7 +230,7 @@ def identity(url: str) -> str:
     query = [
         (key, value)
         for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if not key.lower().startswith("utm_") and key.lower() not in _TRACKING
+        if not _tracking(key)
     ]
     return urlunsplit((scheme, netloc, parts.path or "/", urlencode(query), ""))
 

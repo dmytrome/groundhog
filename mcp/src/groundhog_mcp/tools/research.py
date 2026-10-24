@@ -54,7 +54,8 @@ _UNSUPPORTED_EXTENSIONS = frozenset(
 _ACTION_RE = re.compile(
     r"(?:^|[/_.?=&-])(?:edit|login|log-in|signin|sign-in|signup|sign-up|register|logout|share"
     r"|print|subscribe)(?:$|[/_.?=&-])|/wiki/(?:special|talk|user|help|file|template|category"
-    r"|portal|wikipedia)(?::|%3a)"
+    r"|portal|wikipedia)(?::|%3a)",
+    re.IGNORECASE,
 )
 _CARD_NOTICES = ("strip_incomplete", "detection_degraded")
 _NOTICE_TYPES = frozenset(
@@ -486,7 +487,8 @@ def _cards(
     omitted = 0
     for link, passage in unique.values():
         parent = passage["source_url"]
-        domain = engine.registrable_domain(link.url)
+        url = links.untracked(link.url)
+        domain = engine.registrable_domain(url)
         if (
             len(cards) >= _MAX_CARDS
             or per_parent[parent] >= _CARDS_PER_PARENT
@@ -497,16 +499,17 @@ def _cards(
         per_parent[parent] += 1
         per_domain[domain] += 1
         doc, depth = pages[parent]
+        token = tokens.issue(
+            fetch_url=url,
+            depth=depth + 1,
+            parent_source_url=parent,
+            parent_passage_id=passage["id"],
+            label=link.label,
+        )
         cards.append(
             {
-                "token": tokens.issue(
-                    fetch_url=link.url,
-                    depth=depth + 1,
-                    parent_source_url=parent,
-                    parent_passage_id=passage["id"],
-                    label=link.label,
-                ),
-                "url": link.url,
+                "token": token,
+                "url": url,
                 "domain": domain,
                 "kind": "link",
                 "label": link.label,
@@ -514,7 +517,7 @@ def _cards(
                 "parent_passage_id": passage["id"],
                 "depth": depth + 1,
                 "relation": f"linked from {passage['id']}",
-                "flags": _flags(doc, link.url, read_by_domain[domain]),
+                "flags": _flags(doc, url, read_by_domain[domain]),
             }
         )
     return cards, omitted
@@ -522,9 +525,6 @@ def _cards(
 
 def _size(value: object) -> int:
     return len(pydantic_core.to_json(value, fallback=str, indent=2).decode())
-
-
-_NOTES_CHARS = _size([_CARDS_NOTE, _OMITTED_NOTE])
 
 
 def _clipped(passage: Passage, room: int, content_hash: str) -> Passage | None:
@@ -549,12 +549,36 @@ def _most(result: ResearchResult, key: Literal["candidates", "passages"]) -> int
     while low < high:
         middle = (low + high + 1) // 2
         result[key] = whole[:middle]
-        if _size(result) <= CEILING_CHARS - _NOTES_CHARS:
+        if _size(result) <= CEILING_CHARS:
             low = middle
         else:
             high = middle - 1
     result[key] = whole
     return low
+
+
+def _clip_into(result: ResearchResult, passage: Passage, content_hash: str) -> Passage | None:
+    room = len(passage["text"])
+    candidate: Passage | None = passage
+    while candidate is not None:
+        result["passages"].append(candidate)
+        overshoot = _size(result) - CEILING_CHARS
+        result["passages"].pop()
+        if overshoot <= 0:
+            return candidate
+        room = len(candidate["text"]) - overshoot
+        candidate = _clipped(passage, room, content_hash)
+    return None
+
+
+def _fit_passages(result: ResearchResult, every: list[Passage], hashes: dict[str, str]) -> None:
+    result["passages"] = every
+    kept = _most(result, "passages")
+    result["passages"] = every[:kept]
+    if kept < len(every):
+        clip = _clip_into(result, every[kept], hashes[every[kept]["source_url"]])
+        if clip is not None:
+            result["passages"].append(clip)
 
 
 def _compact_source(source: Source) -> None:
@@ -568,9 +592,11 @@ def _compact_source(source: Source) -> None:
 def _fit(result: ResearchResult, hashes: dict[str, str]) -> ResearchResult:
     receipt = result["receipt"]
     steps = receipt["metadata_compacted"]
+    every = result["passages"]
+    result["notes"] = [_CARDS_NOTE, _OMITTED_NOTE]
 
     def over() -> bool:
-        return _size(result) > CEILING_CHARS - _NOTES_CHARS
+        return _size(result) > CEILING_CHARS
 
     if over():
         kept = _most(result, "candidates")
@@ -582,21 +608,7 @@ def _fit(result: ResearchResult, hashes: dict[str, str]) -> ResearchResult:
         receipt["threat_excerpts_omitted"] += sum(bool(t["excerpt"]) for t in source["threats"])
         source["threats"] = [{**threat, "excerpt": ""} for threat in source["threats"]]
     if over():
-        passages = result["passages"]
-        kept = _most(result, "passages")
-        result["passages"] = passages[:kept]
-        if kept < len(passages):
-            room = len(passages[kept]["text"]) - (
-                _size(result) + _size(passages[kept]) - (CEILING_CHARS - _NOTES_CHARS)
-            )
-            clip = _clipped(passages[kept], room, hashes[passages[kept]["source_url"]])
-            if clip is not None:
-                result["passages"].append(clip)
-                if over():
-                    result["passages"].pop()
-        receipt["passages_omitted"] += len(passages) - len(result["passages"])
-        receipt["clamped"] = any(passage["clamped"] for passage in result["passages"])
-        result["truncated"] = True
+        _fit_passages(result, every, hashes)
     if over():
         steps.append("provenance")
         for source in result["sources"]:
@@ -635,6 +647,13 @@ def _fit(result: ResearchResult, hashes: dict[str, str]) -> ResearchResult:
         steps.append("followed")
         for entry in result["followed"]:
             entry["url"] = None
+    if steps and len(result["passages"]) < len(every):
+        _fit_passages(result, every, hashes)
+    receipt["passages_omitted"] = len(every) - len(result["passages"])
+    receipt["clamped"] = any(passage["clamped"] for passage in result["passages"])
+    if receipt["passages_omitted"] or receipt["clamped"]:
+        result["truncated"] = True
+    result["notes"] = []
     if result["candidates"]:
         result["notes"].append(_CARDS_NOTE)
     if steps or any(

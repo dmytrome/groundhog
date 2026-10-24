@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+import pydantic_core
 import pytest
 from mcp.types import CallToolResult, TextContent
 
@@ -1753,3 +1754,68 @@ async def test_a_link_whose_words_match_the_question_comes_first(fake_web: FakeW
         "here",
         "edit the cats nap page",
     ]
+
+
+async def test_passages_come_back_once_long_metadata_is_trimmed(fake_web: FakeWeb) -> None:
+    urls = [f"https://s{i}.org/" + "a" * 1480 for i in range(10)]
+    docs = {
+        url: dataclasses.replace(
+            _doc(url, f"# Cats\n\nCats nap in the sun, page {i}.\n"),
+            title="T" * 300,
+            provenance={
+                **_doc(url, "x").provenance,
+                "content_hash": f"{i:064x}",
+                "canonical": "https://c.org/" + "c" * 1986,
+                "author": "A" * 300,
+            },
+        )
+        for i, url in enumerate(urls)
+    }
+    fake_web([_hit(url) for url in urls], docs)
+
+    structured = await _call({"query": "cats nap sun", "max_sources": 10})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    assert structured["receipt"]["metadata_compacted"]
+    assert structured["passages"]
+
+
+
+
+async def test_a_followed_link_does_not_carry_tracking_ids(fake_web: FakeWeb) -> None:
+    markdown = "# Cats\n\nCats nap: [paper](https://v.com/p.pdf?utm_source=n&gclid=ABC&topic=ai)."
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    (card,) = (await research("cats nap"))["candidates"]
+
+    assert card["url"] == "https://v.com/p.pdf?topic=ai"
+    assert tokens.redeem(card["token"])["fetch_url"] == "https://v.com/p.pdf?topic=ai"
+
+
+async def test_an_action_link_ranks_last_whatever_its_case(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [search](https://en.wikipedia.org/wiki/Special:Search) "
+        "[log in](https://x.org/Login) [paper](https://study.org/paper)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert result["candidates"][0]["label"] == "paper"
+
+
+async def test_the_ceiling_holds_exactly_wherever_it_falls(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = {
+        f"https://{name}.org/cats": "# Cats\n\n"
+        + "".join(f"{name}{i} " + "cats nap " * 40 + "\n\n" for i in range(30))
+        for name in "abc"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    for ceiling in range(20_000, 20_400):
+        monkeypatch.setattr(research_mod, "CEILING_CHARS", ceiling)
+        result = await research("cats nap", max_tokens=50_000)
+        sent = len(pydantic_core.to_json(result, fallback=str, indent=2).decode())
+        assert ceiling - 500 < sent <= ceiling, ceiling

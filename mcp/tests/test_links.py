@@ -235,3 +235,10 @@ def test_a_link_wrapped_across_windows_line_endings_is_found() -> None:
         ("https://x.org/b", "s"),
     ]
     assert markdown[found[0].start : found[0].end] == "[the\r\nspec](https://x.org/a)"
+
+
+def test_untracked_drops_only_tracking_ids_and_keeps_the_rest_as_written() -> None:
+    assert links.untracked("https://a.org/P?utm_source=x&id=2&fbclid=y&q=a+b#top") == (
+        "https://a.org/P?id=2&q=a+b#top"
+    )
+    assert links.untracked("https://a.org/p") == "https://a.org/p"
