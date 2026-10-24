@@ -157,7 +157,8 @@ Searches, reads the top sources and ranks passages from all of them in one pass.
   doesn't start with it, and close the block when `text` doesn't end with a closing fence.
   `id` stays stable while the page doesn't change.
 - `sources`: `url`, `title`, `status` (`ok` / `blocked` / `timeout` / `error`), `page_status`
-  (as in `read_url`), `threats`, `threat_total`, `threat_counts`, `provenance`, `filtered`,
+  (as in `read_url`), `threats`, `threat_total`, `threat_counts` (every finding by type,
+  spans the page's detector dropped as `hidden_unclassified`), `provenance`, `filtered`,
   `depth` and `discovered_via` (the candidate it was followed from, with your `why`). A
   failed source doesn't fail the
   call. A challenge, an error page, an `empty` page or any page whose `markdown` is blank

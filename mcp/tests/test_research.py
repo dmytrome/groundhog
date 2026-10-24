@@ -1402,6 +1402,29 @@ async def test_an_excluded_site_is_not_offered_or_followed_under_a_host_idna_ref
     assert fetched == []
 
 
+async def test_a_sources_counts_by_type_include_findings_its_report_left_out(
+    fake_web: FakeWeb,
+) -> None:
+    threat: sanitize.Threat = {
+        "type": "hidden_css",
+        "reason": "r",
+        "location": None,
+        "excerpt": "x",
+    }
+    doc = dataclasses.replace(
+        _doc(_HUB, "# Cats\n\nCats nap."),
+        threats=[threat] * 9 + [sanitize.notice("report_truncated", "291 further")],
+        hidden_found=300,
+        found_by_type={"hidden_css": 300},
+    )
+    fake_web([_hit(_HUB)], {_HUB: doc})
+
+    result = await research("cats nap")
+
+    assert result["sources"][0]["threat_total"] == 300
+    assert result["sources"][0]["threat_counts"] == {"hidden_css": 300, "report_truncated": 1}
+
+
 async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
     markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
     doc = dataclasses.replace(

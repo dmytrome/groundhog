@@ -1137,3 +1137,17 @@ async def test_an_oversized_page_still_reports_its_invisible_characters(
 
     assert doc.status == "too_large"
     assert doc.characters_found >= 1
+
+
+async def test_the_count_by_type_covers_findings_the_report_left_out(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    spans = [{"reason": "display:none", "text": f"p{i}", "path": "d"} for i in range(300)]
+    fake_provider(make_page(hidden=spans, spans_dropped=50, text=f"Cats{ZERO_WIDTH} nap."))
+
+    doc = await fetch_document("https://ex.com/p", max_threats=10)
+
+    assert doc.found_by_type["hidden_css"] == 300
+    assert doc.found_by_type["hidden_unclassified"] == 50
+    assert sum(doc.found_by_type.values()) == doc.hidden_found + doc.characters_found

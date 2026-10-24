@@ -351,13 +351,6 @@ class _Target:
     via: Via | None
 
 
-def _threat_counts(threats: list[sanitize.Threat]) -> dict[str, int]:
-    found: Counter[str] = Counter()
-    for threat in threats:
-        found[threat["type"]] += threat.get("seen", 1)
-    return dict(found)
-
-
 def _picked(
     picks: list[Pick], included: list[str], excluded: list[str], per_domain: int
 ) -> tuple[list[_Target], list[Followed]]:
@@ -901,7 +894,8 @@ async def research(
                 "depth": target.depth,
                 "discovered_via": target.via,
                 "threat_total": outcome.hidden_found + outcome.characters_found,
-                "threat_counts": _threat_counts(outcome.threats),
+                "threat_counts": outcome.found_by_type
+                | document.by_type([t for t in outcome.threats if t["type"] in _NOTICE_TYPES]),
             }
         )
         counts["outside"] += filtered == "outside_domains"
