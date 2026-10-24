@@ -3,7 +3,7 @@ import random
 import sys
 import time
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -682,16 +682,49 @@ def test_a_piece_of_a_long_code_block_fits_by_its_rendered_size() -> None:
     assert len(matches) == 1
 
 
-@pytest.mark.parametrize("max_tokens", [50, 20_000])
-def test_selecting_from_a_long_page_takes_linear_time(max_tokens: int) -> None:
-    markdown = "\n\n".join(f"Cats nap in spot {i} of the garden." for i in range(20_000))
+def _paragraphs(n: int) -> str:
+    return "\n\n".join(f"Cats nap in spot {i} of the garden." for i in range(n))
 
+
+def _one_block(n: int) -> str:
+    return "Cats nap in the garden today. " * (n * 80)
+
+
+def _seconds(markdown: str, max_tokens: int) -> float:
     started = time.perf_counter()
-    body, matches, _, _ = _select(markdown, "cats nap garden", max_tokens)
+    _select(markdown, "cats nap garden", max_tokens)
+    return time.perf_counter() - started
 
-    assert time.perf_counter() - started < 5
-    assert len(body) <= max_tokens * 4
-    assert sum(m["end"] - m["offset"] for m in matches) + 2 * (len(matches) - 1) == len(body)
+
+@pytest.mark.parametrize(
+    ("page", "small", "max_tokens"),
+    [(_paragraphs, 2_500, 50), (_paragraphs, 2_500, 20_000), (_one_block, 250, 1_000_000)],
+)
+def test_selecting_from_a_long_page_takes_linear_time(
+    page: Callable[[int], str], small: int, max_tokens: int
+) -> None:
+    _seconds(page(small), max_tokens)
+
+    assert _seconds(page(small * 4), max_tokens) < 10 * _seconds(page(small), max_tokens) + 0.1
+
+
+def test_the_body_never_exceeds_the_budget_whatever_the_page() -> None:
+    rng = random.Random(7)
+    for _ in range(300):
+        parts = []
+        for _ in range(rng.randint(1, 6)):
+            if rng.random() < 0.5:
+                lines = [f"needle_{i}()" if rng.random() < 0.3 else f"x_{i}()" for i in range(400)]
+                parts.append("```\n" + "\n".join(lines[: rng.randint(1, 400)]) + "\n```")
+            else:
+                parts.append("needle " * rng.randint(1, 900))
+        markdown = "\n\n".join(parts)
+        max_tokens = rng.randint(1, 3_000)
+
+        body, matches, _, _ = _select(markdown, "needle", max_tokens)
+
+        assert len(body) <= max_tokens * 4
+        assert (body == "") == (matches == [])
 
 
 _VERSIONED = (

@@ -226,8 +226,7 @@ def _scored_text(chunk: Chunk) -> str:
     return (chunk.heading or "") + "\n" + chunk.text
 
 
-def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
-    docs = [tokenize(_scored_text(c)) for c in chunks]
+def _bm25(docs: list[list[str]], query_terms: list[str]) -> list[float]:
     n = len(docs)
     if n == 0:
         return []
@@ -257,7 +256,8 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
 
 def relevant(chunks: list[Chunk], query: str, *, floor: float = 0.0) -> tuple[list[Scored], int]:
     terms = tokenize(query)
-    scores = _bm25(chunks, terms)
+    docs = [tokenize(_scored_text(c)) for c in chunks]
+    scores = _bm25(docs, terms)
     by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
         key=lambda i: (-scores[i], i),
@@ -266,7 +266,7 @@ def relevant(chunks: list[Chunk], query: str, *, floor: float = 0.0) -> tuple[li
         return [], 0
     best = by_relevance[0]
     least = scores[best] * floor
-    matched = {i: set(terms) & set(tokenize(_scored_text(chunks[i]))) for i in by_relevance}
+    matched = {i: set(terms) & set(docs[i]) for i in by_relevance}
     kept = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
     return [Scored(chunks[i], scores[i]) for i in kept], len(by_relevance) - len(kept)
 
@@ -317,52 +317,106 @@ def _layout(chunks: list[Chunk]) -> _Layout:
 
 
 def _spans(layout: _Layout, ranked: list[Scored]) -> list[_Span]:
-    spans: list[_Span] = []
+    runs: list[list[Scored]] = []
     for s in sorted(ranked, key=lambda s: s.chunk.offset):
-        end = s.chunk.offset + len(s.chunk.text)
-        last = spans[-1] if spans else None
-        if last and last.chunk.block == s.chunk.block and last.end == s.chunk.offset:
-            spans[-1] = _Span(last.chunk, end, last.text + s.chunk.text, max(last.score, s.score))
+        last = runs[-1][-1].chunk if runs else None
+        if last and last.block == s.chunk.block and last.offset + len(last.text) == s.chunk.offset:
+            runs[-1].append(s)
         else:
-            spans.append(_Span(s.chunk, end, s.chunk.text, s.score))
-    fenced: list[_Span] = []
-    for span in spans:
-        text, fence = span.text, layout.fences.get(span.chunk.block)
+            runs.append([s])
+    spans: list[_Span] = []
+    for run in runs:
+        first, final = run[0].chunk, run[-1].chunk
+        end = final.offset + len(final.text)
+        text, fence = "".join(s.chunk.text for s in run), layout.fences.get(first.block)
         if fence is not None:
             opening = _FENCE_OPEN_RE.match(fence)
             assert opening
-            if span.chunk.offset != layout.starts[span.chunk.block]:
+            if first.offset != layout.starts[first.block]:
                 text = fence + "\n" + text
-            if span.end != layout.ends[span.chunk.block]:
+            if end != layout.ends[first.block]:
                 text = text.rstrip("\n") + "\n" + opening.group(1)
-        fenced.append(span._replace(text=text))
-    return fenced
+        spans.append(_Span(first, end, text, max(s.score for s in run)))
+    return spans
+
+
+class _Run(NamedTuple):
+    block: int
+    start: int
+    end: int
+    chars: int
+    trail: int
+    blank: bool
+
+
+def _trailing(text: str) -> int:
+    return len(text) - len(text.rstrip("\n"))
+
+
+def _joined(left: _Run, right: _Run) -> _Run:
+    return _Run(
+        left.block,
+        left.start,
+        right.end,
+        left.chars + right.chars,
+        left.trail + right.trail if right.blank else right.trail,
+        left.blank and right.blank,
+    )
+
+
+def _rendered(layout: _Layout, run: _Run) -> int:
+    fence = layout.fences.get(run.block)
+    if fence is None:
+        return run.chars
+    opening = _FENCE_OPEN_RE.match(fence)
+    assert opening
+    size = run.chars
+    if run.start != layout.starts[run.block]:
+        size += len(fence) + 1
+    if run.end != layout.ends[run.block]:
+        size += 1 + len(opening.group(1)) - run.trail
+    return size
 
 
 def _fitted(chunks: list[Chunk], found: list[Scored], limit: int) -> tuple[list[_Span], bool, int]:
     layout = _layout(chunks)
-    kept: dict[int, list[Scored]] = {}
-    sizes: dict[int, tuple[int, int]] = {}
+    by_start: dict[int, _Run] = {}
+    by_end: dict[int, _Run] = {}
+    kept: list[Scored] = []
     chars = count = 0
     for scored in found:
-        block = scored.chunk.block
-        trial = _spans(layout, kept.get(block, []) + [scored])
-        size = (sum(len(span.text) for span in trial), len(trial))
-        was = sizes.get(block, (0, 0))
-        after = (chars - was[0] + size[0], count - was[1] + size[1])
+        c = scored.chunk
+        run = _Run(
+            c.block,
+            c.offset,
+            c.offset + len(c.text),
+            len(c.text),
+            _trailing(c.text),
+            _trailing(c.text) == len(c.text),
+        )
+        left, right = by_end.get(run.start), by_start.get(run.end)
+        left = left if left and left.block == c.block else None
+        right = right if right and right.block == c.block else None
+        merged = _joined(left, run) if left else run
+        merged = _joined(merged, right) if right else merged
+        was = sum(_rendered(layout, r) for r in (left, right) if r)
+        after = chars - was + _rendered(layout, merged), count + 1 - bool(left) - bool(right)
         if after[0] + 2 * (after[1] - 1) <= limit:
-            kept.setdefault(block, []).append(scored)
-            sizes[block], (chars, count) = size, after
+            for r in (left, right):
+                if r:
+                    del by_start[r.start], by_end[r.end]
+            by_start[merged.start] = by_end[merged.end] = merged
+            kept.append(scored)
+            chars, count = after
             continue
-        if count or is_fenced(scored.chunk):
+        if count or is_fenced(c):
             continue
-        text = extract.cut(scored.chunk.text, limit // _CHARS_PER_TOKEN)
+        text = extract.cut(c.text, limit // _CHARS_PER_TOKEN)
         if not text:
             continue
-        clipped = scored._replace(chunk=replace(scored.chunk, text=text))
+        clipped = scored._replace(chunk=replace(c, text=text))
         return _spans(layout, [clipped]), True, 1
-    admitted = [s for block in kept.values() for s in block]
-    return _spans(layout, admitted), False, len(admitted)
+    return _spans(layout, kept), False, len(kept)
 
 
 def select(
