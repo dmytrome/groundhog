@@ -1698,6 +1698,24 @@ async def test_text_in_any_script_is_counted_as_the_characters_sent(fake_web: Fa
     assert _wire_size(structured) <= research_mod.CEILING_CHARS
 
 
+async def test_pages_with_more_relevant_text_than_fits_still_offer_links(fake_web: FakeWeb) -> None:
+    pages = {
+        f"https://{name}.org/cats": "# Cats\n\n"
+        + "".join(
+            f"{name}{i} " + "cats nap " * 40 + f"[more](https://{name}{i}.net/cats)\n\n"
+            for i in range(30)
+        )
+        for name in "abc"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "cats nap", "max_tokens": 50_000})
+
+    assert structured["receipt"]["passages_omitted"]
+    assert len(structured["candidates"]) == research_mod._CARDS_OVER_PASSAGES
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+
+
 async def test_a_code_block_too_big_for_the_budget_leaves_room_for_the_prose(
     fake_web: FakeWeb,
 ) -> None:
@@ -1827,8 +1845,6 @@ async def test_passages_come_back_once_long_metadata_is_trimmed(fake_web: FakeWe
     assert _wire_size(structured) <= research_mod.CEILING_CHARS
     assert structured["receipt"]["metadata_compacted"]
     assert structured["passages"]
-
-
 
 
 async def test_a_followed_link_does_not_carry_tracking_ids(fake_web: FakeWeb) -> None:

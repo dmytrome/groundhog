@@ -45,6 +45,7 @@ _MAX_WHY_CHARS = 160
 _MAX_CARDS = 12
 _CARDS_PER_PARENT = 4
 _CARDS_PER_DOMAIN = 3
+_CARDS_OVER_PASSAGES = 4
 _LINKS_PER_PAGE = 500
 _VARIANTS_PER_PATTERN = 10
 _UNSUPPORTED_EXTENSIONS = frozenset(
@@ -597,6 +598,10 @@ def _fit(result: ResearchResult, hashes: dict[str, str]) -> ResearchResult:
 
     if over():
         kept = _most(result, "candidates")
+        if kept < _CARDS_OVER_PASSAGES:
+            result["passages"] = []
+            kept = max(kept, min(_most(result, "candidates"), _CARDS_OVER_PASSAGES))
+            result["passages"] = every
         receipt["candidates_omitted"] += len(result["candidates"]) - kept
         result["candidates"] = result["candidates"][:kept]
     for source in reversed(result["sources"]):
