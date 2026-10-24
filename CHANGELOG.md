@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format is based on
 
 - Passages are ranked on their section heading as well as their text, in `read_url` and
   `research`, so a section found by the version or name in its heading is returned.
+- The README says what happens to `alt`, `aria-label`, `aria-description` and `title` text:
+  it never appears in `markdown` or the rendered text, and long values are reported.
 
 ## [0.20.0] - 2026-10-24
 

@@ -80,3 +80,23 @@ def test_fenced_text_parses_as_one_literal_block() -> None:
 
 def test_blank_text_is_not_fenced() -> None:
     assert fenced(" \n ") == ""
+
+
+def test_attribute_text_never_reaches_the_markdown() -> None:
+    long = "L" * 130
+    html = (
+        "<html><body><article><h1>Cats</h1>"
+        "<p>Cats nap a lot during the day and hunt at dusk, as most owners notice.</p>"
+        f'<img src="/c.png" alt="ALTSHORT"><img src="/d.png" alt="ALTLONG{long}">'
+        '<p title="TITLESHORT">More text about cats and their habits in the afternoon.</p>'
+        f'<a href="/x" aria-label="ARIASHORT" title="TITLELONG{long}">a link</a>'
+        '<span aria-description="DESCSHORT">and more words here about cats.</span>'
+        '<figure><img src="/e.png" alt="FIGALT"><figcaption>Caption text</figcaption></figure>'
+        "</article></body></html>"
+    )
+
+    markdown, _ = to_document(html, "https://ex.com/p")
+
+    assert "Cats nap a lot during the day" in markdown
+    sentinels = ["ALTSHORT", "ALTLONG", "TITLESHORT", "TITLELONG", "ARIASHORT", "DESCSHORT"]
+    assert [s for s in sentinels + ["FIGALT"] if s in markdown] == []
