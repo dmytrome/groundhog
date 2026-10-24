@@ -194,7 +194,8 @@ calls. A follow runs no search, and `followed` says for each entry whether it wa
 pages per site as can start before the deadline), an `invalid_token` or `expired`. Tokens are
 signed by the server and expire after 30 minutes or on restart.
 
-The JSON text of a response never exceeds 40,000 characters. When it would, cards go first, then threat
+The JSON text block of a response never exceeds 40,000 characters; the MCP result carries the
+same object again as `structuredContent`. When it would, cards go first, then threat
 excerpts, then passages, then metadata, each counted in the receipt (`candidates_omitted`,
 `threat_excerpts_omitted`, `passages_omitted`, `sources_omitted`, `metadata_compacted`);
 safety counts from sources left out are kept in `omitted_safety`, and `notes` says so:
