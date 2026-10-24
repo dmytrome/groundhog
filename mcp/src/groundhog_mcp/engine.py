@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import functools
 import ipaddress
 import json
 import os
@@ -478,8 +480,13 @@ def _clean_span(span: object) -> HiddenSpan | None:
     return cleaned
 
 
+@functools.cache
+def _suffixes() -> tldextract.TLDExtract:
+    return tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
+
+
 def registrable_domain(url: str) -> str:
-    ext = tldextract.extract(url)
+    ext = _suffixes()(url)
     return ext.top_domain_under_public_suffix or ext.fqdn or urlparse(url).hostname or url
 
 
@@ -491,14 +498,14 @@ class _InflightRequests:
     def busy(self) -> bool:
         return bool(self._ids)
 
-    def _started(self, params: dict) -> None:
+    def _started(self, params: dict[str, object]) -> None:
         request_id = params.get("requestId")
-        if request_id:
+        if isinstance(request_id, str) and request_id:
             self._ids.add(request_id)
 
-    def _finished(self, params: dict) -> None:
+    def _finished(self, params: dict[str, object]) -> None:
         request_id = params.get("requestId")
-        if request_id:
+        if isinstance(request_id, str) and request_id:
             self._ids.discard(request_id)
 
     def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
@@ -827,21 +834,22 @@ class EngineProvider:
         assert self._cdp is not None
         target = await self._cdp.send("Target.createTarget", {"url": "about:blank"})
         tid = target["targetId"]
-        att = await self._cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-        sid = att["sessionId"]
-        inflight = _InflightRequests()
-        responses = _MainResponse()
-        challenge_assets = _ChallengeAssets()
-        private_documents = _PrivateDocuments(self._cfg)
-        child_frames = _ChildFrames(self._prepare_frame, guarded=self._cfg.block_private_ips)
-        unsubscribes = (
-            inflight.attach(self._cdp, sid)
-            + responses.attach(self._cdp, sid)
-            + challenge_assets.attach(self._cdp, sid)
-            + private_documents.attach(self._cdp, sid)
-            + child_frames.attach(self._cdp, sid)
-        )
+        unsubscribes: list[Callable[[], None]] = []
         try:
+            att = await self._cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
+            sid = att["sessionId"]
+            inflight = _InflightRequests()
+            responses = _MainResponse()
+            challenge_assets = _ChallengeAssets()
+            private_documents = _PrivateDocuments(self._cfg)
+            child_frames = _ChildFrames(self._prepare_frame, guarded=self._cfg.block_private_ips)
+            unsubscribes = (
+                inflight.attach(self._cdp, sid)
+                + responses.attach(self._cdp, sid)
+                + challenge_assets.attach(self._cdp, sid)
+                + private_documents.attach(self._cdp, sid)
+                + child_frames.attach(self._cdp, sid)
+            )
             await self._prepare_tab(sid)
             # Re-check right before navigate: the rate-limiter/semaphore wait above plus
             # Chrome's own independent DNS resolution at nav time reopen a rebinding window.
@@ -900,7 +908,8 @@ class EngineProvider:
             for unsubscribe in unsubscribes:
                 unsubscribe()
             if not self._cdp.closed:
-                await self._cdp.send("Target.closeTarget", {"targetId": tid})
+                with contextlib.suppress(CDPError):
+                    await self._cdp.send("Target.closeTarget", {"targetId": tid})
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         loop = asyncio.get_running_loop()

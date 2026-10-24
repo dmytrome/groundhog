@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+import requests
+import tldextract
 import websockets
 
 from groundhog_mcp import cdp, engine, extract, http, provenance
@@ -1802,3 +1804,52 @@ async def test_settling_on_a_closed_connection_raises(monkeypatch: pytest.Monkey
     monkeypatch.setattr(fake, "send", dead)
     with pytest.raises(cdp.CDPError):
         await provider._settle("tab", engine._InflightRequests())
+
+
+class _FailingOn(_NoEvents):
+    def __init__(self, failing: str) -> None:
+        super().__init__(_HEADLESS_UA, _HINTS)
+        self.failing = failing
+
+    async def send(self, method, params=None, session_id=None):
+        if method == self.failing:
+            self.calls.append((method, params, session_id))
+            raise cdp.CDPError(f"{method}: No target with given id")
+        return await super().send(method, params, session_id)
+
+
+async def test_a_tab_that_closed_itself_does_not_lose_the_page_it_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, _ = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+    provider._cdp = _FailingOn("Target.closeTarget")
+
+    page = await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+
+    assert page.text == "Cats nap."
+
+
+async def test_a_tab_that_could_not_be_attached_is_still_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, _ = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+    failing = _FailingOn("Target.attachToTarget")
+    provider._cdp = failing
+
+    with pytest.raises(cdp.CDPError, match="attachToTarget"):
+        await provider._fetch_in_target("https://example.com/", True)
+
+    assert failing.methods()[-1] == "Target.closeTarget"
+
+
+def test_grouping_by_site_never_reaches_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    def offline(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the public suffix list was fetched")
+
+    monkeypatch.setattr(requests.Session, "get", offline)
+    monkeypatch.setattr(
+        tldextract.tldextract, "TLD_EXTRACTOR", tldextract.TLDExtract(cache_dir=None)
+    )
+    engine._suffixes.cache_clear()
+
+    assert engine.registrable_domain("https://news.bbc.co.uk/x") == "bbc.co.uk"
