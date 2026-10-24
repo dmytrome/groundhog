@@ -223,3 +223,15 @@ def test_well_formed_markdown_is_read_as_commonmark_reads_it() -> None:
         assert [unquote(link.url) for link in links.find(markdown, _PAGE)] == [
             unquote(url) for url in _commonmark_links(markdown)
         ], markdown
+
+
+def test_a_link_wrapped_across_windows_line_endings_is_found() -> None:
+    markdown = "See [the\r\nspec](https://x.org/a) now.\r\n\r\n[s]:\r\n  https://x.org/b\r\n\r\n[s]"
+
+    found = links.find(markdown, _PAGE)
+
+    assert [(link.url, link.label) for link in found] == [
+        ("https://x.org/a", "the spec"),
+        ("https://x.org/b", "s"),
+    ]
+    assert markdown[found[0].start : found[0].end] == "[the\r\nspec](https://x.org/a)"

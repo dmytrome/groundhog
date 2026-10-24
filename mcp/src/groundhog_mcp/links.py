@@ -54,7 +54,8 @@ class _Opener(NamedTuple):
 
 def _label(raw: str) -> str:
     text = _IMAGE_RE.sub(lambda m: m.group(1), raw)
-    return sanitize.clean_field(_ESCAPED_RE.sub(r"\1", text), MAX_LABEL_CHARS) or ""
+    label = " ".join(_ESCAPED_RE.sub(r"\1", text).split())
+    return sanitize.clean_field(label, MAX_LABEL_CHARS) or ""
 
 
 def _valid(url: str) -> bool:
@@ -182,7 +183,7 @@ def _scan(text: str, start: int, end: int, base_url: str, references: dict[str, 
 
 
 def find(markdown: str, base_url: str, within: list[tuple[int, int]] | None = None) -> list[Link]:
-    text = markdown.translate(_SAME_LENGTH_NEWLINES)
+    text = markdown.replace("\r\n", " \n").translate(_SAME_LENGTH_NEWLINES)
     paragraphs, references = _blocks(text)
     found: list[Link] = []
     for start, end in paragraphs:
