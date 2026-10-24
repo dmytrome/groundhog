@@ -12,8 +12,8 @@ from groundhog_mcp import extract, retrieval, sanitize
 from groundhog_mcp.retrieval import (
     _HEADING_RE,
     Chunk,
-    _fenced_lines,
     chunk_document,
+    fenced_lines,
     rank,
     select,
 )
@@ -264,7 +264,7 @@ def test_openers_that_can_never_close_are_not_each_scanned_to_the_end(monkeypatc
 
     monkeypatch.setattr(retrieval, "range", counted_range, raising=False)
 
-    fenced = _fenced_lines(lines)
+    fenced = fenced_lines(lines)
 
     assert fenced == {}
     assert steps[0] <= 2 * len(lines)
@@ -308,7 +308,7 @@ def _headings_markdown_it_finds(parser: MarkdownIt, text: str) -> set[int]:
 
 def _headings_we_find(text: str) -> set[int]:
     lines = text.splitlines()
-    fenced = _fenced_lines(lines)
+    fenced = fenced_lines(lines)
     return {i for i, line in enumerate(lines) if i not in fenced and _HEADING_RE.match(line)}
 
 

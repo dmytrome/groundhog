@@ -11,6 +11,7 @@ RetrievalStatus = Literal[
     "server_error",
     "unsupported_content",
     "empty",
+    "too_large",
     "unknown",
 ]
 
@@ -23,6 +24,7 @@ NOT_CONTENT: frozenset[str] = frozenset(
         "server_error",
         "unsupported_content",
         "empty",
+        "too_large",
     }
 )
 
@@ -40,11 +42,6 @@ _MITIGATION_HEADERS_PRESENT = ("x-dd-b", "x-datadome-cid")
 # requested rather than against its markup: the same string inside HTML could be an
 # article *about* Cloudflare, and the collector strips `<script>` out of the markup it
 # returns anyway. Each entry is a set of substrings that must all appear in one URL.
-#
-# Cloudflare's needs `/orchestrate/` as well as the challenge-platform path, because
-# that path also serves the passive JS-detection probe that Bot Management injects into
-# ordinary, unchallenged pages. Turnstile's own widget URL is deliberately absent for
-# the same reason: ordinary login and contact forms embed it.
 # Lower-cased, because the URL they are matched against is.
 _CHALLENGE_ASSETS: tuple[tuple[str, ...], ...] = (
     ("/cdn-cgi/challenge-platform/", "/orchestrate/"),
@@ -69,9 +66,6 @@ _TITLE_SIGNS = _HUMAN_CHECK_SIGNS + (
     "checking if the site connection is secure",
 )
 # Matched against the rendered text, so every phrase here must be one a *reader* sees.
-# Cloudflare's "enable javascript and cookies to continue" is deliberately absent: it
-# lives in a <noscript>, which `innerText` never returns with scripting on, so including
-# it would look like coverage while never once matching.
 _BODY_SIGNS = _HUMAN_CHECK_SIGNS + (
     "checking your browser before accessing",
     "ddos protection by cloudflare",

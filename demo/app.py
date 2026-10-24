@@ -8,7 +8,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from groundhog_mcp.safety import BlockedURLError
+from groundhog_mcp.engine import BrowserUnavailableError
+from groundhog_mcp.safety import CallerFacingError
 from groundhog_mcp.tools.read_url import read_url
 
 _RATE_LIMIT_PER_HOUR = int(os.environ.get("DEMO_RATE_LIMIT_PER_HOUR", "8"))
@@ -29,21 +30,28 @@ _hits: dict[str, deque[float]] = defaultdict(deque)
 _global_hits: deque[float] = deque()
 
 
-def _window_limited(hits: deque[float], window_s: int, limit: int) -> bool:
-    now = time.monotonic()
+def _drain(hits: deque[float], window_s: int, now: float) -> None:
     while hits and now - hits[0] > window_s:
         hits.popleft()
-    if len(hits) >= limit:
-        return True
-    hits.append(now)
-    return False
 
 
-def _rate_limited(ip: str) -> bool:
-    limited = _window_limited(_hits[ip], _RATE_WINDOW_S, _RATE_LIMIT_PER_HOUR)
-    if not _hits[ip]:  # drop drained buckets so unique IPs can't grow the map unbounded
-        del _hits[ip]
-    return limited
+def _admit(ip: str) -> str | None:
+    now = time.monotonic()
+    for key in [key for key, hits in _hits.items() if now - hits[-1] > _RATE_WINDOW_S]:
+        del _hits[key]
+    mine = _hits[ip]
+    _drain(mine, _RATE_WINDOW_S, now)
+    _drain(_global_hits, _GLOBAL_WINDOW_S, now)
+    if len(mine) >= _RATE_LIMIT_PER_HOUR:
+        return (
+            f"Demo limit: {_RATE_LIMIT_PER_HOUR} fetches/hour per visitor. "
+            "Run it yourself with no limit: uvx groundhog-mcp"
+        )
+    if len(_global_hits) >= _GLOBAL_RATE_LIMIT_PER_MINUTE:
+        return "Demo is busy right now, try again in a moment."
+    mine.append(now)
+    _global_hits.append(now)
+    return None
 
 
 class FetchRequest(BaseModel):
@@ -57,22 +65,17 @@ async def index() -> FileResponse:
 
 @app.post("/api/fetch")
 async def fetch(req: FetchRequest, request: Request) -> dict:
-    if _window_limited(_global_hits, _GLOBAL_WINDOW_S, _GLOBAL_RATE_LIMIT_PER_MINUTE):
-        raise HTTPException(429, "Demo is busy right now, try again in a moment.")
     ip = request.client.host if request.client else "unknown"
-    if _rate_limited(ip):
-        raise HTTPException(
-            429,
-            f"Demo limit: {_RATE_LIMIT_PER_HOUR} fetches/hour per visitor. "
-            "Run it yourself with no limit: uvx groundhog-mcp",
-        )
+    if refusal := _admit(ip):
+        raise HTTPException(429, refusal)
     try:
         return await read_url(req.url)
-    except BlockedURLError as exc:
-        # Don't echo the guard's detail — it resolves internal compose hostnames
-        # (e.g. `chrome` -> the CDP container's IP) to anonymous visitors.
-        _log.warning("blocked url %r: %s", req.url, exc)
-        raise HTTPException(400, "That URL is not allowed.") from exc
+    except BrowserUnavailableError as exc:
+        _log.exception("browser unavailable for %r", req.url)
+        raise HTTPException(502, "Could not fetch that URL right now.") from exc
+    except CallerFacingError as exc:
+        _log.warning("refused url %r: %s", req.url, exc)
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         # The visitor gets a generic line; the operator gets the real cause.
         _log.exception("fetch failed for %r", req.url)

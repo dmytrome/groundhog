@@ -1,22 +1,27 @@
 import asyncio
+import dataclasses
 import gc
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+import pydantic_core
 import pytest
+from mcp.types import CallToolResult, TextContent
 
 from groundhog_mcp import (
     cdp,
     document,
     engine,
-    extract,
     retrieval,
     safety,
     sanitize,
     search as search_module,
+    server,
+    tokens,
 )
 from groundhog_mcp.config import Config
 from groundhog_mcp.search import SearchHit, searxng, serp
@@ -71,6 +76,7 @@ def _doc(
 
 
 searched: list[str] = []
+fetched: list[str] = []
 
 
 @pytest.fixture
@@ -80,12 +86,14 @@ def fake_web(monkeypatch):
     def _install(hits, docs, failures=None):
         failures = failures or {}
         searched.clear()
+        fetched.clear()
 
         async def _search(query, cfg, limit):
             searched.append(query)
             return hits[:limit], "serp"
 
         async def _fetch(url, **kwargs):
+            fetched.append(url)
             if url in failures:
                 raise failures[url]
             return docs[url]
@@ -528,9 +536,23 @@ async def test_a_top_passage_cut_to_the_budget_says_so(fake_web: FakeWeb) -> Non
     top = result["passages"][0]
     assert top["clamped"] is True
     assert result["truncated"] is True
-    assert len(top["text"].removesuffix(extract._TRUNCATION_MARKER)) <= 800
-    kept = top["text"].removesuffix(extract._TRUNCATION_MARKER)
-    assert markdown[top["start"] : top["end"]].startswith(kept)
+    assert len(top["text"]) <= 800
+    assert markdown[top["start"] : top["end"]] == top["text"]
+    assert top["id"] == retrieval.passage_id(
+        "https://a.com/x", hashlib.sha256(markdown.encode()).hexdigest(), top["start"], top["end"]
+    )
+
+
+async def test_a_code_block_over_the_budget_is_left_out_not_cut(fake_web: FakeWeb) -> None:
+    code = "\n".join(f"kitten_eats_meat_{i} = feed({i})" for i in range(60))
+    markdown = "```python\n" + code + "\n```\n"
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=200)
+
+    assert result["passages"] == []
+    assert result["receipt"]["omitted"] == 1
+    assert result["truncated"] is True
 
 
 async def test_a_research_passage_and_a_read_url_match_share_an_id(fake_web: FakeWeb) -> None:
@@ -1237,3 +1259,563 @@ async def test_sources_can_finish_while_an_earlier_source_is_waiting(
     result = await research("cats")
 
     assert [s["status"] for s in result["sources"]] == ["ok", "ok"]
+
+
+def _cards_of(result: research_mod.ResearchResult) -> dict[str, research_mod.Card]:
+    return {card["url"]: card for card in result["candidates"]}
+
+
+_HUB = "https://hub.org/cats"
+
+
+async def test_links_in_returned_passages_are_offered_as_candidates(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap, says [the sleep study](https://study.org/sleep) and "
+        "[a vet](https://vet.org/naps).\n\n# Boats\n\nBoats float on [water](https://sea.org/)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    cards = _cards_of(result)
+    assert set(cards) == {"https://study.org/sleep", "https://vet.org/naps"}
+    card = cards["https://study.org/sleep"]
+    (passage,) = result["passages"]
+    assert card["label"] == "the sleep study"
+    assert card["parent_source_url"] == _HUB
+    assert card["parent_passage_id"] == passage["id"]
+    assert card["relation"] == f"linked from {passage['id']}"
+    assert card["depth"] == 1
+    assert card["domain"] == "study.org"
+    assert card["kind"] == "link"
+
+
+async def test_a_link_back_to_the_page_or_to_a_page_already_read_is_not_offered(
+    fake_web: FakeWeb,
+) -> None:
+    other = "https://other.org/cats"
+    markdown = (
+        f"# Cats\n\nCats nap, see [above](https://hub.org#top), [this]({_HUB}#s2), "
+        f"[the other]({other}?utm_source=x) and [new](https://new.org/cats)."
+    )
+    fake_web(
+        [_hit(_HUB), _hit(other)],
+        {_HUB: _doc(_HUB, markdown), other: _doc(other, "# Cats\n\nCats nap too.")},
+    )
+
+    result = await research("cats nap")
+
+    assert set(_cards_of(result)) == {"https://new.org/cats"}
+
+
+async def test_one_destination_is_offered_once(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap [here](https://study.org/sleep) and "
+        "[again](https://study.org/sleep?utm_campaign=x#fig2)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert [card["label"] for card in result["candidates"]] == ["here"]
+
+
+async def test_no_page_or_domain_fills_the_slate(fake_web: FakeWeb) -> None:
+    pages = {
+        "https://a.org/x": "# Cats\n\nCats nap "
+        + "".join(f"[s{i}](https://same.org/{i}) " for i in range(5))
+    }
+    for parent in "bcd":
+        pages[f"https://{parent}.org/y"] = "# Cats\n\nCats nap " + "".join(
+            f"[{parent}{i}](https://{parent}{i}.org/) " for i in range(10)
+        )
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    result = await research("cats nap")
+
+    cards = result["candidates"]
+    assert len(cards) == 12
+    assert sum(card["domain"] == "same.org" for card in cards) == 3
+    assert max(Counter(card["parent_source_url"] for card in cards).values()) == 4
+    assert result["receipt"]["candidates_omitted"] == 35 - 12
+
+
+async def test_an_action_link_comes_after_a_reference(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [edit](https://wiki.org/w/index.php?action=edit) "
+        "[share](https://x.org/share) [paper](https://study.org/paper)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert result["candidates"][0]["label"] == "paper"
+
+
+async def test_a_calendar_of_variants_is_cut_and_counted(fake_web: FakeWeb) -> None:
+    days = "".join(f"[{d}](https://cal.org/2026/10/{d}) " for d in range(1, 12))
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, f"# Cats\n\nCats nap {days}")})
+
+    result = await research("cats nap")
+
+    assert result["receipt"]["link_variants_dropped"] == 1
+    assert result["receipt"]["links_examined"] == 11
+
+
+async def test_domain_filters_apply_to_candidates(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap [in](https://docs.hub.org/a) [out](https://blog.org/b) "
+        "[gone](https://spam.hub.org/c)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research(
+        "cats nap", include_domains=["hub.org"], exclude_domains=["spam.hub.org"]
+    )
+
+    assert set(_cards_of(result)) == {"https://docs.hub.org/a"}
+
+
+async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
+    markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
+    doc = dataclasses.replace(
+        _doc(_HUB, markdown),
+        threats=[sanitize.notice("strip_incomplete", "rebuilt")],
+        hidden_found=3,
+        characters_found=1,
+    )
+    other = "https://study.org/about"
+    fake_web(
+        [_hit(_HUB), _hit(other)], {_HUB: doc, other: _doc(other, "# Cats\n\nCats nap often.")}
+    )
+
+    result = await research("cats nap")
+
+    assert _cards_of(result)["https://study.org/sleep.PDF"]["flags"] == [
+        "parent_strip_incomplete",
+        "parent_threats=4",
+        "likely_unsupported_format",
+        "same_domain_pages=1",
+    ]
+
+
+async def test_a_link_split_between_two_passages_is_counted_not_offered(
+    fake_web: FakeWeb,
+) -> None:
+    lead = "cats nap " * 266
+    markdown = f"# Cats\n\n{lead}[see. this](https://split.org/a) cats nap\n"
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert len(result["passages"]) == 2
+    assert result["candidates"] == []
+    assert result["receipt"]["links_straddled"] == 1
+
+
+async def _offered(
+    fake_web: FakeWeb, docs: dict[str, document.Document]
+) -> research_mod.ResearchResult:
+    fake_web([_hit(_HUB)], docs)
+    return await research("cats nap")
+
+
+async def test_following_a_candidate_reads_it_without_searching(fake_web: FakeWeb) -> None:
+    study = "https://study.org/sleep"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap, says [the study]({study})."),
+        study: _doc(study, "# Sleep\n\nCats nap sixteen hours a day."),
+    }
+    card = (await _offered(fake_web, docs))["candidates"][0]
+    searched.clear()
+    fetched.clear()
+
+    result = await research(
+        "cats nap", follow=[{"token": card["token"], "why": "how long cats sleep"}]
+    )
+
+    assert searched == []
+    assert fetched == [study]
+    assert result["receipt"]["executed_query"] is None
+    (source,) = result["sources"]
+    assert source["depth"] == 1
+    assert source["discovered_via"] == {
+        "parent_source_url": _HUB,
+        "parent_passage_id": card["parent_passage_id"],
+        "label": "the study",
+        "why": "how long cats sleep",
+        "candidate": study,
+    }
+    assert result["followed"] == [{"url": study, "why": "how long cats sleep", "outcome": "read"}]
+    assert "sixteen" in result["passages"][0]["text"]
+
+
+async def test_each_follow_entry_reports_its_own_outcome(fake_web: FakeWeb) -> None:
+    good, bad = "https://study.org/sleep", "https://down.org/x"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap, [a]({good}) [b]({bad}) [c](https://spam.org/c)."),
+        good: _doc(good, "# Sleep\n\nCats nap a lot."),
+    }
+    cards = _cards_of(await _offered(fake_web, docs))
+    fake_web([], docs, failures={bad: TimeoutError()})
+
+    result = await research(
+        "cats nap",
+        exclude_domains=["spam.org"],
+        follow=[
+            {"token": cards[good]["token"], "why": "w1"},
+            {"token": cards[good]["token"], "why": "w2"},
+            {"token": cards[bad]["token"], "why": "w3"},
+            {"token": cards["https://spam.org/c"]["token"], "why": "w4"},
+            {"token": "forged.token", "why": "w5"},
+        ],
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "read",
+        "duplicate",
+        "failed",
+        "filtered",
+        "invalid_token",
+    ]
+    assert fetched == [good, bad]
+
+
+async def test_a_page_at_the_depth_limit_offers_nothing(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = "https://deep.org/3"
+    token = tokens.issue(
+        fetch_url=deep,
+        depth=tokens.MAX_DEPTH,
+        parent_source_url=_HUB,
+        parent_passage_id="p:x:0-1",
+        label="deep",
+    )
+    fake_web([], {deep: _doc(deep, "# Cats\n\nCats nap, see [more](https://more.org/).")})
+
+    result = await research("cats nap", follow=[{"token": token, "why": "go deeper"}])
+
+    assert result["passages"]
+    assert result["candidates"] == []
+
+
+@pytest.mark.parametrize(
+    "follow",
+    [
+        [],
+        [{"token": "t", "why": " "}],
+        [{"token": "t", "why": "w" * 161}],
+        [{"token": "t", "why": "w"}] * 9,
+    ],
+)
+async def test_a_malformed_follow_is_refused(
+    fake_web: FakeWeb, follow: list[research_mod.Pick]
+) -> None:
+    fake_web([], {})
+
+    with pytest.raises(safety.InvalidArgument):
+        await research("cats", follow=follow)
+
+
+async def test_a_query_too_long_to_echo_is_refused(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+
+    with pytest.raises(safety.InvalidArgument):
+        await research("cats " * 401)
+
+
+async def _call(arguments: dict[str, object]) -> dict[str, object]:
+    called = await server.build_server().call_tool("research", arguments)
+    assert isinstance(called, CallToolResult)
+    assert called.structured_content is not None
+    (content,) = called.content
+    assert isinstance(content, TextContent)
+    return {**called.structured_content, "wire_size": len(content.text)}
+
+
+def _wire_size(structured: dict[str, object]) -> int:
+    size = structured["wire_size"]
+    assert isinstance(size, int)
+    return size
+
+
+async def test_long_passages_are_cut_to_the_ceiling_and_say_so(fake_web: FakeWeb) -> None:
+    paragraph = "Cats nap in the sun for most of the day, then hunt at dusk.\n\n"
+    pages = {f"https://{name}.org/cats": "# Cats\n\n" + paragraph * 600 for name in "abcde"}
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "cats nap sun", "max_tokens": 50_000})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    receipt = structured["receipt"]
+    assert receipt["passages_omitted"] > 0
+    assert receipt["metadata_compacted"] == []
+    assert research_mod._OMITTED_NOTE in structured["notes"]
+    for passage in structured["passages"]:
+        assert pages[passage["source_url"]][passage["start"] : passage["end"]] == passage["text"]
+
+
+def _long_domain(first: str) -> str:
+    return ".".join([first + "a" * (63 - len(first)), "b" * 63, "c" * 63, "d" * 61])
+
+
+_ESCAPED = '"\\\U0001f600'
+
+
+def _escaped_url(domain: str, n: int) -> str:
+    head = f"https://{domain}/{n}/"
+    return head + (_ESCAPED * 2048)[: 2048 - len(head)]
+
+
+async def test_the_ceiling_holds_with_every_field_at_its_longest(fake_web: FakeWeb) -> None:
+    included = [_long_domain(c) for c in "abcdefgh"]
+    excluded = [_long_domain(f"x{i:02d}") for i in range(50)]
+    urls = [_escaped_url(included[i % 8], i) for i in range(10)]
+    threat: sanitize.Threat = {
+        "type": "hidden_css",
+        "reason": _ESCAPED * 26,
+        "location": _ESCAPED * 40,
+        "excerpt": _ESCAPED * 26,
+    }
+    docs = {
+        url: dataclasses.replace(
+            _doc(url, "# Cats\n\n" + "Cats nap. " * 3000),
+            title=_ESCAPED * 100,
+            threats=[threat] * 10 + [sanitize.notice("strip_incomplete", "rebuilt")],
+            hidden_found=40,
+        )
+        for url in urls
+    }
+    fake_web([_hit(url) for url in urls], docs)
+
+    structured = await _call(
+        {
+            "query": (_ESCAPED * 700)[:2000],
+            "max_sources": 10,
+            "include_domains": included,
+            "exclude_domains": excluded,
+            "aim": (_ESCAPED * 70)[:200],
+        }
+    )
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    receipt = structured["receipt"]
+    assert receipt["metadata_compacted"]
+    shown = sum(source["threat_total"] for source in structured["sources"])
+    hidden = (structured["omitted_safety"] or {"threat_total": 0})["threat_total"]
+    assert shown + hidden == 10 * 40
+    notices = {n for s in structured["sources"] for n in s["threat_counts"]}
+    notices |= set((structured["omitted_safety"] or {"notices": []})["notices"])
+    assert "strip_incomplete" in notices
+
+
+async def test_the_ceiling_holds_for_a_follow_of_long_urls(fake_web: FakeWeb) -> None:
+    urls = [_escaped_url(_long_domain(c), i) for i, c in enumerate("abcdefgh")]
+    picks = [
+        {
+            "token": tokens.issue(
+                fetch_url=url,
+                depth=1,
+                parent_source_url=url,
+                parent_passage_id="p:x:0-1",
+                label=(_ESCAPED * 60)[:160],
+            ),
+            "why": (_ESCAPED * 60)[:160],
+        }
+        for url in urls
+    ]
+    fake_web([], {}, failures={url: TimeoutError() for url in urls})
+
+    structured = await _call({"query": (_ESCAPED * 700)[:2000], "follow": picks})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    assert [entry["outcome"] for entry in structured["followed"]] == ["failed"] * 8
+
+
+async def test_text_in_any_script_is_counted_as_the_characters_sent(fake_web: FakeWeb) -> None:
+    sentence = "猫は一日の大半を眠って過ごし、夕方に狩りをする。"
+    pages = {
+        f"https://{name}.jp/neko": "# 猫\n\n"
+        + "".join(f"{name}{i} " + sentence * 40 + "\n\n" for i in range(6))
+        for name in "ab"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    structured = await _call({"query": "猫 眠って", "max_tokens": 50_000})
+
+    assert len(structured["passages"]) == 12
+    assert structured["receipt"]["passages_omitted"] == 0
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+
+
+async def test_a_code_block_too_big_for_the_budget_leaves_room_for_the_prose(
+    fake_web: FakeWeb,
+) -> None:
+    code = "\n".join(f"kitten_eats_meat_{i} = feed({i})  # kitten eats meat" for i in range(30))
+    markdown = f"```python\n{code}\n```\n\n# Diet\n\nA kitten eats meat several times a day.\n"
+    fake_web([_hit("https://a.com/x")], {"https://a.com/x": _doc("https://a.com/x", markdown)})
+
+    result = await research("kitten eats meat", max_tokens=200)
+
+    assert [p["text"] for p in result["passages"]] == ["A kitten eats meat several times a day."]
+
+
+async def test_a_followed_page_with_nothing_to_read_says_so(fake_web: FakeWeb) -> None:
+    gate, twin, copy = "https://gate.org/x", "https://twin.org/a", "https://copy.org/b"
+    docs = {
+        _HUB: _doc(_HUB, f"# Cats\n\nCats nap: [g]({gate}) [t]({twin}) [c]({copy})."),
+        gate: _doc(gate, "Just a moment", status="challenge"),
+        twin: _doc(twin, "# Sleep\n\nCats nap a lot."),
+        copy: _doc(copy, "# Sleep\n\nCats nap a lot."),
+    }
+    cards = _cards_of(await _offered(fake_web, docs))
+
+    result = await research(
+        "cats nap",
+        follow=[{"token": cards[url]["token"], "why": "sleep"} for url in (gate, twin, copy)],
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "not_content",
+        "read",
+        "duplicate",
+    ]
+
+
+async def test_follows_to_one_site_stop_where_they_would_miss_the_deadline(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = [f"https://slow.org/{i}" for i in range(4)]
+    docs = {_HUB: _doc(_HUB, "# Cats\n\nCats nap: " + " ".join(f"[{u}]({u})" for u in pages))}
+    docs |= {url: _doc(url, f"# Cats\n\nCats nap at {url}.") for url in pages}
+    tokens_by_url = {
+        url: tokens.issue(
+            fetch_url=url, depth=1, parent_source_url=_HUB, parent_passage_id="p:x:0-1", label=url
+        )
+        for url in pages
+    }
+    fake_web([], docs)
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "30000")
+
+    result = await research(
+        "cats nap", follow=[{"token": tokens_by_url[url], "why": "w"} for url in pages]
+    )
+
+    assert [entry["outcome"] for entry in result["followed"]] == [
+        "read",
+        "read",
+        "same_domain_limit",
+        "same_domain_limit",
+    ]
+    assert fetched == pages[:2]
+
+
+async def test_an_expired_token_is_reported_without_reading_anything(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = tokens.issue(
+        fetch_url="https://a.org/x",
+        depth=1,
+        parent_source_url=_HUB,
+        parent_passage_id="p:x:0-1",
+        label="x",
+    )
+    fake_web([], {})
+    later = tokens.time.monotonic() + tokens.TTL_S + 1
+    monkeypatch.setattr(tokens.time, "monotonic", lambda: later)
+
+    result = await research("cats", follow=[{"token": token, "why": "w"}])
+
+    assert result["followed"] == [{"url": None, "why": "w", "outcome": "expired"}]
+    assert fetched == []
+    assert searched == []
+
+
+async def test_the_longest_why_and_query_allowed_are_accepted(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+
+    result = await research("q" * 2000, follow=[{"token": "x.y", "why": "w" * 160}])
+
+    assert result["followed"][0]["outcome"] == "invalid_token"
+
+
+async def test_a_link_whose_words_match_the_question_comes_first(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [here](https://a.org/1), [the cats nap study](https://b.org/2), "
+        "[edit the cats nap page](https://c.org/edit)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert [card["label"] for card in result["candidates"]] == [
+        "the cats nap study",
+        "here",
+        "edit the cats nap page",
+    ]
+
+
+async def test_passages_come_back_once_long_metadata_is_trimmed(fake_web: FakeWeb) -> None:
+    urls = [f"https://s{i}.org/" + "a" * 1480 for i in range(10)]
+    docs = {
+        url: dataclasses.replace(
+            _doc(url, f"# Cats\n\nCats nap in the sun, page {i}.\n"),
+            title="T" * 300,
+            provenance={
+                **_doc(url, "x").provenance,
+                "content_hash": f"{i:064x}",
+                "canonical": "https://c.org/" + "c" * 1986,
+                "author": "A" * 300,
+            },
+        )
+        for i, url in enumerate(urls)
+    }
+    fake_web([_hit(url) for url in urls], docs)
+
+    structured = await _call({"query": "cats nap sun", "max_sources": 10})
+
+    assert _wire_size(structured) <= research_mod.CEILING_CHARS
+    assert structured["receipt"]["metadata_compacted"]
+    assert structured["passages"]
+
+
+
+
+async def test_a_followed_link_does_not_carry_tracking_ids(fake_web: FakeWeb) -> None:
+    markdown = "# Cats\n\nCats nap: [paper](https://v.com/p.pdf?utm_source=n&gclid=ABC&topic=ai)."
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    (card,) = (await research("cats nap"))["candidates"]
+
+    assert card["url"] == "https://v.com/p.pdf?topic=ai"
+    assert tokens.redeem(card["token"])["fetch_url"] == "https://v.com/p.pdf?topic=ai"
+
+
+async def test_an_action_link_ranks_last_whatever_its_case(fake_web: FakeWeb) -> None:
+    markdown = (
+        "# Cats\n\nCats nap: [search](https://en.wikipedia.org/wiki/Special:Search) "
+        "[log in](https://x.org/Login) [paper](https://study.org/paper)."
+    )
+    fake_web([_hit(_HUB)], {_HUB: _doc(_HUB, markdown)})
+
+    result = await research("cats nap")
+
+    assert result["candidates"][0]["label"] == "paper"
+
+
+async def test_the_ceiling_holds_exactly_wherever_it_falls(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = {
+        f"https://{name}.org/cats": "# Cats\n\n"
+        + "".join(f"{name}{i} " + "cats nap " * 40 + "\n\n" for i in range(30))
+        for name in "abc"
+    }
+    fake_web([_hit(url) for url in pages], {url: _doc(url, md) for url, md in pages.items()})
+
+    for ceiling in range(20_000, 20_400):
+        monkeypatch.setattr(research_mod, "CEILING_CHARS", ceiling)
+        result = await research("cats nap", max_tokens=50_000)
+        sent = len(pydantic_core.to_json(result, fallback=str, indent=2).decode())
+        assert ceiling - 500 < sent <= ceiling, ceiling

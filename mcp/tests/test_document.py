@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from groundhog_mcp import extract, sanitize
+from groundhog_mcp import document, extract, sanitize
 from groundhog_mcp.document import _hidden_threats, _merged, _ranked, fetch_document
 from groundhog_mcp.engine import HiddenSpan, RenderedPage
 
@@ -1044,3 +1044,65 @@ async def test_a_blank_page_read_with_its_hidden_text_is_still_empty(
     fake_provider(make_page(html="<html><body></body></html>", text="\u200b"))
     doc = await fetch_document("https://ex.com/p", include_hidden=True)
     assert doc.status == "empty"
+
+
+async def test_a_page_over_the_html_limit_in_bytes_returns_no_content(fake_provider, make_page):
+    wide = "é" * (document.MAX_HTML_BYTES // 2 + 1)
+    assert len(wide) < document.MAX_HTML_BYTES < len(wide.encode())
+    fake_provider(make_page(html=f"<html><body><p>Cats {wide}</p></body></html>", text="Cats"))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_text_over_the_markdown_limit_returns_no_content(fake_provider, make_page):
+    fake_provider(make_page(text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1)))
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "too_large"
+    assert doc.markdown == ""
+
+
+async def test_an_oversized_challenge_page_keeps_its_own_status(fake_provider, make_page):
+    fake_provider(
+        make_page(
+            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+            retrieval_status="challenge",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    assert doc.status == "challenge"
+    assert doc.markdown == ""
+
+
+async def test_the_totals_count_every_finding_whatever_the_report_kept(fake_provider, make_page):
+    repeated = [{"reason": "display:none", "text": "same", "path": "d"}] * 3
+    distinct = [{"reason": "display:none", "text": f"p{i}", "path": "d"} for i in range(4)]
+    fake_provider(
+        make_page(
+            hidden=repeated + distinct,
+            spans_dropped=5,
+            text=f"Cats{ZERO_WIDTH} nap{TAG_I}.",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format="text", max_threats=2)
+
+    assert doc.hidden_found == 3 + 4 + 5
+    assert doc.characters_found == 2
+
+
+async def test_a_page_exactly_at_the_html_limit_is_read(fake_provider, make_page):
+    html = "<html><body><p>Cats nap.</p></body></html>"
+    padding = "<!--" + "x" * (document.MAX_HTML_BYTES - len(html) - 7) + "-->"
+    fake_provider(make_page(html=html[:-14] + padding + html[-14:], text="Cats nap."))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert len((html[:-14] + padding + html[-14:]).encode()) == document.MAX_HTML_BYTES
+    assert doc.status == "ok"

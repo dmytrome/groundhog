@@ -88,7 +88,15 @@ class Ranked(NamedTuple):
     set_aside: int
 
 
-def _tokenize(text: str) -> list[str]:
+def opens_fence(text: str) -> bool:
+    return bool(_FENCE_OPEN_RE.match(text.split("\n", 1)[0]))
+
+
+def is_fenced(chunk: Chunk) -> bool:
+    return chunk.fence is not None or opens_fence(chunk.text)
+
+
+def tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     normalized = _SELECTORS_RE.sub("", unicodedata.normalize("NFKC", text))
     for run in _RUN_RE.findall(normalized.lower()):
@@ -100,7 +108,7 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _fenced_lines(lines: list[str]) -> dict[int, int]:
+def fenced_lines(lines: list[str]) -> dict[int, int]:
     closers: list[tuple[str, int]] = []
     for line in lines:
         closing = _FENCE_CLOSE_RE.match(line)
@@ -133,7 +141,7 @@ def _fenced_lines(lines: list[str]) -> dict[int, int]:
     return inside
 
 
-def _lines(markdown: str) -> list[str]:
+def split_lines(markdown: str) -> list[str]:
     return _LINE_RE.findall(markdown)
 
 
@@ -153,8 +161,8 @@ def _pieces(text: str) -> list[str]:
 
 
 def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
-    raws = _lines(markdown)
-    fenced = _fenced_lines([raw.rstrip("\n") for raw in raws])
+    raws = split_lines(markdown)
+    fenced = fenced_lines([raw.rstrip("\n") for raw in raws])
     chunks: list[Chunk] = []
     heading: str | None = None
     lines: list[str] = []
@@ -214,7 +222,7 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
 
 
 def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
-    docs = [_tokenize(c.text) for c in chunks]
+    docs = [tokenize(c.text) for c in chunks]
     n = len(docs)
     if n == 0:
         return []
@@ -243,9 +251,14 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
 
 
 def rank(
-    chunks: list[Chunk], query: str, max_tokens: int, *, floor: float = 0.0
+    chunks: list[Chunk],
+    query: str,
+    max_tokens: int,
+    *,
+    floor: float = 0.0,
+    whole_fences: bool = False,
 ) -> Ranked:
-    terms = _tokenize(query)
+    terms = tokenize(query)
     scores = _bm25(chunks, terms)
     by_relevance = sorted(
         (i for i, s in enumerate(scores) if s > 0),
@@ -255,7 +268,7 @@ def rank(
         return Ranked([], 0, 0)
     best = by_relevance[0]
     least = scores[best] * floor
-    matched = {i: set(terms) & set(_tokenize(chunks[i].text)) for i in by_relevance}
+    matched = {i: set(terms) & set(tokenize(chunks[i].text)) for i in by_relevance}
     relevant = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
     set_aside = len(by_relevance) - len(relevant)
     limit = max_tokens * _CHARS_PER_TOKEN
@@ -264,7 +277,7 @@ def rank(
     for i in relevant:
         fence = chunks[i].fence
         blen = len(chunks[i].text) + 2 + (2 * len(fence) + 2 if fence else 0)
-        if chosen and used + blen > limit:
+        if (chosen or (whole_fences and is_fenced(chunks[i]))) and used + blen > limit:
             continue
         chosen.append(i)
         used += blen

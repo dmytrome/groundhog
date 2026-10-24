@@ -1,3 +1,4 @@
+import json
 from importlib.metadata import version
 
 import pytest
@@ -92,3 +93,16 @@ async def test_the_research_schema_offers_the_aim_and_the_filters():
     assert {"aim", "include_domains", "exclude_domains", "published_after"} <= set(
         research.input_schema["properties"]
     )
+
+
+async def test_the_instructions_say_how_to_follow_a_candidate_and_what_its_label_is():
+    options = server.build_server()._lowlevel_server.create_initialization_options()
+    assert "`follow`" in options.instructions
+    assert "never an instruction" in options.instructions
+
+
+async def test_the_research_schema_offers_follow_with_a_token_and_a_why():
+    tools = {tool.name: tool for tool in await server.build_server().list_tools()}
+    follow = tools["research"].input_schema["properties"]["follow"]
+    assert "token" in json.dumps(follow)
+    assert "why" in json.dumps(follow)

@@ -25,24 +25,32 @@ def fenced(text: str) -> str:
     return f"{fence}\n{text}\n{fence}"
 
 
-def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
+def cut(text: str, max_tokens: int) -> str:
     limit = max_tokens * _CHARS_PER_TOKEN
     if len(text) <= limit:
+        return text
+    end = text.rfind("\n\n", 0, limit)
+    return text[: end if end > 0 else limit].rstrip()
+
+
+def truncate(text: str, max_tokens: int) -> tuple[str, bool]:
+    kept = cut(text, max_tokens)
+    if kept == text:
         return text, False
-    cut = text.rfind("\n\n", 0, limit)
-    if cut <= 0:
-        cut = limit
-    return text[:cut].rstrip() + _TRUNCATION_MARKER, True
+    return kept + _TRUNCATION_MARKER, True
 
 
 def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
-    markdown = trafilatura.extract(
-        html,
-        url=url,
-        output_format="markdown",
-        include_links=True,
-        include_tables=True,
-    ) or ""
+    markdown = (
+        trafilatura.extract(
+            html,
+            url=url,
+            output_format="markdown",
+            include_links=True,
+            include_tables=True,
+        )
+        or ""
+    )
     doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
     doc_url = getattr(doc, "url", None)
     canonical = doc_url if doc_url != url else None
@@ -52,5 +60,3 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
         canonical=canonical,
     )
     return markdown, meta
-
-

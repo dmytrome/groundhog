@@ -1,11 +1,17 @@
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 
 class RateLimiter:
-    def __init__(self, min_delay: float, *, clock=time.monotonic, sleep=asyncio.sleep):
+    def __init__(
+        self,
+        min_delay: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ):
         self._min_delay = min_delay
         self._clock = clock
         self._sleep = sleep

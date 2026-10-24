@@ -1,12 +1,22 @@
 import asyncio
 import json
 import urllib.request
+from email.message import Message
+from typing import IO
 
 MAX_BYTES = 5 * 1024 * 1024
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         return None
 
 

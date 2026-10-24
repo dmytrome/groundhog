@@ -7,6 +7,8 @@ from . import classify, engine, extract, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
+MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 _ATTRIBUTE_REASON_PREFIX = "attribute:"
 _TEMPLATE_REASON = "template"
 _LOW_SIGNAL_CARRIERS = ("hidden_attribute", "hidden_template")
@@ -23,6 +25,8 @@ class Document:
     http_status: int | None
     threats: list[sanitize.Threat]
     provenance: provenance.Provenance
+    hidden_found: int = 0
+    characters_found: int = 0
 
 
 def _carrier_type(reason: str) -> sanitize.ThreatType:
@@ -119,6 +123,10 @@ def _capped(
     ]
 
 
+def _over(text: str, limit: int) -> bool:
+    return len(text) > limit or (len(text) * 4 > limit and len(text.encode()) > limit)
+
+
 async def fetch_document(
     url: str,
     *,
@@ -130,10 +138,12 @@ async def fetch_document(
     page = await provider.fetch(url, strip_hidden=not include_hidden)
     final_url = page.final_url or url
 
-    if format == "text":
+    too_large = _over(page.html, MAX_HTML_BYTES)
+    if format == "text" or too_large:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
+    too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
 
     scans = [sanitize.counts(markdown)]
     if markdown is not page.text:
@@ -151,11 +161,18 @@ async def fetch_document(
     status = page.retrieval_status
     if status == "ok" and not visible_text.strip():
         status = "empty"
-    threats = _capped(
-        char_threats,
+    if too_large:
+        markdown = ""
+        if status not in classify.NOT_CONTENT:
+            status = "too_large"
+    hidden = (
         _folded(_hidden_threats(page.hidden_spans))
         if page.isolated
-        else _hidden_threats(page.hidden_spans),
+        else _hidden_threats(page.hidden_spans)
+    )
+    threats = _capped(
+        char_threats,
+        hidden,
         max_threats,
         page.spans_dropped,
         trusted=page.isolated,
@@ -191,4 +208,6 @@ async def fetch_document(
         http_status=page.http_status,
         threats=threats,
         provenance=provenance.build(markdown, meta, page.meta),
+        hidden_found=sum(t.get("seen", 1) for t in hidden) + page.spans_dropped,
+        characters_found=len(char_threats),
     )

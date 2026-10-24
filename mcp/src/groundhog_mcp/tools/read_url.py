@@ -37,8 +37,8 @@ async def read_url(
         int | None,
         Field(
             description=(
-                "Token budget for the content. Omit to use the server's "
-                "GROUNDHOG_MAX_TOKENS (20000 by default). Must be positive."
+                "Token budget for the content. Omit it, or pass a value below 1, to use the "
+                "server's GROUNDHOG_MAX_TOKENS (20000 by default)."
             )
         ),
     ] = None,

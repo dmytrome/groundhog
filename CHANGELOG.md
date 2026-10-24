@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `research` offers `candidates`: links inside the returned passages, each with a signed
+  token. Passing tokens in `follow` reads those pages without searching, up to three links
+  deep from a search result. Tokens expire after 30 minutes or on restart.
+- The JSON text block of a `research` response never exceeds 40,000 characters; what does not
+  fit is counted in the receipt, and the safety counts of any source left out are kept.
+- A `too_large` status for pages over 5 MiB of HTML or 2 MiB of text, which return no content.
+
+### Fixed
+
+- A passage cut short to fit `max_tokens` reports its own end and id, and a code block is left
+  out rather than cut.
+- An empty `GROUNDHOG_BLOCK_PRIVATE_IPS` keeps the private-address guard on, and a value that
+  is not a boolean is refused instead of turning the guard off.
+- A page whose tab closed itself is returned instead of reported as an error, and a tab that
+  could not be attached is closed.
+- Grouping URLs by site uses the bundled public suffix list and never fetches it.
+- `GROUNDHOG_MAX_CONCURRENT_PAGES` below 1 is refused instead of hanging every fetch.
+
+### Changed
+
+- `research` refuses a query over 2,000 characters.
+- `markdown-it-py` is now a runtime dependency.
+
 ## [0.19.1] - 2026-10-23
 
 ### Fixed
