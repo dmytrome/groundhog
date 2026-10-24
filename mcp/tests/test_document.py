@@ -2,6 +2,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import pydantic_core
 import pytest
 
 from groundhog_mcp import document, extract, sanitize
@@ -1151,3 +1152,37 @@ async def test_the_count_by_type_covers_findings_the_report_left_out(
     assert doc.found_by_type["hidden_css"] == 300
     assert doc.found_by_type["hidden_unclassified"] == 50
     assert sum(doc.found_by_type.values()) == doc.hidden_found + doc.characters_found
+
+
+@pytest.mark.parametrize("format", ["text", "markdown"])
+async def test_a_page_holding_lone_surrogates_is_read_and_can_be_sent(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+    format: document.Format,
+) -> None:
+    fake_provider(
+        make_page(
+            [{"reason": "display:none", "text": "hid\ud800den", "path": "d"}],
+            title="Cats\udfff",
+            html="<html><body><p>Cats \ud800 nap.</p></body></html>",
+            text="Cats \ud800 nap.",
+        )
+    )
+
+    doc = await fetch_document("https://ex.com/p", format=format)
+
+    assert doc.status == "ok"
+    assert "�" in doc.markdown
+    pydantic_core.to_json(doc)
+
+
+async def test_a_large_page_holding_lone_surrogates_is_measured_not_crashed(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+) -> None:
+    broken = "\ud800" * (document.MAX_HTML_BYTES // 3 + 1)
+    fake_provider(make_page(html=f"<html><body><p>Cats {broken}</p></body></html>", text="Cats"))
+
+    doc = await fetch_document("https://ex.com/p")
+
+    assert doc.status == "too_large"

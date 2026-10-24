@@ -460,7 +460,7 @@ class RenderedPage:
 
 
 def _as_text(value: object) -> str:
-    return value if isinstance(value, str) else ""
+    return sanitize.well_formed(value) if isinstance(value, str) else ""
 
 
 def _clean_span(span: object) -> HiddenSpan | None:
