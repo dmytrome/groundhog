@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from collections import defaultdict, deque
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -26,7 +26,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Groundhog demo")
 _log = logging.getLogger("uvicorn.error")
 
-_hits: dict[str, deque[float]] = defaultdict(deque)
+_hits: dict[str, deque[float]] = {}
 _global_hits: deque[float] = deque()
 
 
@@ -39,7 +39,7 @@ def _admit(ip: str) -> str | None:
     now = time.monotonic()
     for key in [key for key, hits in _hits.items() if now - hits[-1] > _RATE_WINDOW_S]:
         del _hits[key]
-    mine = _hits[ip]
+    mine = _hits.get(ip, deque())
     _drain(mine, _RATE_WINDOW_S, now)
     _drain(_global_hits, _GLOBAL_WINDOW_S, now)
     if len(mine) >= _RATE_LIMIT_PER_HOUR:
@@ -50,6 +50,7 @@ def _admit(ip: str) -> str | None:
     if len(_global_hits) >= _GLOBAL_RATE_LIMIT_PER_MINUTE:
         return "Demo is busy right now, try again in a moment."
     mine.append(now)
+    _hits[ip] = mine
     _global_hits.append(now)
     return None
 

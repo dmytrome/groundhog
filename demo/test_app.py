@@ -76,3 +76,14 @@ def test_a_visitor_who_left_an_hour_ago_is_forgotten(monkeypatch: pytest.MonkeyP
     )
 
     assert set(app._hits) == {"203.0.113.10"}
+
+
+def test_a_visitor_turned_away_when_busy_does_not_break_the_demo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "_GLOBAL_RATE_LIMIT_PER_MINUTE", 1)
+
+    assert app._admit("203.0.113.1") is None
+    assert app._admit("203.0.113.2") is not None
+    assert app._admit("203.0.113.3") is not None
+    assert set(app._hits) == {"203.0.113.1"}
