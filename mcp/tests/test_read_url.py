@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
-from groundhog_mcp import document, engine, retrieval, safety, sanitize, server
+from groundhog_mcp import document, engine, extract, retrieval, safety, sanitize, server
 from groundhog_mcp.tools.read_url import read_url
 
 from .conftest import TAG_I, ZERO_WIDTH
@@ -166,7 +166,7 @@ async def test_a_match_describes_exactly_the_text_returned(
 
     result = await read_url("https://ex.com/p", format="text", query="cats nap", max_tokens=5)
 
-    kept = result["markdown"].removesuffix("\n\n[... truncated]")
+    kept = result["markdown"].removesuffix(extract.TRUNCATION_MARKER)
     [match] = result["matches"]
     assert text[match["offset"] : match["end"]] == kept
     assert match["clamped"] and result["truncated"]

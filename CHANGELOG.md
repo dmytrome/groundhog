@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format is based on
 ### Fixed
 
 - A `read_url` match cut short to fit `max_tokens` reports its own end and id and says
-  `clamped`, and a matching code block too large to return is left out instead of cut.
+  `clamped`, and matching code too large to return is left out instead of cut.
 
 ### Changed
 

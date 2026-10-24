@@ -105,7 +105,7 @@ container after removing an unreachable one named `groundhog-browser`.
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
 | `threats`    | What was stripped; empty when nothing was found |
-| `matches`    | With `query`: ranked passages with `id`, `heading`, `offset`, `end`, `score` and `clamped` (cut short to fit `max_tokens`). `offset` and `end` index the page's full markdown, and that span is exactly the text returned. A matching code block larger than `max_tokens` is left out, never cut: raise `max_tokens` |
+| `matches`    | With `query`: ranked passages with `id`, `heading`, `offset`, `end`, `score` and `clamped` (cut short to fit `max_tokens`). `offset` and `end` index the page's full markdown, and that span is the text returned; a piece of a long code block comes back with its fence lines added around it. Code is never cut mid-piece: a matching code block or piece larger than `max_tokens` is left out, and when nothing fits `markdown` is empty with `truncated` set, so raise `max_tokens` |
 | `set_aside`  | With `query`: scoring passages the relevance floor dropped |
 | `provenance` | Content hash, canonical URL, language, word count, author and date |
 
