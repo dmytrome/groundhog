@@ -85,3 +85,13 @@ def test_a_wall_clock_set_back_does_not_stretch_a_tokens_life(
     monkeypatch.setattr(tokens.time, "time", lambda: wall - 3600)
 
     assert _refusal(token) == "expired"
+
+
+@pytest.mark.parametrize("missing", ["issued_at", "issued", "depth", "fetch_url"])
+def test_a_signed_token_of_another_shape_is_refused(missing: str) -> None:
+    body, _ = _issue().split(".")
+    grant = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    del grant[missing]
+    reshaped = base64.urlsafe_b64encode(json.dumps(grant).encode()).rstrip(b"=")
+
+    assert _refusal(reshaped.decode() + "." + tokens._mac(reshaped)) == "invalid_token"

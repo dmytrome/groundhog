@@ -27,6 +27,19 @@ class Grant(TypedDict):
     label: str
 
 
+_SHAPE: dict[str, type | tuple[type, ...]] = {
+    "v": int,
+    "fetch_url": str,
+    "depth": int,
+    "max_depth": int,
+    "issued": (int, float),
+    "issued_at": (int, float),
+    "parent_source_url": str,
+    "parent_passage_id": str,
+    "label": str,
+}
+
+
 class TokenError(Exception):
     def __init__(self, reason: Refusal) -> None:
         super().__init__(reason)
@@ -69,7 +82,11 @@ def redeem(token: str) -> Grant:
         grant: Grant = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError as exc:
         raise TokenError("invalid_token") from exc
-    if grant.get("v") != _VERSION or not 0 < grant["depth"] <= grant["max_depth"] <= MAX_DEPTH:
+    if not isinstance(grant, dict) or any(
+        not isinstance(grant.get(name), kind) for name, kind in _SHAPE.items()
+    ):
+        raise TokenError("invalid_token")
+    if grant["v"] != _VERSION or not 0 < grant["depth"] <= grant["max_depth"] <= MAX_DEPTH:
         raise TokenError("invalid_token")
     awake, wall = time.monotonic() - grant["issued"], time.time() - grant["issued_at"]
     if not (0 <= awake <= TTL_S and wall <= TTL_S):
