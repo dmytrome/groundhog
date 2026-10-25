@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import functools
 import ipaddress
@@ -18,7 +19,7 @@ import tldextract
 import websockets
 from websockets.exceptions import WebSocketException
 
-from . import classify, http, safety, sanitize
+from . import classify, http, pdf, safety, sanitize
 from .cdp import CDPClient, CDPError
 from .config import Config, load_config
 from .detect_js import DETECT_AND_COLLECT
@@ -65,6 +66,18 @@ _ISOLATED_WORLD = "groundhog"
 _HEADLESS_TOKEN = "HeadlessChrome/"
 _IDENTITY_TIMEOUT_S = 10.0
 _IDENTITY_ATTEMPTS = 3
+_GUARDED_DOCUMENTS = {"urlPattern": "*", "resourceType": "Document"}
+_DOCUMENT_RESPONSES = {**_GUARDED_DOCUMENTS, "requestStage": "Response"}
+_PDF_TYPES = frozenset(
+    {
+        "application/pdf",
+        "application/x-pdf",
+        "application/acrobat",
+        "application/octet-stream",
+        "binary/octet-stream",
+    }
+)
+_PDF_READ_BYTES = 1 << 20
 _FRAME_AUTO_ATTACH = {
     "autoAttach": True,
     "waitForDebuggerOnStart": True,
@@ -429,9 +442,13 @@ class RenderedPage:
     spans_dropped: int
     http_status: int | None
     retrieval_status: classify.RetrievalStatus
+    pdf_pages: list[str] | None = None
 
     def __post_init__(self) -> None:
         self.html, self.text = _as_text(self.html), _as_text(self.text)
+        if self.pdf_pages is not None:
+            pages = self.pdf_pages if isinstance(self.pdf_pages, list) else []
+            self.pdf_pages = [_as_text(page) for page in pages]
         self.final_url = safety.safe_url(self.final_url) or ""
         self.title = sanitize.clean_field(self.title, sanitize.MAX_TITLE_CHARS) or ""
         dropped = self.spans_dropped
@@ -606,6 +623,20 @@ async def _read_identity(cdp: CDPClient) -> dict | None:
         await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
 
 
+def _on_paused(
+    cdp: CDPClient,
+    session_id: str,
+    decide: Callable[[CDPClient, str, dict], Awaitable[None]],
+    pending: set[asyncio.Task[None]],
+) -> list[Callable[[], None]]:
+    def on_paused(params: dict) -> None:
+        task = asyncio.ensure_future(decide(cdp, session_id, params))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    return [cdp.on_event("Fetch.requestPaused", session_id, on_paused)]
+
+
 class _PrivateDocuments:
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
@@ -613,6 +644,8 @@ class _PrivateDocuments:
         self._pending: set[asyncio.Task[None]] = set()
 
     async def _decide(self, cdp: CDPClient, session_id: str, params: dict) -> None:
+        if "responseStatusCode" in params or "responseErrorReason" in params:
+            return
         request = params.get("request")
         url = request.get("url") if isinstance(request, dict) else None
         refusal: str | None = "NameNotResolved"
@@ -649,12 +682,91 @@ class _PrivateDocuments:
             pass
 
     def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
-        def on_paused(params: dict) -> None:
-            task = asyncio.ensure_future(self._decide(cdp, session_id, params))
-            self._pending.add(task)
-            task.add_done_callback(self._pending.discard)
+        return _on_paused(cdp, session_id, self._decide, self._pending)
 
-        return [cdp.on_event("Fetch.requestPaused", session_id, on_paused)]
+
+@dataclass
+class _CapturedPdf:
+    url: str
+    status: int
+    response: dict[str, object]
+    data: bytes | None
+
+
+def _pdf_response(params: dict) -> dict[str, object] | None:
+    status = params.get("responseStatusCode")
+    if not isinstance(status, int) or not 200 <= status < 300:
+        return None
+    raw = params.get("responseHeaders")
+    headers = {
+        h["name"]: h["value"]
+        for h in (raw if isinstance(raw, list) else [])
+        if isinstance(h, dict) and isinstance(h.get("name"), str)
+        if isinstance(h.get("value"), str)
+    }
+    content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
+    if content_type.split(";", 1)[0].strip().lower() not in _PDF_TYPES:
+        return None
+    return {"status": status, "headers": headers}
+
+
+async def _read_body(cdp: CDPClient, session_id: str, request_id: object) -> bytes | None:
+    taken = await cdp.send(
+        "Fetch.takeResponseBodyAsStream", {"requestId": request_id}, session_id=session_id
+    )
+    handle = taken["stream"]
+    data = bytearray()
+    try:
+        while True:
+            chunk = await cdp.send(
+                "IO.read", {"handle": handle, "size": _PDF_READ_BYTES}, session_id=session_id
+            )
+            body = chunk.get("data", "")
+            data += base64.b64decode(body) if chunk.get("base64Encoded") else body.encode()
+            if len(data) > pdf.MAX_PDF_BYTES:
+                return None
+            if chunk.get("eof"):
+                return bytes(data)
+    finally:
+        with contextlib.suppress(CDPError, OSError, WebSocketException):
+            await cdp.send("IO.close", {"handle": handle}, session_id=session_id)
+
+
+class _PdfDocuments:
+    def __init__(self, frame_id: str) -> None:
+        self._frame_id = frame_id
+        self.captured: _CapturedPdf | None = None
+        self._pending: set[asyncio.Task[None]] = set()
+
+    async def _decide(self, cdp: CDPClient, session_id: str, params: dict) -> None:
+        if "responseStatusCode" not in params and "responseErrorReason" not in params:
+            return
+        request_id = params.get("requestId")
+        response = _pdf_response(params) if params.get("frameId") == self._frame_id else None
+        try:
+            if response is None:
+                await cdp.send(
+                    "Fetch.continueRequest", {"requestId": request_id}, session_id=session_id
+                )
+                return
+            data = await _read_body(cdp, session_id, request_id)
+            request = params.get("request")
+            url = request.get("url") if isinstance(request, dict) else None
+            self.captured = _CapturedPdf(
+                url if isinstance(url, str) else "", params["responseStatusCode"], response, data
+            )
+        except (CDPError, OSError, WebSocketException, KeyError, ValueError):
+            pass
+        if response is not None:
+            with contextlib.suppress(CDPError, OSError, WebSocketException):
+                await cdp.send(
+                    "Fetch.failRequest",
+                    {"requestId": request_id, "errorReason": "Aborted"},
+                    session_id=session_id,
+                )
+
+    def attach(self, cdp: CDPClient, session_id: str) -> list[Callable[[], None]]:
+        return _on_paused(cdp, session_id, self._decide, self._pending)
 
 
 class _ChildFrames:
@@ -806,9 +918,14 @@ class EngineProvider:
         if self._cfg.block_private_ips:
             await self._cdp.send(
                 "Fetch.enable",
-                {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
+                {"patterns": [_GUARDED_DOCUMENTS, _DOCUMENT_RESPONSES]},
                 session_id=sid,
             )
+        else:
+            with contextlib.suppress(CDPError):
+                await self._cdp.send(
+                    "Fetch.enable", {"patterns": [_DOCUMENT_RESPONSES]}, session_id=sid
+                )
         if self._identity is not None or self._cfg.block_private_ips:
             await self._cdp.send("Target.setAutoAttach", _FRAME_AUTO_ATTACH, session_id=sid)
 
@@ -819,11 +936,7 @@ class EngineProvider:
         if self._cfg.block_private_ips:
             unsubscribes += _PrivateDocuments(self._cfg).attach(cdp, sid)
             try:
-                await cdp.send(
-                    "Fetch.enable",
-                    {"patterns": [{"urlPattern": "*", "resourceType": "Document"}]},
-                    session_id=sid,
-                )
+                await cdp.send("Fetch.enable", {"patterns": [_GUARDED_DOCUMENTS]}, session_id=sid)
             except (CDPError, OSError, WebSocketException):
                 for unsubscribe in unsubscribes:
                     unsubscribe()
@@ -842,12 +955,14 @@ class EngineProvider:
             responses = _MainResponse()
             challenge_assets = _ChallengeAssets()
             private_documents = _PrivateDocuments(self._cfg)
+            pdf_documents = _PdfDocuments(tid)
             child_frames = _ChildFrames(self._prepare_frame, guarded=self._cfg.block_private_ips)
             unsubscribes = (
                 inflight.attach(self._cdp, sid)
                 + responses.attach(self._cdp, sid)
                 + challenge_assets.attach(self._cdp, sid)
                 + private_documents.attach(self._cdp, sid)
+                + pdf_documents.attach(self._cdp, sid)
                 + child_frames.attach(self._cdp, sid)
             )
             await self._prepare_tab(sid)
@@ -857,6 +972,10 @@ class EngineProvider:
             loaded = self._cdp.expect_event("Page.domContentEventFired", session_id=sid)
             try:
                 nav = await self._cdp.send("Page.navigate", {"url": url}, session_id=sid)
+                if pdf_documents.captured is not None:
+                    return await self._pdf_page(
+                        pdf_documents.captured, challenge_assets.seen, strip_hidden
+                    )
                 if nav.get("errorText"):
                     if private_documents.blocked:
                         raise safety.BlockedURLError(private_documents.blocked)
@@ -866,6 +985,10 @@ class EngineProvider:
             finally:
                 loaded.cancel()
             await self._settle(sid, inflight)
+            if pdf_documents.captured is not None:
+                return await self._pdf_page(
+                    pdf_documents.captured, challenge_assets.seen, strip_hidden
+                )
 
             ctx = await self._isolated_context(sid)
 
@@ -910,6 +1033,30 @@ class EngineProvider:
             if not self._cdp.closed:
                 with contextlib.suppress(CDPError, OSError, WebSocketException):
                     await self._cdp.send("Target.closeTarget", {"targetId": tid})
+
+    async def _pdf_page(
+        self, captured: _CapturedPdf, challenge_seen: bool, strip_hidden: bool
+    ) -> RenderedPage:
+        await safety.check_url(captured.url, self._cfg)
+        if captured.data is None:
+            found = pdf.PdfText("too_large")
+        else:
+            found = await pdf.read(captured.data, strip_hidden=strip_hidden)
+        status = classify.classify(captured.response, challenge_seen, None, None)
+        return RenderedPage(
+            html="",
+            text="\n\n".join(found.pages),
+            final_url=captured.url,
+            title=found.title or "",
+            isolated=True,
+            strip_incomplete=False,
+            spans_dropped=0,
+            http_status=captured.status,
+            retrieval_status=found.status if status == "ok" else status,
+            hidden_spans=list(found.hidden),
+            meta={"meta": {}, "lang": None, "canonical": None},
+            pdf_pages=found.pages,
+        )
 
     async def _settle(self, session_id: str, inflight: _InflightRequests) -> None:
         loop = asyncio.get_running_loop()

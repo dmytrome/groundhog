@@ -1,0 +1,71 @@
+{
+  "requestId": "interception-job-1847.0",
+  "request": {
+    "url": "https://www.copyright.gov/circs/circ01.pdf",
+    "method": "GET",
+    "headers": {
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "Upgrade-Insecure-Requests": "1",
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Linux\""
+    },
+    "initialPriority": "VeryHigh",
+    "referrerPolicy": "strict-origin-when-cross-origin"
+  },
+  "frameId": "CC91B579A3C022D9D37F10B62332F580",
+  "resourceType": "Document",
+  "responseStatusCode": 200,
+  "responseStatusText": "",
+  "responseHeaders": [
+    {
+      "name": "date",
+      "value": "Sun, 25 Oct 2026 19:27:59 GMT"
+    },
+    {
+      "name": "content-type",
+      "value": "application/pdf"
+    },
+    {
+      "name": "content-length",
+      "value": "111322"
+    },
+    {
+      "name": "server",
+      "value": "cloudflare"
+    },
+    {
+      "name": "last-modified",
+      "value": "Mon, 05 Dec 2022 12:21:23 GMT"
+    },
+    {
+      "name": "etag",
+      "value": "\"1b2da-5ef13b9c74104\""
+    },
+    {
+      "name": "accept-ranges",
+      "value": "bytes"
+    },
+    {
+      "name": "age",
+      "value": "3576"
+    },
+    {
+      "name": "expires",
+      "value": "Sun, 25 Oct 2026 23:27:59 GMT"
+    },
+    {
+      "name": "cache-control",
+      "value": "public, max-age=14400"
+    },
+    {
+      "name": "cf-cache-status",
+      "value": "HIT"
+    },
+    {
+      "name": "cf-ray",
+      "value": "a5039f2c6c507761-LHR"
+    }
+  ]
+}
