@@ -1884,3 +1884,19 @@ async def test_the_ceiling_holds_exactly_wherever_it_falls(
         result = await research("cats nap", max_tokens=50_000)
         sent = len(pydantic_core.to_json(result, fallback=str, indent=2).decode())
         assert ceiling - 500 < sent <= ceiling, ceiling
+
+
+async def test_a_source_section_is_found_by_the_words_in_its_heading(fake_web: FakeWeb) -> None:
+    url = "https://isric.org/soilgrids"
+    markdown = (
+        "# Soil data\n\n## SoilGrids 1.0\n\n"
+        "The first release mapped organic carbon on a coarse grid.\n\n"
+        "## Methods\n\nSamples were taken from field plots across the region."
+    )
+    fake_web([_hit(url)], {url: _doc(url, markdown)})
+
+    result = await research("SoilGrids 1.0")
+
+    assert [p["text"] for p in result["passages"]] == [
+        "The first release mapped organic carbon on a coarse grid."
+    ]

@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A `read_url` match cut short to fit `max_tokens` reports its own end and id and says
+  `clamped`, and matching code too large to return is left out instead of cut.
+
+### Changed
+
+- Passages are ranked on their section heading as well as their text, in `read_url` and
+  `research`, so a section found by the version or name in its heading is returned.
+- The README says what happens to `alt`, `aria-label`, `aria-description` and `title` text:
+  it never appears in `markdown` or the rendered text, and long values are reported.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added

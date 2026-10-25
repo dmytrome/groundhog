@@ -48,7 +48,9 @@ async def read_url(
             description=(
                 "When set, the content is built from the passages most relevant to it, and "
                 "`matches` lists each one's heading, offset and score for citation; it carries "
-                "no text. If nothing matches, `matches` is empty and the whole page is returned. "
+                "no text. If nothing matches, `matches` is empty and the whole page is returned; "
+                "if something matches but none of it fits `max_tokens` (a large code block), "
+                "`markdown` is empty and `truncated` is true, so raise `max_tokens`. "
                 "On a long page the relevant passages can still be most of it, so set "
                 "`max_tokens` to bound the read."
             )
@@ -92,11 +94,14 @@ async def read_url(
             source_url=doc.final_url,
             content_hash=doc.provenance["content_hash"],
         )
-        if selected_matches:
+        if selected_matches or selected_truncated:
             body, matches, truncated = selected, selected_matches, selected_truncated
             set_aside = selected_set_aside
-    body, over_budget = extract.truncate(body, limit)
-    truncated = truncated or over_budget
+    if matches:
+        body += extract.TRUNCATION_MARKER if truncated else ""
+    else:
+        body, over_budget = extract.truncate(body, limit)
+        truncated = truncated or over_budget
 
     return {
         "markdown": body,

@@ -1,8 +1,9 @@
 import hashlib
 import random
 import sys
+import time
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -624,3 +625,117 @@ def test_passages_are_read_in_document_order_when_the_later_one_ranks_higher() -
     body, matches, _, _ = _select(f"# Earlier\n\n{earlier}\n\n# Later\n\ncat", "cat", 1000)
     assert body == f"{earlier}\n\ncat"
     assert [match["heading"] for match in matches] == ["Earlier", "Later"]
+
+
+_LONG_PARAGRAPH = "# Cats\n\n" + "Cats nap often in the sun and dream of mice. " * 8
+
+
+def test_a_passage_longer_than_the_budget_is_clipped_and_says_so() -> None:
+    body, matches, truncated, _ = _select(_LONG_PARAGRAPH, "cats nap", 5)
+
+    assert len(body) <= 20
+    assert [m["end"] - m["offset"] for m in matches] == [len(body)]
+    assert _LONG_PARAGRAPH[matches[0]["offset"] : matches[0]["end"]] == body
+    assert matches[0]["clamped"] and truncated
+    content_hash = hashlib.sha256(_LONG_PARAGRAPH.encode()).hexdigest()
+    assert matches[0]["id"] == retrieval.passage_id(
+        "https://ex.com/p", content_hash, matches[0]["offset"], matches[0]["end"]
+    )
+
+
+def test_a_passage_that_does_not_fit_after_the_first_is_left_out() -> None:
+    markdown = "Cats nap, cats nap.\n\nCats nap. " + "Dogs run in the park. " * 20
+
+    body, matches, truncated, _ = _select(markdown, "cats nap", 8)
+
+    assert body == "Cats nap, cats nap."
+    assert [m["clamped"] for m in matches] == [False]
+    assert truncated
+
+
+def test_a_code_block_larger_than_the_budget_is_left_out_not_cut() -> None:
+    markdown = "Intro.\n\n```\n" + "needle()\n" * 20 + "```"
+
+    body, matches, truncated, _ = _select(markdown, "needle", 10)
+
+    assert (body, matches, truncated) == ("", [], True)
+
+
+def test_a_code_block_that_fits_exactly_is_returned_whole() -> None:
+    markdown = "Intro text.\n\n```\nneedle x\n```\n\nOutro."
+
+    body, matches, _, _ = _select(markdown, "needle", 4)
+
+    assert body == "```\nneedle x\n```"
+    assert len(body) == 16
+    assert not matches[0]["clamped"]
+
+
+def test_a_piece_of_a_long_code_block_fits_by_its_rendered_size() -> None:
+    lines = ["needle()"] + [f"filler_{i}()" for i in range(400)]
+    markdown = "```\n" + "\n".join(lines) + "\n```"
+    whole, _, _, _ = _select(markdown, "needle", 100_000)
+
+    body, matches, _, _ = _select(markdown, "needle", -(-len(whole) // 4))
+
+    assert body == whole
+    assert len(matches) == 1
+
+
+def _paragraphs(n: int) -> str:
+    return "\n\n".join(f"Cats nap in spot {i} of the garden." for i in range(n))
+
+
+def _one_block(n: int) -> str:
+    return "Cats nap in the garden today. " * (n * 80)
+
+
+def _seconds(markdown: str, max_tokens: int) -> float:
+    started = time.perf_counter()
+    _select(markdown, "cats nap garden", max_tokens)
+    return time.perf_counter() - started
+
+
+@pytest.mark.parametrize(
+    ("page", "small", "max_tokens"),
+    [(_paragraphs, 2_500, 50), (_paragraphs, 2_500, 20_000), (_one_block, 250, 1_000_000)],
+)
+def test_selecting_from_a_long_page_takes_linear_time(
+    page: Callable[[int], str], small: int, max_tokens: int
+) -> None:
+    _seconds(page(small), max_tokens)
+
+    assert _seconds(page(small * 4), max_tokens) < 10 * _seconds(page(small), max_tokens) + 0.1
+
+
+def test_the_body_never_exceeds_the_budget_whatever_the_page() -> None:
+    rng = random.Random(7)
+    for _ in range(300):
+        parts = []
+        for _ in range(rng.randint(1, 6)):
+            if rng.random() < 0.5:
+                lines = [f"needle_{i}()" if rng.random() < 0.3 else f"x_{i}()" for i in range(400)]
+                parts.append("```\n" + "\n".join(lines[: rng.randint(1, 400)]) + "\n```")
+            else:
+                parts.append("needle " * rng.randint(1, 900))
+        markdown = "\n\n".join(parts)
+        max_tokens = rng.randint(1, 3_000)
+
+        body, matches, _, _ = _select(markdown, "needle", max_tokens)
+
+        assert len(body) <= max_tokens * 4
+        assert (body == "") == (matches == [])
+
+
+_VERSIONED = (
+    "# Soil data\n\n## SoilGrids 1.0\n\n"
+    "The first release mapped organic carbon on a coarse grid.\n\n"
+    "## Methods\n\nSamples were taken from field plots across the region."
+)
+
+
+def test_a_section_is_found_by_the_words_in_its_heading() -> None:
+    body, matches, _, _ = _select(_VERSIONED, "SoilGrids 1.0", 10_000)
+
+    assert body == "The first release mapped organic carbon on a coarse grid."
+    assert [m["heading"] for m in matches] == ["SoilGrids 1.0"]

@@ -2,10 +2,10 @@ import hashlib
 import math
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple, TypedDict
 
-from . import sanitize
+from . import extract, sanitize
 
 _CHARS_PER_TOKEN = 4
 _UNSPACED = (
@@ -60,6 +60,7 @@ class Match(TypedDict):
     offset: int
     end: int
     score: float
+    clamped: bool
 
 
 def passage_id(source_url: str, content_hash: str, start: int, end: int) -> str:
@@ -221,8 +222,11 @@ def chunk_document(markdown: str, source: str | None = None) -> list[Chunk]:
     return chunks
 
 
-def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
-    docs = [tokenize(c.text) for c in chunks]
+def _scored_text(chunk: Chunk) -> str:
+    return (chunk.heading or "") + "\n" + chunk.text
+
+
+def _bm25(docs: list[list[str]], query_terms: list[str]) -> list[float]:
     n = len(docs)
     if n == 0:
         return []
@@ -250,6 +254,23 @@ def _bm25(chunks: list[Chunk], query_terms: list[str]) -> list[float]:
     return scores
 
 
+def relevant(chunks: list[Chunk], query: str, *, floor: float = 0.0) -> tuple[list[Scored], int]:
+    terms = tokenize(query)
+    docs = [tokenize(_scored_text(c)) for c in chunks]
+    scores = _bm25(docs, terms)
+    by_relevance = sorted(
+        (i for i, s in enumerate(scores) if s > 0),
+        key=lambda i: (-scores[i], i),
+    )
+    if not by_relevance:
+        return [], 0
+    best = by_relevance[0]
+    least = scores[best] * floor
+    matched = {i: set(terms) & set(docs[i]) for i in by_relevance}
+    kept = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
+    return [Scored(chunks[i], scores[i]) for i in kept], len(by_relevance) - len(kept)
+
+
 def rank(
     chunks: list[Chunk],
     query: str,
@@ -258,32 +279,18 @@ def rank(
     floor: float = 0.0,
     whole_fences: bool = False,
 ) -> Ranked:
-    terms = tokenize(query)
-    scores = _bm25(chunks, terms)
-    by_relevance = sorted(
-        (i for i, s in enumerate(scores) if s > 0),
-        key=lambda i: (-scores[i], i),
-    )
-    if not by_relevance:
-        return Ranked([], 0, 0)
-    best = by_relevance[0]
-    least = scores[best] * floor
-    matched = {i: set(terms) & set(tokenize(chunks[i].text)) for i in by_relevance}
-    relevant = [i for i in by_relevance if scores[i] >= least or matched[i] >= matched[best]]
-    set_aside = len(by_relevance) - len(relevant)
+    found, set_aside = relevant(chunks, query, floor=floor)
     limit = max_tokens * _CHARS_PER_TOKEN
-    chosen: list[int] = []
+    chosen: list[Scored] = []
     used = 0
-    for i in relevant:
-        fence = chunks[i].fence
-        blen = len(chunks[i].text) + 2 + (2 * len(fence) + 2 if fence else 0)
-        if (chosen or (whole_fences and is_fenced(chunks[i]))) and used + blen > limit:
+    for scored in found:
+        fence = scored.chunk.fence
+        blen = len(scored.chunk.text) + 2 + (2 * len(fence) + 2 if fence else 0)
+        if (chosen or (whole_fences and is_fenced(scored.chunk))) and used + blen > limit:
             continue
-        chosen.append(i)
+        chosen.append(scored)
         used += blen
-    return Ranked(
-        [Scored(chunks[i], scores[i]) for i in chosen], len(relevant) - len(chosen), set_aside
-    )
+    return Ranked(chosen, len(found) - len(chosen), set_aside)
 
 
 class _Span(NamedTuple):
@@ -293,34 +300,123 @@ class _Span(NamedTuple):
     score: float
 
 
-def _spans(chunks: list[Chunk], ranked: list[Scored]) -> list[_Span]:
-    block_end = {c.block: c.offset + len(c.text) for c in chunks}
-    block_start: dict[int, int] = {}
+class _Layout(NamedTuple):
+    starts: dict[int, int]
+    ends: dict[int, int]
+    fences: dict[int, str]
+
+
+def _layout(chunks: list[Chunk]) -> _Layout:
+    starts: dict[int, int] = {}
     fences: dict[int, str] = {}
     for c in chunks:
-        block_start.setdefault(c.block, c.offset)
+        starts.setdefault(c.block, c.offset)
         if c.fence is not None:
             fences[c.block] = c.fence
-    spans: list[_Span] = []
+    return _Layout(starts, {c.block: c.offset + len(c.text) for c in chunks}, fences)
+
+
+def _spans(layout: _Layout, ranked: list[Scored]) -> list[_Span]:
+    runs: list[list[Scored]] = []
     for s in sorted(ranked, key=lambda s: s.chunk.offset):
-        end = s.chunk.offset + len(s.chunk.text)
-        last = spans[-1] if spans else None
-        if last and last.chunk.block == s.chunk.block and last.end == s.chunk.offset:
-            spans[-1] = _Span(last.chunk, end, last.text + s.chunk.text, max(last.score, s.score))
+        last = runs[-1][-1].chunk if runs else None
+        if last and last.block == s.chunk.block and last.offset + len(last.text) == s.chunk.offset:
+            runs[-1].append(s)
         else:
-            spans.append(_Span(s.chunk, end, s.chunk.text, s.score))
-    fenced: list[_Span] = []
-    for span in spans:
-        text, fence = span.text, fences.get(span.chunk.block)
+            runs.append([s])
+    spans: list[_Span] = []
+    for run in runs:
+        first, final = run[0].chunk, run[-1].chunk
+        end = final.offset + len(final.text)
+        text, fence = "".join(s.chunk.text for s in run), layout.fences.get(first.block)
         if fence is not None:
             opening = _FENCE_OPEN_RE.match(fence)
             assert opening
-            if span.chunk.offset != block_start[span.chunk.block]:
+            if first.offset != layout.starts[first.block]:
                 text = fence + "\n" + text
-            if span.end != block_end[span.chunk.block]:
+            if end != layout.ends[first.block]:
                 text = text.rstrip("\n") + "\n" + opening.group(1)
-        fenced.append(span._replace(text=text))
-    return fenced
+        spans.append(_Span(first, end, text, max(s.score for s in run)))
+    return spans
+
+
+class _Run(NamedTuple):
+    block: int
+    start: int
+    end: int
+    chars: int
+    trail: int
+    blank: bool
+
+
+def _trailing(text: str) -> int:
+    return len(text) - len(text.rstrip("\n"))
+
+
+def _joined(left: _Run, right: _Run) -> _Run:
+    return _Run(
+        left.block,
+        left.start,
+        right.end,
+        left.chars + right.chars,
+        left.trail + right.trail if right.blank else right.trail,
+        left.blank and right.blank,
+    )
+
+
+def _rendered(layout: _Layout, run: _Run) -> int:
+    fence = layout.fences.get(run.block)
+    if fence is None:
+        return run.chars
+    opening = _FENCE_OPEN_RE.match(fence)
+    assert opening
+    size = run.chars
+    if run.start != layout.starts[run.block]:
+        size += len(fence) + 1
+    if run.end != layout.ends[run.block]:
+        size += 1 + len(opening.group(1)) - run.trail
+    return size
+
+
+def _fitted(chunks: list[Chunk], found: list[Scored], limit: int) -> tuple[list[_Span], bool, int]:
+    layout = _layout(chunks)
+    by_start: dict[int, _Run] = {}
+    by_end: dict[int, _Run] = {}
+    kept: list[Scored] = []
+    chars = count = 0
+    for scored in found:
+        c = scored.chunk
+        run = _Run(
+            c.block,
+            c.offset,
+            c.offset + len(c.text),
+            len(c.text),
+            _trailing(c.text),
+            _trailing(c.text) == len(c.text),
+        )
+        left, right = by_end.get(run.start), by_start.get(run.end)
+        left = left if left and left.block == c.block else None
+        right = right if right and right.block == c.block else None
+        merged = _joined(left, run) if left else run
+        merged = _joined(merged, right) if right else merged
+        was = sum(_rendered(layout, r) for r in (left, right) if r)
+        after = chars - was + _rendered(layout, merged), count + 1 - bool(left) - bool(right)
+        if after[0] + 2 * (after[1] - 1) <= limit:
+            for r in (left, right):
+                if r:
+                    del by_start[r.start], by_end[r.end]
+            by_start[merged.start] = by_end[merged.end] = merged
+            kept.append(scored)
+            chars, count = after
+            continue
+        if count or is_fenced(c):
+            continue
+        text = extract.cut(c.text, limit // _CHARS_PER_TOKEN)
+        if not text:
+            continue
+        clipped = scored._replace(chunk=replace(c, text=text))
+        return _spans(layout, [clipped]), True, 1
+    return _spans(layout, kept), False, len(kept)
 
 
 def select(
@@ -332,10 +428,10 @@ def select(
     content_hash: str,
 ) -> tuple[str, list[Match], bool, int]:
     chunks = chunk_document(markdown)
-    ranked, left_out, set_aside = rank(chunks, query, max_tokens, floor=RELEVANCE_FLOOR)
-    if not ranked:
+    found, set_aside = relevant(chunks, query, floor=RELEVANCE_FLOOR)
+    if not found:
         return "", [], False, 0
-    spans = _spans(chunks, ranked)
+    spans, clamped, admitted = _fitted(chunks, found, max_tokens * _CHARS_PER_TOKEN)
     matches: list[Match] = [
         {
             "id": passage_id(source_url, content_hash, span.chunk.offset, span.end),
@@ -343,8 +439,9 @@ def select(
             "offset": span.chunk.offset,
             "end": span.end,
             "score": round(span.score, SCORE_DIGITS),
+            "clamped": clamped,
         }
         for span in spans
     ]
     body = "\n\n".join(span.text for span in spans)
-    return body, matches, left_out > 0, set_aside
+    return body, matches, clamped or admitted < len(found), set_aside
