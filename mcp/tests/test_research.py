@@ -1426,7 +1426,7 @@ async def test_a_sources_counts_by_type_include_findings_its_report_left_out(
 
 
 async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -> None:
-    markdown = "# Cats\n\nCats nap, see [the pdf](https://study.org/sleep.PDF)."
+    markdown = "# Cats\n\nCats nap, see [the doc](https://study.org/sleep.DOCX)."
     doc = dataclasses.replace(
         _doc(_HUB, markdown),
         threats=[sanitize.notice("strip_incomplete", "rebuilt")],
@@ -1440,7 +1440,7 @@ async def test_a_card_carries_what_its_parent_page_reported(fake_web: FakeWeb) -
 
     result = await research("cats nap")
 
-    assert _cards_of(result)["https://study.org/sleep.PDF"]["flags"] == [
+    assert _cards_of(result)["https://study.org/sleep.DOCX"]["flags"] == [
         "parent_strip_incomplete",
         "parent_threats=4",
         "likely_unsupported_format",
