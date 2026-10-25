@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Text hidden by a `clip-path` that leaves nothing, `transform` or `scale` at 0, a `filter`
+  whose opacity is 0.05 or less, or a zero-height or zero-width box that clips its overflow
+  is stripped and reported, with
+  the reasons `clip-path`, `zero-scale`, `filter-opacity` and `overflow-clipped`.
+
+### Fixed
+
+- An open popover or modal dialog inside a hidden element is no longer stripped with it when
+  it is the only text there.
+
 ## [0.20.1] - 2026-10-25
 
 ### Fixed
