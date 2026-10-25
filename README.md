@@ -96,12 +96,12 @@ container after removing an unreachable one named `groundhog-browser`.
 
 | Key          | Meaning |
 | ------------ | ------- |
-| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown; `format` may be `markdown` or `text` |
+| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown; a PDF comes back as one `## Page N` section per page with its text fenced. `format` may be `markdown` or `text` |
 | `title`      | Page title |
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
 | `fetched_at` | UTC ISO-8601 timestamp |
-| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `too_large` means the page had over 5 MiB of HTML or 2 MiB of text and nothing of it is returned. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
+| `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `too_large` means the page had over 5 MiB of HTML or 2 MiB of text, or was a PDF over 10 MiB, 100 pages or 20 seconds of parsing, and nothing of it is returned. An encrypted or malformed PDF is `unsupported_content`. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
 | `threats`    | What was stripped; empty when nothing was found |
@@ -118,6 +118,9 @@ their overflow, transparent or background-coloured text, off-page positioning, c
 `<details>`, `<template>` content, and zero-width, bidi and Unicode Tag characters. A box
 whose only text is an open popover or modal dialog is kept, because that dialog still shows
 on screen; any other text in the box is stripped as usual. HTML comments are reported too.
+In a PDF, text drawn in render mode 3 or 7, which paints nothing, is stripped and reported
+as `hidden_pdf`. That includes the OCR layer of a scanned page, so a scan whose only text is
+that layer is `empty` unless you pass `include_hidden`.
 `include_hidden=True` keeps the text but still reports it. `alt`, `aria-label`,
 `aria-description` and `title` text never appears in `markdown` or the rendered text; values
 of 125 characters or more are reported as `hidden_attribute` with a capped excerpt, because
@@ -130,6 +133,7 @@ Treat `threats` as untrusted: its excerpts are page-authored text, cleaned and l
 | `hidden_css` | The hiding `reason`, an 80-character `excerpt` and the DOM `location` |
 | `hidden_attribute` | The same, for text in an `alt`, `aria-label`, `aria-description` or `title` attribute |
 | `hidden_template` | The same, for text inside a `<template>` |
+| `hidden_pdf` | The same, for text a PDF drew invisibly, with the page as its `location` |
 | `zero_width` / `bidi` / `tag` | A codepoint and count in `reason`, detected on the served text |
 | `report_truncated` | How many entries the cap dropped |
 | `final_url_suppressed` | The page's final URL was unusable and not returned |
@@ -299,6 +303,14 @@ page can't tamper with, and the live page is never modified. But:
   `text-indent`, `inset(50%)` (Chrome rounds the value it reports), `clip-path` in pixels or
   by `url()`/`path()`, 3D rotations, `mask-image`, text painted over by another element or
   stacked behind one, and a positioned child placed outside a box that clips its overflow.
+- In a PDF only render modes 3 and 7 are detected. White or tiny text, text outside the page,
+  hidden layers and text under an image pass, and every PDF result says so in a
+  `detection_degraded` notice. A PDF whose invisible text is in a font whose glyph widths
+  can't be measured (vertical writing, a CMap other than `Identity-H`) is
+  `unsupported_content` rather than returned with that text in it, unless you pass
+  `include_hidden`. Parsing runs in a child process that
+  is killed at 20 seconds. On Linux it's also held to 1 GiB of memory, and elsewhere only the
+  time cap and a 256 MiB cap on decoded streams bound it.
 - The invisible-character set is a denylist.
 - Closed shadow roots can't be read, so their content is left out entirely.
 - When the page wins the cascade against the hiding stylesheet or hides its own `<body>`, text

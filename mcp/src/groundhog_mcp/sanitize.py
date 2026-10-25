@@ -24,6 +24,7 @@ ThreatType = Literal[
     "hidden_css",
     "hidden_attribute",
     "hidden_template",
+    "hidden_pdf",
     "report_truncated",
     "final_url_suppressed",
     "detection_degraded",

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import dataclasses
 import io
 import json
@@ -634,7 +635,7 @@ async def test_a_tab_that_closes_mid_decision_does_not_raise():
 
 
 @pytest.mark.parametrize("block", [True, False])
-async def test_documents_are_intercepted_only_while_private_addresses_are_blocked(
+async def test_document_requests_are_intercepted_only_while_private_addresses_are_blocked(
     monkeypatch, block
 ):
     cdp = _ScriptedCDP(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
@@ -646,10 +647,182 @@ async def test_documents_are_intercepted_only_while_private_addresses_are_blocke
     cdp.calls.clear()
     await provider._prepare_tab("tab")
     fetch = [p for m, p, _ in cdp.calls if m == "Fetch.enable"]
-    assert fetch == (
-        [{"patterns": [{"urlPattern": "*", "resourceType": "Document"}]}] if block else []
+    requests = [{"urlPattern": "*", "resourceType": "Document"}] if block else []
+    responses = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"}]
+    assert fetch == [{"patterns": requests + responses}]
+
+
+
+_PDF_PAUSE = json.loads((_FIXTURES / "cdp_paused_pdf_response.json").read_text())
+_PDF_EOF = json.loads((_FIXTURES / "cdp_io_read_eof.json").read_text())
+_PDF_BYTES = (_FIXTURES / "copyright_circular_1.pdf").read_bytes()
+
+
+class _StreamingCDP(_ScriptedCDP):
+    def __init__(self, body: bytes) -> None:
+        super().__init__(_HEADLESS_UA, _HINTS)
+        encoded = base64.b64encode(body).decode()
+        self.chunks = [{"base64Encoded": True, "data": encoded, "eof": False}, _PDF_EOF]
+
+    async def send(self, method, params=None, session_id=None):
+        self.calls.append((method, params, session_id))
+        if method == "Fetch.takeResponseBodyAsStream":
+            return {"stream": "18"}
+        if method == "IO.read":
+            return self.chunks.pop(0)
+        return {}
+
+
+def _pdf_pause(**changes) -> dict:
+    return {**_PDF_PAUSE, **changes}
+
+
+async def test_a_top_frame_pdf_response_is_read_whole_then_its_navigation_is_stopped():
+    cdp = _StreamingCDP(_PDF_BYTES)
+    documents = engine._PdfDocuments(_PDF_PAUSE["frameId"])
+
+    await documents._decide(cdp, "tab", _PDF_PAUSE)
+
+    captured = documents.captured
+    assert captured is not None and captured.data == _PDF_BYTES
+    assert captured.url == "https://www.copyright.gov/circs/circ01.pdf"
+    assert captured.response["status"] == 200
+    assert captured.response["headers"]["content-type"] == "application/pdf"
+    assert cdp.methods() == [
+        "Fetch.takeResponseBodyAsStream",
+        "IO.read",
+        "IO.read",
+        "IO.close",
+        "Fetch.failRequest",
+    ]
+    assert cdp.calls[-1][1] == {"requestId": _PDF_PAUSE["requestId"], "errorReason": "Aborted"}
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"frameId": "CHILD-FRAME"},
+        {
+            "responseHeaders": [
+                {"name": "content-type", "value": "text/html; charset=utf-8"}
+                if h["name"] == "content-type"
+                else h
+                for h in _PDF_PAUSE["responseHeaders"]
+            ]
+        },
+        {"responseStatusCode": 404},
+    ],
+    ids=["child frame", "not a pdf", "error status"],
+)
+async def test_a_response_that_is_not_a_top_frame_pdf_is_let_through(changes):
+    cdp = _StreamingCDP(_PDF_BYTES)
+    documents = engine._PdfDocuments(_PDF_PAUSE["frameId"])
+
+    await documents._decide(cdp, "tab", _pdf_pause(**changes))
+
+    assert documents.captured is None
+    assert cdp.calls == [("Fetch.continueRequest", {"requestId": _PDF_PAUSE["requestId"]}, "tab")]
+
+
+@pytest.mark.parametrize("content_type", ["application/octet-stream", "application/x-pdf"])
+async def test_a_pdf_served_under_another_type_is_still_read(content_type):
+    headers = [
+        {"name": "content-type", "value": content_type} if h["name"] == "content-type" else h
+        for h in _PDF_PAUSE["responseHeaders"]
+    ]
+    documents = engine._PdfDocuments(_PDF_PAUSE["frameId"])
+
+    await documents._decide(_StreamingCDP(_PDF_BYTES), "tab", _pdf_pause(responseHeaders=headers))
+
+    assert documents.captured is not None and documents.captured.data == _PDF_BYTES
+
+
+async def test_a_browser_that_refuses_response_interception_still_opens_unguarded_tabs(
+    monkeypatch,
+):
+    class NoFetch(_ScriptedCDP):
+        async def send(self, method, params=None, session_id=None):
+            if method == "Fetch.enable":
+                raise engine.CDPError("Fetch.enable is not allowed")
+            return await super().send(method, params, session_id)
+
+    cdp = NoFetch(_HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"), _HINTS)
+    monkeypatch.setattr(engine, "CDPClient", lambda ws_url: cdp)
+    provider = engine.EngineProvider(
+        _cfg(cdp_url="ws://127.0.0.1:9/devtools/browser/x", block_private_ips=False)
+    )
+    await provider.start()
+
+    await provider._prepare_tab("tab")
+
+    assert "Network.enable" in cdp.methods()
+
+
+async def test_a_pdf_over_the_byte_cap_is_captured_without_its_body(monkeypatch):
+    monkeypatch.setattr(engine.pdf, "MAX_PDF_BYTES", 1000)
+    cdp = _StreamingCDP(_PDF_BYTES)
+    documents = engine._PdfDocuments(_PDF_PAUSE["frameId"])
+
+    await documents._decide(cdp, "tab", _PDF_PAUSE)
+
+    assert documents.captured is not None and documents.captured.data is None
+    assert cdp.methods() == [
+        "Fetch.takeResponseBodyAsStream",
+        "IO.read",
+        "IO.close",
+        "Fetch.failRequest",
+    ]
+
+
+async def test_each_paused_stage_is_decided_by_one_handler_only():
+    cdp = _StreamingCDP(_PDF_BYTES)
+
+    await engine._PrivateDocuments(_cfg())._decide(cdp, "tab", _PDF_PAUSE)
+    await engine._PdfDocuments(_PDF_PAUSE["frameId"])._decide(
+        cdp, "tab", _paused("https://example.com/")
     )
 
+    assert cdp.calls == []
+
+
+async def _pdf_page(monkeypatch, data: bytes | None, *, challenge_seen: bool = False):
+    async def public(url, cfg):
+        return None
+
+    monkeypatch.setattr(engine.safety, "check_url", public)
+    documents = engine._PdfDocuments(_PDF_PAUSE["frameId"])
+    await documents._decide(_StreamingCDP(_PDF_BYTES), "tab", _PDF_PAUSE)
+    captured = dataclasses.replace(documents.captured, data=data)
+    provider = engine.EngineProvider(_cfg())
+    return await provider._pdf_page(captured, challenge_seen, strip_hidden=True)
+
+
+async def test_a_captured_pdf_becomes_a_page_of_its_text(monkeypatch):
+    page = await _pdf_page(monkeypatch, _PDF_BYTES)
+
+    assert page.retrieval_status == "ok" and page.http_status == 200
+    assert page.final_url == "https://www.copyright.gov/circs/circ01.pdf"
+    assert page.title == "Circular 1 Copyright Basics"
+    assert page.pdf_pages is not None and len(page.pdf_pages) == 10
+    assert page.text == "\n\n".join(page.pdf_pages) and page.html == ""
+
+
+@pytest.mark.parametrize(
+    "data, challenge_seen, status",
+    [
+        (None, False, "too_large"),
+        (b"<html>not a pdf</html>", False, "unsupported_content"),
+        (b" " * 2000 + _PDF_BYTES, False, "ok"),
+        (_PDF_BYTES, True, "challenge"),
+    ],
+    ids=["over the cap", "not a pdf", "leading junk", "challenge"],
+)
+async def test_a_captured_pdf_that_cannot_be_read_says_why(
+    monkeypatch, data, challenge_seen, status
+):
+    page = await _pdf_page(monkeypatch, data, challenge_seen=challenge_seen)
+
+    assert page.retrieval_status == status
 
 def test_a_chrome_path_that_is_not_an_executable_is_reported_as_not_found(tmp_path):
     missing = tmp_path / "no-chrome"

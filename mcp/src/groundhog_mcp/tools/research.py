@@ -49,7 +49,7 @@ _CARDS_OVER_PASSAGES = 4
 _LINKS_PER_PAGE = 500
 _VARIANTS_PER_PATTERN = 10
 _UNSUPPORTED_EXTENSIONS = frozenset(
-    "pdf zip gz tgz tar rar 7z doc docx xls xlsx ppt pptx epub mp3 mp4 mov avi png jpg jpeg "
+    "zip gz tgz tar rar 7z doc docx xls xlsx ppt pptx epub mp3 mp4 mov avi png jpg jpeg "
     "gif svg webp exe dmg iso".split()
 )
 _ACTION_RE = re.compile(
