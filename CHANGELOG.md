@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `read_url` and `research` read PDFs: the browser's own response is read page by page, and
+  text drawn in render mode 3 or 7 is stripped and reported as `hidden_pdf`. PDFs over 10 MiB
+  or 100 pages are `too_large`; encrypted or malformed ones are `unsupported_content`.
+
 ## [0.21.0] - 2026-10-25
 
 ### Added
