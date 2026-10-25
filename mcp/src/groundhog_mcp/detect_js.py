@@ -207,7 +207,141 @@ DETECT_AND_COLLECT = r"""
     range.selectNodeContents(el);
     return range.getClientRects().length > 0;
   };
-  const isHidden = (el) => {
+  const composedParent = (n) => {
+    if (n.assignedSlot) return n.assignedSlot;
+    const p = n.parentNode;
+    return p && p.nodeType === 11 ? p.host || null : p;
+  };
+  let topLayer = null;
+  const topLayerOf = () => {
+    if (topLayer) return topLayer;
+    const tops = new Set();
+    const holders = new Set();
+    const roots = [document];
+    for (let i = 0; i < roots.length; i++) {
+      for (const el of roots[i].querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+      for (const top of roots[i].querySelectorAll(':popover-open, :modal, :fullscreen')) {
+        if (!top.checkVisibility({ checkVisibilityCSS: true })) continue;
+        tops.add(top);
+        for (let n = composedParent(top); n && n.nodeType === 1; n = composedParent(n)) {
+          holders.add(n);
+        }
+      }
+    }
+    topLayer = { tops, holders, outside: new Map() };
+    return topLayer;
+  };
+  const SILENT_TAGS = new Set(['script', 'style', 'template', 'noscript']);
+  const textOutside = (layer, n) => {
+    if (n.nodeType === 3) return !!n.data.trim();
+    if (n.nodeType !== 1 || layer.tops.has(n) || SILENT_TAGS.has(n.localName)) return false;
+    if (layer.outside.has(n)) return layer.outside.get(n);
+    let found = false;
+    for (const child of childrenOf(n)) if ((found = textOutside(layer, child))) break;
+    layer.outside.set(n, found);
+    return found;
+  };
+  const shieldsTopLayer = (el) => {
+    const layer = topLayerOf();
+    return layer.holders.has(el) && !textOutside(layer, el);
+  };
+  const TABLE_INTERNAL = new Set([
+    'table-row', 'table-row-group', 'table-header-group', 'table-footer-group',
+    'table-column', 'table-column-group', 'table-cell', 'table-caption',
+  ]);
+  const OVERFLOW_BOXES = new Set([
+    'block', 'flow-root', 'inline-block', 'list-item', 'flex', 'inline-flex', 'grid', 'inline-grid',
+  ]);
+  const ALPHA_KEEPING_FILTERS = new Set([
+    'opacity', 'blur', 'brightness', 'contrast', 'grayscale', 'hue-rotate', 'invert', 'saturate',
+    'sepia', 'drop-shadow',
+  ]);
+  const isZero = (t) => t === '0px' || t === '0%';
+  const percentOf = (t) => {
+    if (t === '0px') return 0;
+    return /^-?\d*\.?\d+(e[+-]?\d+)?%$/.test(t) ? parseFloat(t) : null;
+  };
+  const leastOf = (v) => (v === 0 ? 0 : v - 0.5 * 10 ** (Math.floor(Math.log10(Math.abs(v))) - 5));
+  const emptyClipPath = (value) => {
+    let m = /^(circle|ellipse)\((.*)\)$/.exec(value);
+    if (m) return m[2].split(/\s*\bat\b/)[0].trim().split(/\s+/).some(isZero);
+    m = /^polygon\((?:(?:nonzero|evenodd),\s*)?(.*)\)$/.exec(value);
+    if (m) {
+      const points = m[1].split(',').map((p) => p.trim().split(/\s+/));
+      if (points.some((p) => p.length !== 2)) return false;
+      return points.every((p) => isZero(p[0])) || points.every((p) => isZero(p[1]));
+    }
+    m = /^inset\((.*)\)$/.exec(value);
+    if (!m) return false;
+    const sides = m[1].split(/\s+round\s+/)[0].trim().split(/\s+/).map(percentOf);
+    if (!sides.length || sides.length > 4 || sides.some((v) => v === null)) return false;
+    const [t, r = t, b = t, l = r] = sides;
+    return leastOf(t) + leastOf(b) >= 100 || leastOf(l) + leastOf(r) >= 100;
+  };
+  const FILTER_FUNCTION = /[a-z-]+\((?:[^()]|\([^()]*\))*\)/g;
+  const filterAlpha = (value) => {
+    const fns = value.match(FILTER_FUNCTION) || [];
+    if (value.replace(FILTER_FUNCTION, '').trim()) return 1;
+    let alpha = 1;
+    for (const f of fns) {
+      const name = f.slice(0, f.indexOf('('));
+      if (!ALPHA_KEEPING_FILTERS.has(name)) return 1;
+      if (name !== 'opacity') continue;
+      const arg = f.slice(name.length + 1, -1).trim();
+      const v = arg.endsWith('%') ? parseFloat(arg) / 100 : parseFloat(arg);
+      if (Number.isNaN(v)) return 1;
+      alpha *= v;
+    }
+    return alpha;
+  };
+  const collapsedTransform = (cs) => {
+    if (cs.display === 'inline' || cs.transformStyle !== 'flat') return false;
+    const [x, y = x] = cs.scale.split(/\s+/);
+    if (x === '0' || y === '0') return true;
+    const m = /^matrix\((.*)\)$/.exec(cs.transform);
+    if (!m) return false;
+    const [a, b, c, d] = m[1].split(/,\s*/);
+    return (a === '0' && b === '0') || (c === '0' && d === '0');
+  };
+  const generatedPositions = (n) => ['::before', '::after']
+    .map((pseudo) => getComputedStyle(n, pseudo))
+    .filter((ps) => ps.content !== 'none' && ps.content !== 'normal')
+    .map((ps) => ps.position);
+  const escapeMemo = new Map();
+  const positionsWithin = (n) => {
+    if (escapeMemo.has(n)) return escapeMemo.get(n);
+    const found = new Set([getComputedStyle(n).position, ...generatedPositions(n)]);
+    for (const child of childrenOf(n)) {
+      if (child.nodeType === 1) for (const p of positionsWithin(child)) found.add(p);
+    }
+    escapeMemo.set(n, found);
+    return found;
+  };
+  const escapesClip = (el, cs) => {
+    const found = new Set(generatedPositions(el));
+    for (const child of childrenOf(el)) {
+      if (child.nodeType === 1) for (const p of positionsWithin(child)) found.add(p);
+    }
+    return found.has('fixed') || (found.has('absolute') && cs.position === 'static');
+  };
+  const clipsToNothing = (cs) => {
+    const clips = (o) => o === 'hidden' || o === 'auto' || o === 'scroll'
+      || (o === 'clip' && cs.overflowClipMargin === '0px');
+    const flatY = cs.height === '0px' && cs.paddingTop === '0px' && cs.paddingBottom === '0px';
+    const flatX = cs.width === '0px' && cs.paddingLeft === '0px' && cs.paddingRight === '0px';
+    return OVERFLOW_BOXES.has(cs.display) && cs.filter === 'none'
+      && ((clips(cs.overflowY) && flatY) || (clips(cs.overflowX) && flatX));
+  };
+  const paintedAway = (el, cs) => {
+    if (el === document.body || el === document.documentElement) return null;
+    if (TABLE_INTERNAL.has(cs.display)) return null;
+    if (emptyClipPath(cs.clipPath)) return 'clip-path';
+    if (filterAlpha(cs.filter) <= ALPHA_THRESHOLD) return 'filter-opacity';
+    if (collapsedTransform(cs)) return 'zero-scale';
+    if (clipsToNothing(cs) && !escapesClip(el, cs)) return 'overflow-clipped';
+    return null;
+  };
+  const hidingReason = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden')
       return 'display:none/visibility:hidden';
@@ -246,7 +380,12 @@ DETECT_AND_COLLECT = r"""
     }
     if (!noBox && !optionLike && el.checkVisibility && !el.checkVisibility())
       return 'not-rendered';
+    if (!noBox && !optionLike && el.getClientRects().length) return paintedAway(el, cs);
     return null;
+  };
+  const isHidden = (el) => {
+    const reason = hidingReason(el);
+    return reason && shieldsTopLayer(el) ? null : reason;
   };
   const root = document.body || document.documentElement;
   const toRemove = [];

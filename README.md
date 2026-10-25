@@ -111,9 +111,13 @@ container after removing an unreachable one named `groundhog-browser`.
 
 Stripped by default: `display:none`, `visibility:hidden`, `content-visibility:hidden`,
 `opacity ≤ 0.05`, `font-size < 4px`, zero-size and `display:contents` boxes that render
-nothing, `.sr-only`-style sub-pixel boxes, `clip: rect(...)`, transparent or
-background-coloured text, off-page positioning, collapsed `<details>`, `<template>` content,
-and zero-width, bidi and Unicode Tag characters. HTML comments are reported too.
+nothing, `.sr-only`-style sub-pixel boxes, `clip: rect(...)`, a `clip-path` that leaves
+nothing (`circle(0)`, `inset(100%)`, a polygon on one line), `transform: scale(0)` on either
+axis, a `filter` whose opacity is 0.05 or less, zero-height or zero-width boxes that clip
+their overflow, transparent or background-coloured text, off-page positioning, collapsed
+`<details>`, `<template>` content, and zero-width, bidi and Unicode Tag characters. A box
+whose only text is an open popover or modal dialog is kept, because that dialog still shows
+on screen; any other text in the box is stripped as usual. HTML comments are reported too.
 `include_hidden=True` keeps the text but still reports it. `alt`, `aria-label`,
 `aria-description` and `title` text never appears in `markdown` or the rendered text; values
 of 125 characters or more are reported as `hidden_attribute` with a capped excerpt, because
@@ -290,8 +294,11 @@ addresses is intended.
 An empty `threats` list isn't a clean bill of health. Detection runs in an isolated world the
 page can't tamper with, and the live page is never modified. But:
 
-- Thresholds can be sat just inside (`opacity: 0.06`), and unmodelled techniques such as
-  `clip-path`, `text-indent` or `transform: scale(0)` pass.
+- Thresholds can be sat just inside (`opacity: 0.06`, `transform: scale(0.01)`), and a
+  style is only treated as hiding when it provably paints nothing, so these pass:
+  `text-indent`, `inset(50%)` (Chrome rounds the value it reports), `clip-path` in pixels or
+  by `url()`/`path()`, 3D rotations, `mask-image`, text painted over by another element or
+  stacked behind one, and a positioned child placed outside a box that clips its overflow.
 - The invisible-character set is a denylist.
 - Closed shadow roots can't be read, so their content is left out entirely.
 - When the page wins the cascade against the hiding stylesheet or hides its own `<body>`, text
