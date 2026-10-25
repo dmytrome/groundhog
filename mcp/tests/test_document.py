@@ -281,6 +281,10 @@ _HIDING_REASONS = [
     "color-contrast<1.15",
     "not-rendered",
     "html-comment",
+    "clip-path",
+    "filter-opacity",
+    "zero-scale",
+    "overflow-clipped",
 ]
 
 
@@ -450,7 +454,7 @@ _LOW_SIGNAL_REASONS = [
 def _collector_reasons() -> tuple[set[str], set[str]]:
     source = (Path(__file__).resolve().parents[1] / "src/groundhog_mcp/detect_js.py").read_text()
     consts = dict(re.findall(r"const (\w+) = ([\d.]+);", source))
-    body = source[source.index("const isHidden = ") : source.index("const root = document.body")]
+    body = source[source.index("const paintedAway = ") : source.index("const root = document.body")]
     hiding = {
         literal + consts.get(name, "")
         for literal, name in re.findall(r"return '([^']+)'(?: \+ (\w+))?", body)
@@ -523,7 +527,7 @@ async def test_a_research_sources_budget_reports_half_its_slots_worth_of_reasons
     notice = [t for t in doc.threats if t["type"] == "report_truncated"]
     assert len(findings) == 10
     assert len({t["reason"] for t in findings}) == 5
-    assert notice and "382 further threats not reported" in notice[0]["reason"]
+    assert notice and f"{len(spans) - 10} further threats not reported" in notice[0]["reason"]
 
 
 async def test_a_research_budget_reports_ten_of_eleven_and_counts_the_one_it_drops(
