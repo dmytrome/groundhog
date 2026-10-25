@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from itertools import zip_longest
 from typing import Literal
 
-from . import classify, engine, extract, provenance, sanitize
+from . import classify, engine, extract, pdf, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
@@ -36,6 +36,8 @@ def _carrier_type(reason: str) -> sanitize.ThreatType:
         return "hidden_attribute"
     if reason == _TEMPLATE_REASON:
         return "hidden_template"
+    if reason == pdf.HIDDEN_REASON:
+        return "hidden_pdf"
     return "hidden_css"
 
 
@@ -63,10 +65,11 @@ def _merged(
 
 
 def _folded(threats: list[sanitize.Threat]) -> list[sanitize.Threat]:
-    first: dict[tuple[str, str], sanitize.Threat] = {}
+    first: dict[tuple[str, str, str | None], sanitize.Threat] = {}
     out: list[sanitize.Threat] = []
     for threat in threats:
-        key = (threat["reason"], threat["excerpt"])
+        page = threat["location"] if threat["type"] == "hidden_pdf" else None
+        key = (threat["reason"], threat["excerpt"], page)
         already = first.get(key)
         if already is None:
             first[key] = threat
@@ -125,6 +128,14 @@ def _capped(
     ]
 
 
+def _pdf_markdown(pages: list[str]) -> str:
+    return "\n\n".join(
+        f"## Page {number}\n\n{extract.fenced(text)}"
+        for number, text in enumerate(pages, 1)
+        if text.strip()
+    )
+
+
 def by_type(threats: list[sanitize.Threat]) -> Counter[str]:
     found: Counter[str] = Counter()
     for threat in threats:
@@ -150,6 +161,8 @@ async def fetch_document(
     too_large = _over(page.html, MAX_HTML_BYTES)
     if format == "text" or too_large:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
+    elif page.pdf_pages is not None:
+        markdown, meta = _pdf_markdown(page.pdf_pages), extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
     too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
@@ -193,6 +206,13 @@ async def fetch_document(
             sanitize.notice(
                 "detection_degraded",
                 "hidden-text detection ran in the page's own JavaScript world",
+            )
+        )
+    if page.pdf_pages is not None:
+        threats.append(
+            sanitize.notice(
+                "detection_degraded",
+                "in a PDF only text drawn invisibly (render modes 3 and 7) is detected",
             )
         )
     if page.strip_incomplete:
