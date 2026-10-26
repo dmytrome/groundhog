@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from markdown_it import MarkdownIt
 
 from groundhog_mcp.extract import fenced, to_document, truncate
@@ -38,6 +40,34 @@ def test_to_document_returns_markdown_and_metadata():
     assert meta.author == "Jane Doe"
     assert meta.published == "2024-01-02"
     assert meta.canonical == "https://ex.com/canon"
+
+
+def test_to_document_keeps_metadata_without_extractable_content() -> None:
+    html = META_HTML.partition("<body>")[0] + "<body></body></html>"
+
+    markdown, meta = to_document(html, "https://ex.com/x")
+
+    assert markdown == ""
+    assert meta.author == "Jane Doe"
+    assert meta.published == "2024-01-02"
+    assert meta.canonical == "https://ex.com/canon"
+
+
+def test_to_document_returns_captured_article_metadata() -> None:
+    html = (Path(__file__).parent / "fixtures" / "nist_pqc_standards.html").read_text(
+        encoding="utf-8"
+    )
+    url = (
+        "https://www.nist.gov/news-events/news/2024/08/"
+        "nist-releases-first-3-finalized-post-quantum-encryption-standards"
+    )
+
+    markdown, meta = to_document(html, url + "?ref=test")
+
+    assert "finalized its principal set of encryption algorithms" in markdown
+    assert meta.author == "Chad Boutin"
+    assert meta.published == "2024-08-13"
+    assert meta.canonical == url
 
 
 def test_to_document_metadata_nulls_when_absent():

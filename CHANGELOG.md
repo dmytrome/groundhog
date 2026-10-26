@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Page metadata is read without a second full extraction, so large pages are processed
+  faster. Author, publication date and canonical URL are kept even when no content is extracted.
+
 ## [0.22.0] - 2026-10-25
 
 The 0.21.0 package on PyPI was built from the wrong commit and is yanked. Its GitHub release
