@@ -27,6 +27,12 @@ from .ratelimit import RateLimiter
 
 _GOTO_TIMEOUT_S = 60.0
 _DETECT_TIMEOUT_S = 15.0
+_COLLECT_CAPS: dict[str, int] = {
+    "html": sanitize.MAX_HTML_BYTES + 1,
+    "text": sanitize.MAX_MARKDOWN_BYTES + 1,
+    "field": sanitize.MAX_URL_CHARS + 1,
+    "meta": 256,
+}
 _EVAL_TIMEOUT_S = 20.0
 _SETTLE_POLL_S = 0.25
 _SETTLE_QUIET_S = 1.0
@@ -998,7 +1004,9 @@ class EngineProvider:
 
             final_url = _as_text(await self._eval(sid, "document.location.href", ctx))
             await safety.check_url(final_url, self._cfg)
-            detect_expr = f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)})"
+            detect_expr = (
+                f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)}, {json.dumps(_COLLECT_CAPS)})"
+            )
             try:
                 collected = await asyncio.wait_for(
                     self._eval(sid, detect_expr, ctx), timeout=_DETECT_TIMEOUT_S

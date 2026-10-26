@@ -1414,6 +1414,13 @@ async def test_a_session_command_timeout_leaves_the_client_usable(
             await client.close()
 
 
+def test_the_collector_reply_fits_within_the_cdp_frame_limit() -> None:
+    caps = engine._COLLECT_CAPS
+    span_chars = 400 * (200 + caps["field"] + 80)
+    meta_chars = caps["meta"] * 2 * caps["field"]
+    chars = caps["html"] + caps["text"] + span_chars + meta_chars + 3 * caps["field"]
+    assert chars * 6 + 64 * 1024 < cdp._MAX_FRAME_BYTES
+
 
 class _DisconnectedOnNavigate(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:

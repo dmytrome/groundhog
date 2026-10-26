@@ -1052,8 +1052,8 @@ async def test_a_blank_page_read_with_its_hidden_text_is_still_empty(
 
 
 async def test_a_page_over_the_html_limit_in_bytes_returns_no_content(fake_provider, make_page):
-    wide = "é" * (document.MAX_HTML_BYTES // 2 + 1)
-    assert len(wide) < document.MAX_HTML_BYTES < len(wide.encode())
+    wide = "é" * (sanitize.MAX_HTML_BYTES // 2 + 1)
+    assert len(wide) < sanitize.MAX_HTML_BYTES < len(wide.encode())
     fake_provider(make_page(html=f"<html><body><p>Cats {wide}</p></body></html>", text="Cats"))
 
     doc = await fetch_document("https://ex.com/p")
@@ -1063,7 +1063,7 @@ async def test_a_page_over_the_html_limit_in_bytes_returns_no_content(fake_provi
 
 
 async def test_text_over_the_markdown_limit_returns_no_content(fake_provider, make_page):
-    fake_provider(make_page(text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1)))
+    fake_provider(make_page(text="Cats nap. " * (sanitize.MAX_MARKDOWN_BYTES // 10 + 1)))
 
     doc = await fetch_document("https://ex.com/p", format="text")
 
@@ -1071,10 +1071,26 @@ async def test_text_over_the_markdown_limit_returns_no_content(fake_provider, ma
     assert doc.markdown == ""
 
 
+@pytest.mark.parametrize("extra", [0, 1])
+async def test_text_cut_at_the_collector_limit_is_reported_as_not_scanned(
+    fake_provider: Callable[[RenderedPage], None],
+    make_page: Callable[..., RenderedPage],
+    extra: int,
+) -> None:
+    fake_provider(make_page(text="x" * (sanitize.MAX_MARKDOWN_BYTES + extra)))
+
+    doc = await fetch_document("https://ex.com/p", format="text")
+
+    notice = sanitize.notice(
+        "report_truncated", "the page text past 2 MiB was not scanned for invisible characters"
+    )
+    assert (notice in doc.threats) is bool(extra)
+
+
 async def test_an_oversized_challenge_page_keeps_its_own_status(fake_provider, make_page):
     fake_provider(
         make_page(
-            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+            text="Cats nap. " * (sanitize.MAX_MARKDOWN_BYTES // 10 + 1),
             retrieval_status="challenge",
         )
     )
@@ -1104,12 +1120,12 @@ async def test_the_totals_count_every_finding_whatever_the_report_kept(fake_prov
 
 async def test_a_page_exactly_at_the_html_limit_is_read(fake_provider, make_page):
     html = "<html><body><p>Cats nap.</p></body></html>"
-    padding = "<!--" + "x" * (document.MAX_HTML_BYTES - len(html) - 7) + "-->"
+    padding = "<!--" + "x" * (sanitize.MAX_HTML_BYTES - len(html) - 7) + "-->"
     fake_provider(make_page(html=html[:-14] + padding + html[-14:], text="Cats nap."))
 
     doc = await fetch_document("https://ex.com/p")
 
-    assert len((html[:-14] + padding + html[-14:]).encode()) == document.MAX_HTML_BYTES
+    assert len((html[:-14] + padding + html[-14:]).encode()) == sanitize.MAX_HTML_BYTES
     assert doc.status == "ok"
 
 
@@ -1120,7 +1136,7 @@ async def test_a_page_with_nothing_to_extract_and_too_much_text_returns_no_conte
     fake_provider(
         make_page(
             html="<html><body></body></html>",
-            text="Cats nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1),
+            text="Cats nap. " * (sanitize.MAX_MARKDOWN_BYTES // 10 + 1),
         )
     )
 
@@ -1135,7 +1151,7 @@ async def test_an_oversized_page_still_reports_its_invisible_characters(
     make_page: Callable[..., RenderedPage],
 ) -> None:
     fake_provider(
-        make_page(text=f"Cats{ZERO_WIDTH} nap. " * (document.MAX_MARKDOWN_BYTES // 10 + 1))
+        make_page(text=f"Cats{ZERO_WIDTH} nap. " * (sanitize.MAX_MARKDOWN_BYTES // 10 + 1))
     )
 
     doc = await fetch_document("https://ex.com/p", format="text")
@@ -1184,7 +1200,7 @@ async def test_a_large_page_holding_lone_surrogates_is_measured_not_crashed(
     fake_provider: Callable[[RenderedPage], None],
     make_page: Callable[..., RenderedPage],
 ) -> None:
-    broken = "\ud800" * (document.MAX_HTML_BYTES // 3 + 1)
+    broken = "\ud800" * (sanitize.MAX_HTML_BYTES // 3 + 1)
     fake_provider(make_page(html=f"<html><body><p>Cats {broken}</p></body></html>", text="Cats"))
 
     doc = await fetch_document("https://ex.com/p")

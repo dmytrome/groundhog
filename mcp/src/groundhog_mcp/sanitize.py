@@ -1,5 +1,7 @@
 from typing import Literal, NotRequired, TypedDict
 
+MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_TITLE_CHARS = 300
 MAX_URL_CHARS = 2048
 MAX_HEADING_CHARS = 200
