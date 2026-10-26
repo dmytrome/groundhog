@@ -991,6 +991,10 @@ class EngineProvider:
                 )
 
             ctx = await self._isolated_context(sid)
+            if ctx is None:
+                ctx = await self._isolated_context(sid)
+            if ctx is None:
+                raise CDPError("could not isolate hidden-text detection from the page")
 
             final_url = _as_text(await self._eval(sid, "document.location.href", ctx))
             await safety.check_url(final_url, self._cfg)
@@ -1066,16 +1070,18 @@ class EngineProvider:
         pending: asyncio.Future[object] | None = None
         try:
             async with asyncio.timeout(_SETTLE_TIMEOUT_S) as cap:
-                pending = asyncio.ensure_future(self._isolated_context(session_id))
-                ctx = await asyncio.shield(pending)
                 while True:
+                    if ctx is None:
+                        pending = asyncio.ensure_future(self._isolated_context(session_id))
+                        ctx = await asyncio.shield(pending)
+                        if ctx is None:
+                            await asyncio.sleep(_SETTLE_POLL_S)
+                            continue
                     pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
                     try:
                         current = await asyncio.shield(pending)
                     except CDPError:
-                        pending = asyncio.ensure_future(self._isolated_context(session_id))
-                        ctx = await asyncio.shield(pending)
-                        prev, quiet_since = None, loop.time()
+                        ctx, prev, quiet_since = None, None, loop.time()
                         await asyncio.sleep(_SETTLE_POLL_S)
                         continue
                     if current != prev or inflight.busy:
@@ -1088,7 +1094,11 @@ class EngineProvider:
             if not cap.expired():
                 raise
             if pending is None or pending.done():
-                pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
+                pending = asyncio.ensure_future(
+                    self._isolated_context(session_id)
+                    if ctx is None
+                    else self._eval(session_id, _DOM_SIZE_EXPR, ctx)
+                )
             try:
                 await asyncio.wait_for(pending, _SETTLE_STALL_S)
             except CDPError:
