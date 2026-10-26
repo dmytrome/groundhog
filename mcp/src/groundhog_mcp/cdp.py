@@ -99,7 +99,8 @@ class CDPClient:
             try:
                 return await asyncio.wait_for(fut, timeout=_COMMAND_TIMEOUT_S)
             except TimeoutError as exc:
-                await self.close()
+                if session_id is None:
+                    await self.close()
                 raise CommandTimeout(f"{method} got no reply in {_COMMAND_TIMEOUT_S:g}s") from exc
         finally:
             self._pending.pop(mid, None)

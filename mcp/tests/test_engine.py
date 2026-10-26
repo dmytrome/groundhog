@@ -1390,7 +1390,32 @@ async def test_a_command_the_browser_never_answers_fails_instead_of_hanging(
     assert closed_after_timeout
 
 
-class _WedgedOnNavigate(_ScriptedCDP):
+async def test_a_session_command_timeout_leaves_the_client_usable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            if request["method"] != "Page.navigate":
+                await ws.send(json.dumps({"id": request["id"], "result": {"alive": True}}))
+
+    monkeypatch.setattr(cdp, "_COMMAND_TIMEOUT_S", 0.05)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await client.connect()
+        try:
+            with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+                await client.send(
+                    "Page.navigate", {"url": "https://example.com/"}, session_id="tab"
+                )
+            assert not client.closed
+            assert await client.send("Browser.getVersion") == {"alive": True}
+        finally:
+            await client.close()
+
+
+
+class _DisconnectedOnNavigate(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
         return lambda: None
 
@@ -1399,11 +1424,11 @@ class _WedgedOnNavigate(_ScriptedCDP):
             raise cdp.CDPError("CDP client is not connected")
         if method == "Page.navigate":
             self.closed = True
-            raise cdp.CommandTimeout("Page.navigate got no reply in 90s")
+            raise cdp.CDPError("CDP connection closed")
         return await super().send(method, params, session_id)
 
 
-async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_cleanup(
+async def test_a_fetch_whose_browser_disconnected_reports_that_not_the_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def public(url: str, cfg: Config) -> None:
@@ -1414,10 +1439,10 @@ async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_clea
 
     monkeypatch.setattr(engine.safety, "check_url", public)
     provider = engine.EngineProvider(_cfg())
-    provider._cdp = _WedgedOnNavigate(_HEADLESS_UA, _HINTS)
+    provider._cdp = _DisconnectedOnNavigate(_HEADLESS_UA, _HINTS)
     monkeypatch.setattr(provider, "_prepare_tab", prepared)
 
-    with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+    with pytest.raises(cdp.CDPError, match="CDP connection closed"):
         await provider._fetch_in_target("https://example.com/", True)
 
 
