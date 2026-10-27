@@ -17,6 +17,9 @@ All notable changes to this project are documented here. The format is based on
   at the same time.
 - A fetch now fails when hidden-text detection cannot be isolated from the page.
 - Page text past 2 MiB is reported as not scanned for invisible characters.
+- A `CDP_URL` that answers with something other than a browser now gets the setup message
+  instead of an internal error.
+- A SearXNG reply that is not a JSON object is reported as search unavailable.
 
 ## [0.22.0] - 2026-10-25
 
