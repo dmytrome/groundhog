@@ -8,8 +8,6 @@ from . import classify, engine, extract, pdf, provenance, sanitize
 
 Format = Literal["markdown", "text"]
 _MAX_THREATS = 50
-MAX_HTML_BYTES = 5 * 1024 * 1024
-MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 _ATTRIBUTE_REASON_PREFIX = "attribute:"
 _TEMPLATE_REASON = "template"
 _LOW_SIGNAL_CARRIERS = ("hidden_attribute", "hidden_template")
@@ -158,14 +156,14 @@ async def fetch_document(
     page = await provider.fetch(url, strip_hidden=not include_hidden)
     final_url = page.final_url or url
 
-    too_large = _over(page.html, MAX_HTML_BYTES)
+    too_large = _over(page.html, sanitize.MAX_HTML_BYTES)
     if format == "text" or too_large:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     elif page.pdf_pages is not None:
         markdown, meta = _pdf_markdown(page.pdf_pages), extract.ExtractMeta(None, None, None)
     else:
         markdown, meta = extract.to_document(page.html, final_url)
-    too_large = too_large or _over(markdown, MAX_MARKDOWN_BYTES)
+    too_large = too_large or _over(markdown, sanitize.MAX_MARKDOWN_BYTES)
 
     scans = [sanitize.counts(page.text if too_large else markdown)]
     if not too_large and markdown is not page.text:
@@ -182,7 +180,7 @@ async def fetch_document(
             markdown = sanitize.strip_invisible(markdown, scans[0])
         if format == "markdown" and not markdown.strip():
             markdown = extract.fenced(text)
-            too_large = _over(markdown, MAX_MARKDOWN_BYTES)
+            too_large = _over(markdown, sanitize.MAX_MARKDOWN_BYTES)
         if status == "ok" and not visible_text.strip():
             status = "empty"
     if too_large:
@@ -201,6 +199,13 @@ async def fetch_document(
         page.spans_dropped,
         trusted=page.isolated,
     )
+    if len(page.text) > sanitize.MAX_MARKDOWN_BYTES:
+        threats.append(
+            sanitize.notice(
+                "report_truncated",
+                "the page text past 2 MiB was not scanned for invisible characters",
+            )
+        )
     if not page.isolated:
         threats.append(
             sanitize.notice(

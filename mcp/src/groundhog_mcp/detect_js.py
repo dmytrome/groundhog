@@ -1,5 +1,30 @@
 DETECT_AND_COLLECT = r"""
-(strip) => {
+(strip, caps) => {
+  const sourceHtml = document.documentElement.outerHTML;
+  const INVISIBLE = /[\p{Cf}\p{Cc}\p{Zl}\p{Zp}\u3164\u2800\u{E0100}-\u{E01EF}]/gu;
+  const field = (s, n) => s.length <= n ? s : s.replace(INVISIBLE, '').trim().slice(0, n);
+  const meta = {};
+  let metaEntries = 0;
+  for (const m of document.querySelectorAll('meta[name], meta[property]')) {
+    if (metaEntries >= caps.meta) break;
+    const key = field(m.getAttribute('name') || m.getAttribute('property') || '', caps.field);
+    const val = m.getAttribute('content');
+    if (key && val && !(key in meta)) {
+      meta[key] = field(val, caps.field);
+      metaEntries++;
+    }
+  }
+  const canonEl = document.querySelector('link[rel="canonical"]');
+  const langAttr = document.documentElement.getAttribute('lang');
+  const lang = langAttr ? field(langAttr, caps.field) : null;
+  const canonical = canonEl ? field(canonEl.href, caps.field) : null;
+  const title = field(document.title, caps.field);
+  if (sourceHtml.length > caps.html) {
+    return {
+      hidden: [], spansDropped: 0, stripIncomplete: false,
+      meta, title, lang, canonical, html: sourceHtml.slice(0, caps.html), text: '',
+    };
+  }
   const MAX_TEXT = 200;
   const MIN_COMMENT_CHARS = 20;
   const MIN_ATTRIBUTE_CHARS = 125;
@@ -22,6 +47,7 @@ DETECT_AND_COLLECT = r"""
     if (lowSignal && lowSignalSpans >= MAX_LOW_SIGNAL_SPANS) { spansDropped++; return; }
     if (hidden.length >= MAX_SPANS) { spansDropped++; return; }
     if (lowSignal) lowSignalSpans++;
+    span.path = field(span.path, caps.field);
     hidden.push(span);
   };
   const indexPathOf = (el) => {
@@ -501,15 +527,6 @@ DETECT_AND_COLLECT = r"""
     });
     if (strip) commentPaths.push(indexPathOf(c));
   }
-  const meta = {};
-  for (const m of document.querySelectorAll('meta[name], meta[property]')) {
-    const key = m.getAttribute('name') || m.getAttribute('property');
-    const val = m.getAttribute('content');
-    if (key && val && !(key in meta)) meta[key] = val;
-  }
-  const canonEl = document.querySelector('link[rel="canonical"]');
-  const langAttr = document.documentElement.getAttribute('lang');
-  const title = document.title;
   let stripIncomplete = false;
   let html;
   let copy = null;
@@ -582,7 +599,7 @@ DETECT_AND_COLLECT = r"""
     }
     html = copy.outerHTML;
   } else {
-    html = document.documentElement.outerHTML;
+    html = sourceHtml;
   }
 
   let adopted = null;
@@ -629,10 +646,10 @@ DETECT_AND_COLLECT = r"""
   return {
     hidden,
     meta,
-    lang: langAttr || null,
-    canonical: canonEl ? canonEl.href : null,
-    html,
-    text,
+    lang,
+    canonical,
+    html: html.slice(0, caps.html),
+    text: text.slice(0, caps.text),
     title,
     stripIncomplete,
     spansDropped,

@@ -1390,7 +1390,39 @@ async def test_a_command_the_browser_never_answers_fails_instead_of_hanging(
     assert closed_after_timeout
 
 
-class _WedgedOnNavigate(_ScriptedCDP):
+async def test_a_session_command_timeout_leaves_the_client_usable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            if request["method"] != "Page.navigate":
+                await ws.send(json.dumps({"id": request["id"], "result": {"alive": True}}))
+
+    monkeypatch.setattr(cdp, "_COMMAND_TIMEOUT_S", 0.05)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await client.connect()
+        try:
+            with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+                await client.send(
+                    "Page.navigate", {"url": "https://example.com/"}, session_id="tab"
+                )
+            assert not client.closed
+            assert await client.send("Browser.getVersion") == {"alive": True}
+        finally:
+            await client.close()
+
+
+def test_the_collector_reply_fits_within_the_cdp_frame_limit() -> None:
+    caps = engine._COLLECT_CAPS
+    span_chars = 400 * (200 + caps["field"] + 80)
+    meta_chars = caps["meta"] * 2 * caps["field"]
+    chars = caps["html"] + caps["text"] + span_chars + meta_chars + 3 * caps["field"]
+    assert chars * 6 + 64 * 1024 < cdp._MAX_FRAME_BYTES
+
+
+class _DisconnectedOnNavigate(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
         return lambda: None
 
@@ -1399,11 +1431,11 @@ class _WedgedOnNavigate(_ScriptedCDP):
             raise cdp.CDPError("CDP client is not connected")
         if method == "Page.navigate":
             self.closed = True
-            raise cdp.CommandTimeout("Page.navigate got no reply in 90s")
+            raise cdp.CDPError("CDP connection closed")
         return await super().send(method, params, session_id)
 
 
-async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_cleanup(
+async def test_a_fetch_whose_browser_disconnected_reports_that_not_the_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def public(url: str, cfg: Config) -> None:
@@ -1414,10 +1446,10 @@ async def test_a_fetch_whose_browser_stopped_answering_reports_that_not_the_clea
 
     monkeypatch.setattr(engine.safety, "check_url", public)
     provider = engine.EngineProvider(_cfg())
-    provider._cdp = _WedgedOnNavigate(_HEADLESS_UA, _HINTS)
+    provider._cdp = _DisconnectedOnNavigate(_HEADLESS_UA, _HINTS)
     monkeypatch.setattr(provider, "_prepare_tab", prepared)
 
-    with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+    with pytest.raises(cdp.CDPError, match="CDP connection closed"):
         await provider._fetch_in_target("https://example.com/", True)
 
 
@@ -1643,6 +1675,19 @@ class _NoEvents(_ScriptedCDP):
     def on_event(self, method: str, callback: object, session_id: str | None = None) -> object:
         return lambda: None
 
+    async def send(
+        self,
+        method: str,
+        params: dict[str, object] | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, object]:
+        if method in {"Page.getFrameTree", "Page.createIsolatedWorld"}:
+            self.calls.append((method, params, session_id))
+            if method == "Page.getFrameTree":
+                return {"frameTree": {"frame": {"id": "root"}}}
+            return {"executionContextId": 7}
+        return await super().send(method, params, session_id)
+
 
 def _provider_collecting(
     monkeypatch: pytest.MonkeyPatch, collected: dict[str, str] | None
@@ -1665,6 +1710,61 @@ def _provider_collecting(
     provider._cdp = fake
     monkeypatch.setattr(provider, "_eval", evaluate)
     return provider, fake
+
+
+@pytest.mark.parametrize("failures", [1, 2])
+async def test_hidden_text_detection_requires_an_isolated_world(
+    monkeypatch: pytest.MonkeyPatch, failures: int
+) -> None:
+    provider, _ = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+
+    class RefusesIsolation(_NoEvents):
+        async def send(
+            self,
+            method: str,
+            params: dict[str, object] | None = None,
+            session_id: str | None = None,
+        ) -> dict[str, object]:
+            if method == "Page.getFrameTree":
+                self.calls.append((method, params, session_id))
+                return {"frameTree": {"frame": {"id": "root"}}}
+            if method == "Page.createIsolatedWorld":
+                self.calls.append((method, params, session_id))
+                if self.methods().count(method) <= failures:
+                    raise cdp.CDPError("method unavailable")
+                return {"executionContextId": 7}
+            return await super().send(method, params, session_id)
+
+    async def settled(sid: str, inflight: engine._InflightRequests) -> None:
+        return None
+
+    evaluations: list[tuple[str, int | None]] = []
+    evaluate = provider._eval
+
+    async def record_eval(sid: str, expression: str, context_id: int | None = None) -> object:
+        evaluations.append((expression, context_id))
+        return await evaluate(sid, expression, context_id)
+
+    client = RefusesIsolation(_HEADLESS_UA, _HINTS)
+    provider._cdp = client
+    monkeypatch.setattr(provider, "_settle", settled)
+    monkeypatch.setattr(provider, "_eval", record_eval)
+    try:
+        if failures == 2:
+            with pytest.raises(
+                cdp.CDPError, match="could not isolate hidden-text detection from the page"
+            ):
+                await provider.fetch("https://example.com/")
+            assert evaluations == []
+        else:
+            page = await provider.fetch("https://example.com/")
+            assert page.isolated
+            assert page.text == "Cats nap."
+            assert evaluations and all(ctx == 7 for _, ctx in evaluations)
+        assert client.methods().count("Page.createIsolatedWorld") == 2
+        assert client.methods()[-1] == "Target.closeTarget"
+    finally:
+        await provider.aclose()
 
 
 async def test_a_collector_that_never_answers_fails_the_fetch(
@@ -1852,6 +1952,38 @@ async def _settle_against(
     return elapsed, error
 
 
+async def test_settling_never_evaluates_in_the_page_world_when_isolation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[str] = []
+    frame_tree = json.loads((_FIXTURES / "cdp_frame_tree.json").read_text())
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            methods.append(request["method"])
+            if request["method"] == "Page.getFrameTree":
+                await ws.send(json.dumps({"id": request["id"], "result": frame_tree}))
+            else:
+                error = {"code": -32000, "message": "refused"}
+                await ws.send(json.dumps({"id": request["id"], "error": error}))
+
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(engine, "_SETTLE_STALL_S", 0.1)
+    monkeypatch.setattr(engine, "_SETTLE_POLL_S", 0.01)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            await provider._settle("tab", engine._InflightRequests())
+        finally:
+            await provider._cdp.close()
+
+    assert "Page.createIsolatedWorld" in methods
+    assert "Runtime.evaluate" not in methods
+
+
 @pytest.mark.parametrize(
     "stalls", ["Runtime.evaluate", "Page.getFrameTree", "Page.createIsolatedWorld"]
 )
@@ -1915,7 +2047,7 @@ async def test_an_evaluation_timeout_inside_settling_still_fails_the_fetch(
     async def stall(method: str, params: object = None, session_id: object = None) -> object:
         if method == "Runtime.evaluate":
             await asyncio.Event().wait()
-        return {}
+        return {"frameTree": {"frame": {"id": "root"}}, "executionContextId": 1}
 
     monkeypatch.setattr(fake, "send", stall)
     with pytest.raises(TimeoutError):
@@ -1952,7 +2084,7 @@ async def test_a_connection_lost_while_waiting_past_the_cap_fails_the_fetch(
     async def drops(method: str, params: object = None, session_id: object = None) -> object:
         nonlocal calls
         if method != "Runtime.evaluate":
-            return {}
+            return {"frameTree": {"frame": {"id": "root"}}, "executionContextId": 1}
         if time.monotonic() >= deadline:
             fake.closed = True
             raise cdp.CDPError("CDP client is not connected")

@@ -10,7 +10,7 @@ from urllib.parse import quote, urlparse
 
 import pytest
 
-from groundhog_mcp import document, engine, extract, safety
+from groundhog_mcp import document, engine, extract, safety, sanitize
 from groundhog_mcp.cdp import CDPClient
 from groundhog_mcp.config import load_config
 from groundhog_mcp.engine import EngineProvider
@@ -529,6 +529,177 @@ async def _fetch_path(srv: ThreadingHTTPServer, path: str) -> engine.RenderedPag
         return await provider.fetch(f"http://{PAGE_HOST}:{srv.server_address[1]}{path}")
     finally:
         await provider.aclose()
+
+
+async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    srv = _serve_paths(
+        {
+            "/large": (
+                200,
+                "<html lang='en'><head><title>Large</title></head><body><pre></pre>"
+                "<script>document.querySelector('pre').appendChild("
+                "document.createTextNode('x'.repeat(45_000_000)))</script></body></html>",
+            ),
+            "/normal": (
+                200,
+                "<html lang='en'><head><title>Normal</title></head><body>"
+                "<p>Ordinary content from the same server.</p></body></html>",
+            ),
+        }
+    )
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "0")
+    cfg = dataclasses.replace(load_config(), block_private_ips=False, max_concurrent_pages=2)
+    provider = EngineProvider(cfg)
+    monkeypatch.setattr(engine, "_provider", provider)
+    evaluate = provider._eval
+    normal_ready = asyncio.Event()
+    large_done = asyncio.Event()
+
+    async def overlapping_eval(
+        sid: str, expression: str, context_id: int | None = None
+    ) -> object:
+        value = await evaluate(sid, expression, context_id)
+        if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
+            assert isinstance(value, dict)
+            if value["title"] == "Large":
+                assert value["text"] == ""
+                assert value["hidden"] == []
+                assert value["spansDropped"] == 0
+                assert value["stripIncomplete"] is False
+        if expression == "document.location.href" and isinstance(value, str):
+            if value.endswith("/normal"):
+                normal_ready.set()
+                await large_done.wait()
+            elif value.endswith("/large"):
+                await normal_ready.wait()
+        return value
+
+    monkeypatch.setattr(provider, "_eval", overlapping_eval)
+    base = f"http://{PAGE_HOST}:{srv.server_address[1]}"
+
+    async def fetch_large() -> document.Document:
+        started = asyncio.get_running_loop().time()
+        try:
+            result = await document.fetch_document(f"{base}/large")
+            elapsed = asyncio.get_running_loop().time() - started
+            assert elapsed < engine._DETECT_TIMEOUT_S * 0.75
+            return result
+        finally:
+            large_done.set()
+
+    try:
+        await provider.start()
+        async with asyncio.timeout(90), asyncio.TaskGroup() as group:
+            large = group.create_task(fetch_large())
+            normal = group.create_task(document.fetch_document(f"{base}/normal"))
+        assert large.result().status == "too_large"
+        assert large.result().markdown == ""
+        assert normal.result().status == "ok"
+        assert "Ordinary content" in normal.result().markdown
+    finally:
+        await engine.shutdown_provider()
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+async def test_every_collected_field_is_capped_before_it_leaves_the_page(
+    monkeypatch: pytest.MonkeyPatch, oversized: bool
+) -> None:
+    srv = _serve(
+        "<html><head><title>Title</title></head><body>"
+        "<p>Ordinary visible content.</p><div hidden>Hidden payload</div><script>"
+        "const long = 'x'.repeat(4_000);"
+        "document.title = long; document.documentElement.lang = long;"
+        "const canonical = document.createElement('link'); canonical.rel = 'canonical';"
+        "canonical.href = 'https://example.com/' + long; document.head.appendChild(canonical);"
+        "for (let i = 0; i < 300; i++) { const m = document.createElement('meta');"
+        "m.name = 'meta-' + i + long; m.content = long; document.head.appendChild(m); }"
+        "document.querySelector('[hidden]').id = long;"
+        f"if ({json.dumps(oversized)}) document.body.appendChild("
+        "document.createTextNode('y'.repeat(6_000_000)));"
+        "</script></body></html>"
+    )
+    provider = EngineProvider(dataclasses.replace(load_config(), block_private_ips=False))
+    evaluate = provider._eval
+    checked = False
+
+    async def check_collected(
+        sid: str, expression: str, context_id: int | None = None
+    ) -> object:
+        nonlocal checked
+        value = await evaluate(sid, expression, context_id)
+        if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
+            assert isinstance(value, dict)
+            for field in ("title", "lang", "canonical"):
+                assert isinstance(value[field], str)
+                assert len(value[field]) == sanitize.MAX_URL_CHARS + 1
+            if oversized:
+                assert len(value["html"]) == sanitize.MAX_HTML_BYTES + 1
+                assert value["text"] == ""
+            else:
+                assert len(value["html"]) <= sanitize.MAX_HTML_BYTES
+                assert len(value["text"]) <= sanitize.MAX_MARKDOWN_BYTES + 1
+            meta = value["meta"]
+            assert isinstance(meta, dict)
+            assert len(meta) == 256
+            for key, content in meta.items():
+                assert isinstance(key, str) and isinstance(content, str)
+                assert len(key) == len(content) == sanitize.MAX_URL_CHARS + 1
+            hidden = value["hidden"]
+            assert isinstance(hidden, list)
+            assert bool(hidden) is not oversized
+            for span in hidden:
+                assert len(span["path"]) == sanitize.MAX_URL_CHARS + 1
+            checked = True
+        return value
+
+    monkeypatch.setattr(provider, "_eval", check_collected)
+    try:
+        await provider.start()
+        page = await provider.fetch(f"http://{PAGE_HOST}:{srv.server_address[1]}/")
+        assert checked
+        assert page.meta["canonical"] is None
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+        srv.server_close()
+
+
+async def test_a_page_just_under_the_html_cap_is_still_collected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefix = (
+        '<html lang="en"><head><title>Normal</title></head><body>'
+        "<p>Ordinary content near the HTML cap.</p><div hidden>Hidden payload</div>"
+        '<script type="application/json">'
+    )
+    suffix = "</script></body></html>"
+    padding = "x" * (sanitize.MAX_HTML_BYTES - len(prefix) - len(suffix) - 128)
+    srv = _serve(prefix + padding + suffix)
+    provider = EngineProvider(dataclasses.replace(load_config(), block_private_ips=False))
+    monkeypatch.setattr(engine, "_provider", provider)
+    try:
+        await provider.start()
+        doc = await document.fetch_document(f"http://{PAGE_HOST}:{srv.server_address[1]}/")
+        assert doc.status == "ok"
+        assert "Ordinary content near the HTML cap." in doc.markdown
+        assert doc.hidden_found == 1
+        assert any(t["excerpt"] == "Hidden payload" for t in doc.threats)
+    finally:
+        await engine.shutdown_provider()
+        srv.shutdown()
+        srv.server_close()
+
+
+async def test_invisible_padding_does_not_erase_the_title() -> None:
+    page = await _fetch_local(
+        "<html><head><title>Title</title></head><body><p>Ordinary content.</p>"
+        "<script>document.title = '\\u200b'.repeat(2100) + 'Real Title';</script></body></html>"
+    )
+    assert page.title == "Real Title"
 
 
 async def test_a_client_side_redirect_reports_the_document_that_was_landed_on():
@@ -1746,9 +1917,12 @@ async def test_the_page_never_sees_which_nodes_were_flagged():
         sheets = await cdp.send(
             "Runtime.evaluate",
             {
-                "expression": f"({engine.DETECT_AND_COLLECT})(true).hidden.length"
-                " + ':' + document.adoptedStyleSheets.length"
-                " + ':' + window.seen.takeRecords().length",
+                "expression": (
+                    f"({engine.DETECT_AND_COLLECT})(true, "
+                    f"{json.dumps(engine._COLLECT_CAPS)}).hidden.length"
+                    " + ':' + document.adoptedStyleSheets.length"
+                    " + ':' + window.seen.takeRecords().length"
+                ),
                 "returnByValue": True,
             },
             session_id=sid,
