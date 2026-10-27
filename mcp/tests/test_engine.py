@@ -130,6 +130,26 @@ def test_ip_probe_url_resolves_dns_names(monkeypatch):
     assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
 
 
+@pytest.mark.parametrize("probe", [engine.check_browser, engine._browser_ws_url])
+async def test_a_dns_cdp_url_is_resolved_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch, probe: Callable[[str], object]
+) -> None:
+    resolved_on: list[threading.Thread] = []
+
+    def resolve(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        resolved_on.append(threading.current_thread())
+        return [(engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0))]
+
+    monkeypatch.setattr(engine.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        http._opener,
+        "open",
+        lambda url, timeout: io.BytesIO(b'{"webSocketDebuggerUrl":"ws://172.25.0.2:9222/b"}'),
+    )
+    await probe("http://chrome:9222")
+    assert resolved_on and threading.main_thread() not in resolved_on
+
+
 def test_a_dns_name_with_both_address_families_is_dialed_over_ipv4(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
