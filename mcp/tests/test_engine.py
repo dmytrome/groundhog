@@ -1492,6 +1492,14 @@ def test_json_responses_within_the_limit_are_decoded(monkeypatch: pytest.MonkeyP
     assert http.read_json("https://endpoint.example/", timeout=1.0) == {"value": 1}
 
 
+@pytest.mark.parametrize("body", [b'"webSocketDebuggerUrl"', b"42"])
+async def test_a_version_reply_that_is_not_a_json_object_is_not_a_browser(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(http._opener, "open", lambda url, timeout: io.BytesIO(body))
+    assert await engine.check_browser("http://127.0.0.1:9222") is False
+
+
 def test_json_fetches_refuse_redirects_to_a_different_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
