@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import trafilatura
 
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 TRUNCATION_MARKER = "\n\n[... truncated]"
 
 
@@ -26,7 +26,7 @@ def fenced(text: str) -> str:
 
 
 def cut(text: str, max_tokens: int) -> str:
-    limit = max_tokens * _CHARS_PER_TOKEN
+    limit = max_tokens * CHARS_PER_TOKEN
     if len(text) <= limit:
         return text
     end = text.rfind("\n\n", 0, limit)
