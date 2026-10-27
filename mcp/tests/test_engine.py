@@ -205,6 +205,20 @@ async def test_remote_cdp_url_is_not_auto_started(monkeypatch):
         await provider.aclose()
 
 
+@pytest.mark.parametrize("body", [b"<html>not a browser</html>", b'{"Browser": "x"}'])
+async def test_a_cdp_url_that_answers_like_no_browser_says_how_to_get_one(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(http._opener, "open", lambda url, timeout: io.BytesIO(body))
+    provider = engine.EngineProvider(_cfg(auto_start_browser=False))
+    try:
+        with pytest.raises(engine.BrowserUnavailableError) as raised:
+            await provider.start()
+    finally:
+        await provider.aclose()
+    assert str(raised.value) == engine.remediation(_cfg(auto_start_browser=False))
+
+
 @pytest.mark.parametrize(
     "url,expected",
     [

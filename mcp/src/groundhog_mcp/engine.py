@@ -884,13 +884,13 @@ class EngineProvider:
         cfg = self._cfg
         try:
             return await _browser_ws_url(cfg.cdp_url)
-        except OSError as exc:
+        except (OSError, ValueError, KeyError) as exc:
             if not (cfg.auto_start_browser and _is_local(cfg.cdp_url)):
                 raise BrowserUnavailableError(remediation(cfg)) from exc
         await _start_browser(cfg)
         try:
             return await _browser_ws_url(cfg.cdp_url)
-        except OSError as exc:
+        except (OSError, ValueError, KeyError) as exc:
             raise BrowserUnavailableError(remediation(cfg)) from exc
 
     async def _ensure_connected(self) -> None:
