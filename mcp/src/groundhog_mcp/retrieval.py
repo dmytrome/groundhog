@@ -7,7 +7,6 @@ from typing import NamedTuple, TypedDict
 
 from . import extract, sanitize
 
-_CHARS_PER_TOKEN = 4
 _UNSPACED = (
     "\u0e00-\u0eff"
     "\u1000-\u109f"
@@ -280,7 +279,7 @@ def rank(
     whole_fences: bool = False,
 ) -> Ranked:
     found, set_aside = relevant(chunks, query, floor=floor)
-    limit = max_tokens * _CHARS_PER_TOKEN
+    limit = max_tokens * extract.CHARS_PER_TOKEN
     chosen: list[Scored] = []
     used = 0
     for scored in found:
@@ -411,7 +410,7 @@ def _fitted(chunks: list[Chunk], found: list[Scored], limit: int) -> tuple[list[
             continue
         if count or is_fenced(c):
             continue
-        text = extract.cut(c.text, limit // _CHARS_PER_TOKEN)
+        text = extract.cut(c.text, limit // extract.CHARS_PER_TOKEN)
         if not text:
             continue
         clipped = scored._replace(chunk=replace(c, text=text))
@@ -431,7 +430,7 @@ def select(
     found, set_aside = relevant(chunks, query, floor=RELEVANCE_FLOOR)
     if not found:
         return "", [], False, 0
-    spans, clamped, admitted = _fitted(chunks, found, max_tokens * _CHARS_PER_TOKEN)
+    spans, clamped, admitted = _fitted(chunks, found, max_tokens * extract.CHARS_PER_TOKEN)
     matches: list[Match] = [
         {
             "id": passage_id(source_url, content_hash, span.chunk.offset, span.end),

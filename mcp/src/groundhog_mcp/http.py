@@ -28,7 +28,10 @@ def read_json(url: str, timeout: float, max_bytes: int = MAX_BYTES) -> dict:
         body = resp.read(max_bytes + 1)
     if len(body) > max_bytes:
         raise ValueError(f"response body exceeded {max_bytes} bytes")
-    return json.loads(body)
+    data = json.loads(body)
+    if not isinstance(data, dict):
+        raise ValueError("response body is not a JSON object")
+    return data
 
 
 async def read_json_async(url: str, timeout: float) -> dict:

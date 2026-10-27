@@ -1,8 +1,10 @@
+import io
 import json
 from pathlib import Path
 
 import pytest
 
+from groundhog_mcp import http
 from groundhog_mcp.search import searxng
 from groundhog_mcp.search.types import SearchUnavailableError
 
@@ -122,3 +124,11 @@ async def test_request_error_details_are_sanitized_and_bounded(
     assert str(caught.value) == (
         "SearXNG request failed (bad " + "x" * 196 + "). " + searxng._SETUP_HINT
     )
+
+
+async def test_a_reply_that_is_not_a_json_object_is_reported_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(http._opener, "open", lambda url, timeout: io.BytesIO(b"[]"))
+    with pytest.raises(SearchUnavailableError, match="not a JSON object"):
+        await searxng.search("http://sx:8080", "q")

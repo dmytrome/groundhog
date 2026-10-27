@@ -130,6 +130,26 @@ def test_ip_probe_url_resolves_dns_names(monkeypatch):
     assert engine._ip_probe_url("http://chrome:9222") == "http://172.25.0.2:9222"
 
 
+@pytest.mark.parametrize("probe", [engine.check_browser, engine._browser_ws_url])
+async def test_a_dns_cdp_url_is_resolved_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch, probe: Callable[[str], object]
+) -> None:
+    resolved_on: list[threading.Thread] = []
+
+    def resolve(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        resolved_on.append(threading.current_thread())
+        return [(engine.socket.AF_INET, None, None, "", ("172.25.0.2", 0))]
+
+    monkeypatch.setattr(engine.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        http._opener,
+        "open",
+        lambda url, timeout: io.BytesIO(b'{"webSocketDebuggerUrl":"ws://172.25.0.2:9222/b"}'),
+    )
+    await probe("http://chrome:9222")
+    assert resolved_on and threading.main_thread() not in resolved_on
+
+
 def test_a_dns_name_with_both_address_families_is_dialed_over_ipv4(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -183,6 +203,20 @@ async def test_remote_cdp_url_is_not_auto_started(monkeypatch):
             await provider.start()
     finally:
         await provider.aclose()
+
+
+@pytest.mark.parametrize("body", [b"<html>not a browser</html>", b'{"Browser": "x"}'])
+async def test_a_cdp_url_that_answers_like_no_browser_says_how_to_get_one(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(http._opener, "open", lambda url, timeout: io.BytesIO(body))
+    provider = engine.EngineProvider(_cfg(auto_start_browser=False))
+    try:
+        with pytest.raises(engine.BrowserUnavailableError) as raised:
+            await provider.start()
+    finally:
+        await provider.aclose()
+    assert str(raised.value) == engine.remediation(_cfg(auto_start_browser=False))
 
 
 @pytest.mark.parametrize(
@@ -1470,6 +1504,14 @@ def test_json_responses_within_the_limit_are_decoded(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(http._opener, "open", response)
     assert http.read_json("https://endpoint.example/", timeout=1.0) == {"value": 1}
+
+
+@pytest.mark.parametrize("body", [b'"webSocketDebuggerUrl"', b"42"])
+async def test_a_version_reply_that_is_not_a_json_object_is_not_a_browser(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(http._opener, "open", lambda url, timeout: io.BytesIO(body))
+    assert await engine.check_browser("http://127.0.0.1:9222") is False
 
 
 def test_json_fetches_refuse_redirects_to_a_different_endpoint(

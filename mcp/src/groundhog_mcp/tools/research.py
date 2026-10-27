@@ -530,7 +530,7 @@ def _clipped(passage: Passage, room: int, content_hash: str) -> Passage | None:
         return None
     if room < _MIN_CLIP_CHARS:
         return None
-    text = extract.cut(passage["text"], room // 4)
+    text = extract.cut(passage["text"], room // extract.CHARS_PER_TOKEN)
     end = passage["start"] + len(text)
     return {
         **passage,
