@@ -272,9 +272,7 @@ async def check_browser(cdp_url: str, timeout: float = _PROBE_TIMEOUT_S) -> bool
         if _is_websocket(cdp_url):
             return await _websocket_answers(cdp_url, timeout)
         return "webSocketDebuggerUrl" in await _fetch_version(cdp_url, timeout)
-    except (OSError, WebSocketException):
-        return False
-    except ValueError:
+    except (OSError, WebSocketException, ValueError):
         return False
 
 
