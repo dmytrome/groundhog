@@ -1,6 +1,6 @@
 import pytest
 
-from groundhog_mcp.extract import ExtractMeta
+from groundhog_mcp.extract import ExtractMeta, to_document
 from groundhog_mcp.provenance import build
 
 
@@ -24,6 +24,25 @@ def test_prefers_trafilatura_then_falls_back_to_meta():
     )
     assert prov["author"] == "Meta Author"
     assert prov["published"] == "2023-05-06"
+
+
+def test_a_page_without_an_article_reports_its_declared_author_and_date_not_its_footer() -> None:
+    html = (
+        '<html><head><meta name="author" content="Real Author">'
+        '<meta property="article:published_time" content="2024-03-05"></head>'
+        '<body><img src="x.png"><footer>By Site Team. Updated 2018-01-07</footer></body></html>'
+    )
+    markdown, meta = to_document(html, "https://ex.com/p")
+
+    prov = build(
+        markdown,
+        meta,
+        _engine_meta(meta={"author": "Real Author", "article:published_time": "2024-03-05"}),
+    )
+
+    assert markdown == ""
+    assert prov["author"] == "Real Author"
+    assert prov["published"] == "2024-03-05"
 
 
 def test_trafilatura_wins_over_meta():

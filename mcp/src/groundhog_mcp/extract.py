@@ -51,12 +51,10 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
         )
         or ""
     )
-    doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
-    doc_url = getattr(doc, "url", None)
-    canonical = doc_url if doc_url != url else None
+    doc = trafilatura.extract_metadata(html, default_url=url)
     meta = ExtractMeta(
-        author=getattr(doc, "author", None),
-        published=getattr(doc, "date", None),
-        canonical=canonical,
+        author=doc.author,
+        published=doc.date,
+        canonical=doc.url if doc.url != url else None,
     )
     return markdown, meta
