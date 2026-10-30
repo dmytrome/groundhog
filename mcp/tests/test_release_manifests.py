@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -249,19 +250,33 @@ def test_the_release_builds_without_a_restored_cache() -> None:
     assert all(step.get("with", {}).get("enable-cache") is False for step in steps), steps
 
 
-def test_every_dockerfile_has_an_update_channel() -> None:
+def _dockerfiles() -> list[Path]:
+    found: list[Path] = []
+    for root, dirs, files in os.walk(_REPO_ROOT):
+        dirs[:] = [d for d in dirs if d not in {".venv", "node_modules", ".git"}]
+        found += [Path(root) / f for f in files if f == "Dockerfile"]
+    return found
+
+
+def _names_a_literal_base(dockerfile: Path) -> bool:
+    bases = re.findall(r"^FROM\s+(\S+)", dockerfile.read_text(), re.MULTILINE)
+    return any(not base.startswith("$") for base in bases)
+
+
+def test_every_dockerfile_with_a_literal_base_has_an_update_channel() -> None:
     watched = {
         d.rstrip("/")
         for u in _channel("docker")
         for d in u.get("directories", [u.get("directory", "")])
     }
-    dockerfiles = {
-        p.parent.relative_to(_REPO_ROOT).as_posix()
-        for p in _REPO_ROOT.rglob("Dockerfile")
-        if not {".venv", "node_modules", ".git"} & set(p.parts)
+
+    found = {
+        "/" + p.parent.relative_to(_REPO_ROOT).as_posix().removeprefix(".")
+        for p in _dockerfiles()
+        if _names_a_literal_base(p)
     }
-    found = {"" if d == "." else f"/{d}" for d in dockerfiles}
-    assert found and found <= watched, found - watched
+
+    assert {d.rstrip("/") for d in found} == watched
 
 
 def test_every_pull_request_is_scanned_for_secrets_workflow_risks_and_new_advisories() -> None:
