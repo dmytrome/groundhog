@@ -225,3 +225,13 @@ def test_the_release_builds_without_a_restored_cache() -> None:
              for step in _steps_using(job, "astral-sh/setup-uv")]
     assert steps
     assert all(step.get("with", {}).get("enable-cache") is False for step in steps), steps
+
+
+def test_every_dockerfile_has_an_update_channel() -> None:
+    watched = {d.rstrip("/") for u in _channel("docker")
+               for d in u.get("directories", [u.get("directory", "")])}
+    dockerfiles = {p.parent.relative_to(_REPO_ROOT).as_posix()
+                   for p in _REPO_ROOT.rglob("Dockerfile")
+                   if not {".venv", "node_modules", ".git"} & set(p.parts)}
+    found = {"" if d == "." else f"/{d}" for d in dockerfiles}
+    assert found and found <= watched, found - watched
