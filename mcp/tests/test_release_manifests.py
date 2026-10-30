@@ -199,3 +199,29 @@ def test_the_declared_sdk_floor_excludes_versions_the_code_cannot_import() -> No
     assert int(floor.group(1)) >= 2, (
         f"{specs[0]} admits an SDK predating mcp.server.mcpserver, which server.py imports"
     )
+
+
+def _workflow_jobs() -> list[tuple[str, str, dict]]:
+    return [(path.name, name, job)
+            for path in sorted((_REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+            for name, job in _workflow(path.name)["jobs"].items()]
+
+
+def _steps_using(job: dict, action: str) -> list[dict]:
+    return [step for step in job.get("steps", [])
+            if str(step.get("uses", "")).startswith(f"{action}@")]
+
+
+def test_only_a_job_that_pushes_keeps_the_checkout_credential() -> None:
+    for workflow, name, job in _workflow_jobs():
+        pushes = any("git push" in cmd for cmd in _runs(job))
+        for step in _steps_using(job, "actions/checkout"):
+            kept = step.get("with", {}).get("persist-credentials")
+            assert kept is pushes, f"{workflow}:{name} persist-credentials={kept!r}"
+
+
+def test_the_release_builds_without_a_restored_cache() -> None:
+    steps = [step for job in _workflow("release.yml")["jobs"].values()
+             for step in _steps_using(job, "astral-sh/setup-uv")]
+    assert steps
+    assert all(step.get("with", {}).get("enable-cache") is False for step in steps), steps
