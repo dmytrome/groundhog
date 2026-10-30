@@ -22,6 +22,7 @@ jobs:
           enable-cache: false
       - run: uv sync
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
       - run: uv run pytest -q
       - run: uv build --build-constraint build-requirements.txt
       - run: uvx --from twine==7.0.0 twine check --strict dist/*

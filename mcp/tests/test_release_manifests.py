@@ -117,13 +117,17 @@ def _upstream_of(workflow: dict, job: str) -> set[str]:
 
 
 def _gate_commands(workflow: dict) -> list[str]:
-    return [cmd for job in workflow["jobs"].values() for cmd in _runs(job)
-            if _VALIDATE_COMMAND in cmd]
+    return [
+        cmd for job in workflow["jobs"].values() for cmd in _runs(job) if _VALIDATE_COMMAND in cmd
+    ]
 
 
 def _publishing_jobs(workflow: dict) -> set[str]:
-    return {name for name, job in workflow["jobs"].items()
-            if any(marker in yaml.safe_dump(job) for marker in _PUBLISHING_MARKERS)}
+    return {
+        name
+        for name, job in workflow["jobs"].items()
+        if any(marker in yaml.safe_dump(job) for marker in _PUBLISHING_MARKERS)
+    }
 
 
 def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
@@ -133,8 +137,9 @@ def test_the_build_backend_is_pinned_to_an_exact_version() -> None:
 
 @pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
 def test_every_workflow_builds_against_the_pinned_backend(workflow: str) -> None:
-    assert any(_BUILD_COMMAND in cmd for job in _workflow(workflow)["jobs"].values()
-               for cmd in _runs(job)), workflow
+    assert any(
+        _BUILD_COMMAND in cmd for job in _workflow(workflow)["jobs"].values() for cmd in _runs(job)
+    ), workflow
 
 
 @pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
@@ -144,8 +149,11 @@ def test_every_workflow_validates_the_built_distribution(workflow: str) -> None:
 
 def test_nothing_that_publishes_can_run_before_the_gate() -> None:
     workflow = _workflow("release.yml")
-    gates = {name for name, job in workflow["jobs"].items()
-             if any(_VALIDATE_COMMAND in cmd for cmd in _runs(job))}
+    gates = {
+        name
+        for name, job in workflow["jobs"].items()
+        if any(_VALIDATE_COMMAND in cmd for cmd in _runs(job))
+    }
     assert gates, "no job runs the distribution gate"
     publishers = _publishing_jobs(workflow)
     assert publishers, "no job was recognised as publishing"
@@ -161,6 +169,15 @@ def test_the_release_pins_the_validator_because_its_tag_is_already_pushed() -> N
 def test_ci_leaves_the_validator_floating_so_ecosystem_drift_fails_a_pull_request() -> None:
     for command in _gate_commands(_workflow("ci.yml")):
         assert "twine==" not in command, command
+
+
+@pytest.mark.parametrize("workflow", ("ci.yml", "release.yml"))
+def test_every_workflow_fails_on_unformatted_code(workflow: str) -> None:
+    assert any(
+        "ruff format --check" in cmd
+        for job in _workflow(workflow)["jobs"].values()
+        for cmd in _runs(job)
+    ), workflow
 
 
 def _dependabot() -> dict:
@@ -188,7 +205,6 @@ def test_the_build_requirements_filename_is_one_dependabot_discovers() -> None:
     assert _BUILD_REQUIREMENTS.endswith(".txt"), _BUILD_REQUIREMENTS
 
 
-
 def test_the_declared_sdk_floor_excludes_versions_the_code_cannot_import() -> None:
     with (_REPO_ROOT / "mcp" / "pyproject.toml").open("rb") as handle:
         deps = tomllib.load(handle)["project"]["dependencies"]
@@ -202,14 +218,17 @@ def test_the_declared_sdk_floor_excludes_versions_the_code_cannot_import() -> No
 
 
 def _workflow_jobs() -> list[tuple[str, str, dict]]:
-    return [(path.name, name, job)
-            for path in sorted((_REPO_ROOT / ".github" / "workflows").glob("*.yml"))
-            for name, job in _workflow(path.name)["jobs"].items()]
+    return [
+        (path.name, name, job)
+        for path in sorted((_REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+        for name, job in _workflow(path.name)["jobs"].items()
+    ]
 
 
 def _steps_using(job: dict, action: str) -> list[dict]:
-    return [step for step in job.get("steps", [])
-            if str(step.get("uses", "")).startswith(f"{action}@")]
+    return [
+        step for step in job.get("steps", []) if str(step.get("uses", "")).startswith(f"{action}@")
+    ]
 
 
 def test_only_a_job_that_pushes_keeps_the_checkout_credential() -> None:
@@ -221,17 +240,25 @@ def test_only_a_job_that_pushes_keeps_the_checkout_credential() -> None:
 
 
 def test_the_release_builds_without_a_restored_cache() -> None:
-    steps = [step for job in _workflow("release.yml")["jobs"].values()
-             for step in _steps_using(job, "astral-sh/setup-uv")]
+    steps = [
+        step
+        for job in _workflow("release.yml")["jobs"].values()
+        for step in _steps_using(job, "astral-sh/setup-uv")
+    ]
     assert steps
     assert all(step.get("with", {}).get("enable-cache") is False for step in steps), steps
 
 
 def test_every_dockerfile_has_an_update_channel() -> None:
-    watched = {d.rstrip("/") for u in _channel("docker")
-               for d in u.get("directories", [u.get("directory", "")])}
-    dockerfiles = {p.parent.relative_to(_REPO_ROOT).as_posix()
-                   for p in _REPO_ROOT.rglob("Dockerfile")
-                   if not {".venv", "node_modules", ".git"} & set(p.parts)}
+    watched = {
+        d.rstrip("/")
+        for u in _channel("docker")
+        for d in u.get("directories", [u.get("directory", "")])
+    }
+    dockerfiles = {
+        p.parent.relative_to(_REPO_ROOT).as_posix()
+        for p in _REPO_ROOT.rglob("Dockerfile")
+        if not {".venv", "node_modules", ".git"} & set(p.parts)
+    }
     found = {"" if d == "." else f"/{d}" for d in dockerfiles}
     assert found and found <= watched, found - watched

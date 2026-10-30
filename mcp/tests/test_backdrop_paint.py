@@ -57,8 +57,9 @@ _OPAQUE_AND_MODERN = (
     Probe("dark-veil", "background:rgba(0,0,0,0.5)"),
     Probe("light-veil", "background:rgba(255,255,255,0.12)"),
     Probe("stacked-veils", "background:rgba(0,0,0,0.4)", wrapper="background:rgba(0,0,0,0.4)"),
-    Probe("opposed-veils", "background:rgba(255,255,255,0.5)",
-          wrapper="background:rgba(0,0,0,0.5)"),
+    Probe(
+        "opposed-veils", "background:rgba(255,255,255,0.5)", wrapper="background:rgba(0,0,0,0.5)"
+    ),
     Probe("deep-plain", depth=_PAST_THE_BOUND),
     Probe("deep-veil", "background:rgba(255,255,255,0.2)", depth=_PAST_THE_BOUND),
 )
@@ -68,8 +69,13 @@ PAGES = (
     Page("opaque-html", "background:#111", "", "#fff", _OPAQUE_AND_MODERN),
     Page("translucent-body", "", "background:rgba(0,0,0,0.5)", "#fff", _OPAQUE_AND_MODERN),
     Page("oklch-html", "background:oklch(0.2 0 0)", "", "#fff", _OPAQUE_AND_MODERN),
-    Page("veiled-html-and-body", "background:rgba(0,0,0,0.6)",
-         "background:rgba(0,0,0,0.6)", "#fff", _OPAQUE_AND_MODERN),
+    Page(
+        "veiled-html-and-body",
+        "background:rgba(0,0,0,0.6)",
+        "background:rgba(0,0,0,0.6)",
+        "#fff",
+        _OPAQUE_AND_MODERN,
+    ),
     Page("dark-scheme-canvas", "color-scheme:dark", "", "#fff", _OPAQUE_AND_MODERN),
 )
 
