@@ -32,6 +32,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=$(git rev-parse "$HEAD^")
           curl -fsSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
@@ -51,11 +52,21 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=$(git rev-parse HEAD^)
+          if git diff --quiet "$BASE" HEAD -- mcp/uv.lock; then
+            echo "mcp/uv.lock is unchanged"
+            exit 0
+          fi
           advisories() {
             (cd "$1/mcp" && uv export --frozen --no-hashes --no-emit-project -q -o "$RUNNER_TEMP/$2.txt")
+            rc=0
             uvx pip-audit==2.10.0 -r "$RUNNER_TEMP/$2.txt" --no-deps --disable-pip \
-              --progress-spinner off -f json -o "$RUNNER_TEMP/$2.json" || true
-            jq -r '.dependencies[] | .name as $n | .vulns[] | "\($n) \(.id)"' "$RUNNER_TEMP/$2.json" | sort -u
+              --progress-spinner off -f json -o "$RUNNER_TEMP/$2.json" || rc=$?
+            if [ "$rc" -gt 1 ] || [ ! -s "$RUNNER_TEMP/$2.json" ]; then
+              echo "pip-audit did not report on the $2 tree (exit $rc)" >&2
+              return 1
+            fi
+            jq -r '.dependencies[] | .name as $n | .vulns[]? | "\($n) \(.id)"' "$RUNNER_TEMP/$2.json" | sort -u
           }
           git worktree add -q --detach "$RUNNER_TEMP/base" "$BASE"
           advisories "$RUNNER_TEMP/base" base > "$RUNNER_TEMP/base.ids"

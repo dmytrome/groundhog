@@ -289,8 +289,18 @@ def test_every_pull_request_is_scanned_for_secrets_workflow_risks_and_new_adviso
         assert scanner in commands, scanner
 
 
-def test_every_binary_a_workflow_downloads_is_checked_against_a_pinned_digest() -> None:
-    for workflow, name, job in _workflow_jobs():
-        for cmd in _runs(job):
-            if re.search(r"curl [^\n]*-o ", cmd):
-                assert re.search(r"[0-9a-f]{64} [^\n]*\| sha256sum -c -", cmd), f"{workflow}:{name}"
+_CURL_DOWNLOAD = re.compile(r"curl\b[^\n]*?(?:--output[ =]|\s-[A-Za-z]*o\s+)(\S+)")
+
+
+def test_every_file_a_workflow_downloads_with_curl_is_checked_against_its_own_digest() -> None:
+    downloads = [
+        (f"{workflow}:{name}", cmd, target)
+        for workflow, name, job in _workflow_jobs()
+        for cmd in _runs(job)
+        for target in _CURL_DOWNLOAD.findall(cmd)
+    ]
+
+    assert downloads
+    for where, cmd, target in downloads:
+        digest = rf"[0-9a-f]{{64}}  {re.escape(target)}\"? \| sha256sum -c -"
+        assert re.search(digest, cmd), f"{where}: {target}"
