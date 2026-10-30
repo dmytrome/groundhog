@@ -1,0 +1,69 @@
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          enable-cache: false
+      - run: uvx zizmor==1.31.1 --min-severity medium .github/workflows
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan the new commits for secrets
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          curl -fsSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git --no-banner --redact --log-opts="$BASE..$HEAD" .
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          enable-cache: false
+      - name: Fail on advisories the change adds to the lock
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          advisories() {
+            (cd "$1/mcp" && uv export --frozen --no-hashes --no-emit-project -q -o "$RUNNER_TEMP/$2.txt")
+            uvx pip-audit==2.10.0 -r "$RUNNER_TEMP/$2.txt" --no-deps --disable-pip \
+              --progress-spinner off -f json -o "$RUNNER_TEMP/$2.json" || true
+            jq -r '.dependencies[] | .name as $n | .vulns[] | "\($n) \(.id)"' "$RUNNER_TEMP/$2.json" | sort -u
+          }
+          git worktree add -q --detach "$RUNNER_TEMP/base" "$BASE"
+          advisories "$RUNNER_TEMP/base" base > "$RUNNER_TEMP/base.ids"
+          advisories . head > "$RUNNER_TEMP/head.ids"
+          added=$(comm -13 "$RUNNER_TEMP/base.ids" "$RUNNER_TEMP/head.ids")
+          if [ -n "$added" ]; then
+            echo "Advisories this change adds to mcp/uv.lock:"
+            echo "$added"
+            exit 1
+          fi
+          echo "No advisories added to mcp/uv.lock"

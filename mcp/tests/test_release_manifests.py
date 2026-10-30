@@ -262,3 +262,20 @@ def test_every_dockerfile_has_an_update_channel() -> None:
     }
     found = {"" if d == "." else f"/{d}" for d in dockerfiles}
     assert found and found <= watched, found - watched
+
+
+def test_every_pull_request_is_scanned_for_secrets_workflow_risks_and_new_advisories() -> None:
+    workflow = _workflow("security.yml")
+
+    commands = " ".join(cmd for job in workflow["jobs"].values() for cmd in _runs(job))
+
+    assert "pull_request" in workflow[True]
+    for scanner in ("zizmor", "gitleaks git", "pip-audit"):
+        assert scanner in commands, scanner
+
+
+def test_every_binary_a_workflow_downloads_is_checked_against_a_pinned_digest() -> None:
+    for workflow, name, job in _workflow_jobs():
+        for cmd in _runs(job):
+            if re.search(r"curl [^\n]*-o ", cmd):
+                assert re.search(r"[0-9a-f]{64} [^\n]*\| sha256sum -c -", cmd), f"{workflow}:{name}"
