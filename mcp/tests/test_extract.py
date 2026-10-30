@@ -71,7 +71,7 @@ def test_to_document_returns_captured_article_metadata() -> None:
 
 
 def test_to_document_metadata_nulls_when_absent():
-    markdown, meta = to_document(
+    _markdown, meta = to_document(
         "<html><body><article><p>" + "word " * 40 + "</p></article></body></html>",
         "https://x.com",
     )
@@ -129,4 +129,4 @@ def test_attribute_text_never_reaches_the_markdown() -> None:
 
     assert "Cats nap a lot during the day" in markdown
     sentinels = ["ALTSHORT", "ALTLONG", "TITLESHORT", "TITLELONG", "ARIASHORT", "DESCSHORT"]
-    assert [s for s in sentinels + ["FIGALT"] if s in markdown] == []
+    assert [s for s in [*sentinels, "FIGALT"] if s in markdown] == []

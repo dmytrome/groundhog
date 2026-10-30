@@ -60,7 +60,11 @@ testpaths = ["tests"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "S"]
+ignore = ["S101", "S110", "S603", "SIM905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S104", "S108", "S311", "RUF001"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

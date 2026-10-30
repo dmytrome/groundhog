@@ -1225,7 +1225,7 @@ async def test_a_private_address_is_refused_before_any_browser_is_contacted(monk
     monkeypatch.setattr(engine, "CDPClient", no_browser)
     provider = engine.EngineProvider(_cfg())
 
-    with pytest.raises(engine.safety.BlockedURLError, match="127.0.0.1"):
+    with pytest.raises(engine.safety.BlockedURLError, match=r"127\.0\.0\.1"):
         await provider.fetch("http://127.0.0.1:8080/admin")
 
 
@@ -1415,7 +1415,7 @@ async def test_a_command_the_browser_never_answers_fails_instead_of_hanging(
         client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
         await client.connect()
         try:
-            with pytest.raises(TimeoutError, match="Target.closeTarget"):
+            with pytest.raises(TimeoutError, match=r"Target\.closeTarget"):
                 await client.send("Target.closeTarget", {"targetId": "t"})
             closed_after_timeout = client.closed
         finally:
@@ -1438,7 +1438,7 @@ async def test_a_session_command_timeout_leaves_the_client_usable(
         client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
         await client.connect()
         try:
-            with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+            with pytest.raises(cdp.CommandTimeout, match=r"Page\.navigate"):
                 await client.send(
                     "Page.navigate", {"url": "https://example.com/"}, session_id="tab"
                 )

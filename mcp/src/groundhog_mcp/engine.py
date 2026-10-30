@@ -69,7 +69,7 @@ _CHROME_COMMANDS = ("google-chrome", "google-chrome-stable", "chromium", "chromi
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _WS_SCHEMES = ("ws", "wss")
 _ISOLATED_WORLD = "groundhog"
-_HEADLESS_TOKEN = "HeadlessChrome/"
+_HEADLESS_PRODUCT = "HeadlessChrome/"
 _IDENTITY_TIMEOUT_S = 10.0
 _IDENTITY_ATTEMPTS = 3
 _GUARDED_DOCUMENTS = {"urlPattern": "*", "resourceType": "Document"}
@@ -592,17 +592,17 @@ class _ChallengeAssets:
 
 
 def _headful_identity(user_agent: str, hints: dict) -> dict | None:
-    if _HEADLESS_TOKEN not in user_agent:
+    if _HEADLESS_PRODUCT not in user_agent:
         return None
     return {
-        "userAgent": user_agent.replace(_HEADLESS_TOKEN, "Chrome/"),
+        "userAgent": user_agent.replace(_HEADLESS_PRODUCT, "Chrome/"),
         "userAgentMetadata": {key: hints[key] for key in _HINT_KEYS if key in hints},
     }
 
 
 async def _read_identity(cdp: CDPClient) -> dict | None:
     user_agent = (await cdp.send("Browser.getVersion"))["userAgent"]
-    if _HEADLESS_TOKEN not in user_agent:
+    if _HEADLESS_PRODUCT not in user_agent:
         return None
     target = await cdp.send("Target.createTarget", {"url": _HINTS_PAGE})
     try:
@@ -815,10 +815,8 @@ class _ChildFrames:
 
     @staticmethod
     async def _release(cdp: CDPClient, session_id: str) -> None:
-        try:
+        with contextlib.suppress(CDPError, OSError, WebSocketException):
             await cdp.send("Runtime.runIfWaitingForDebugger", session_id=session_id)
-        except (CDPError, OSError, WebSocketException):
-            pass
 
     def _watch(self, cdp: CDPClient, session_id: str) -> None:
         def on_attached(params: dict) -> None:

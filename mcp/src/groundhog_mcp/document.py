@@ -121,8 +121,11 @@ def _capped(
     kept = kept_char + kept_hidden
     if not dropped:
         return kept
-    return kept + [
-        sanitize.notice("report_truncated", f"{dropped} further threats not reported (cap {limit})")
+    return [
+        *kept,
+        sanitize.notice(
+            "report_truncated", f"{dropped} further threats not reported (cap {limit})"
+        ),
     ]
 
 

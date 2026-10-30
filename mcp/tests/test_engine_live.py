@@ -106,7 +106,7 @@ async def test_a_public_redirect_into_a_local_service_never_reaches_it():
     provider = EngineProvider(load_config())
     await provider.start()
     try:
-        with pytest.raises(BlockedURLError, match="127.0.0.1"):
+        with pytest.raises(BlockedURLError, match=r"127\.0\.0\.1"):
             await provider.fetch("https://httpbin.org/redirect-to?url=" + quote(local, safe=""))
     finally:
         await provider.aclose()
