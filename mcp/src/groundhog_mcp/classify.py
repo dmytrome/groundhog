@@ -60,13 +60,15 @@ _HUMAN_CHECK_SIGNS = (
     "verifying you are human",
     "are you a robot",
 )
-_TITLE_SIGNS = _HUMAN_CHECK_SIGNS + (
+_TITLE_SIGNS = (
+    *_HUMAN_CHECK_SIGNS,
     "just a moment",
     "attention required",
     "checking if the site connection is secure",
 )
 # Matched against the rendered text, so every phrase here must be one a *reader* sees.
-_BODY_SIGNS = _HUMAN_CHECK_SIGNS + (
+_BODY_SIGNS = (
+    *_HUMAN_CHECK_SIGNS,
     "checking your browser before accessing",
     "ddos protection by cloudflare",
     "performance & security by cloudflare",

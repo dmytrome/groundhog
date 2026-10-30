@@ -221,7 +221,7 @@ def test_not_content_covers_every_status_except_ok_and_unknown():
     # The set drives whether `research` ranks a page's body; a status added to the
     # enum and forgotten here would silently start feeding error bodies into passages.
     every = set(typing.get_args(classify.RetrievalStatus))
-    assert classify.NOT_CONTENT == every - {"ok", "unknown"}
+    assert every - {"ok", "unknown"} == classify.NOT_CONTENT
 
 
 @pytest.mark.parametrize("asset", [False, True])

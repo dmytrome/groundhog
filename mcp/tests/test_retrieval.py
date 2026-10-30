@@ -65,7 +65,7 @@ def test_no_match_returns_empty_for_caller_fallback():
 
 
 def test_budget_drops_lowest_ranked_and_marks_truncated():
-    body, matches, truncated, _ = _select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
+    _body, matches, truncated, _ = _select(DOC, "cat dog animals", max_tokens=10)  # ~40 chars
     assert truncated is True
     assert len(matches) >= 1
 
@@ -345,7 +345,7 @@ def test_a_document_whose_fences_close_is_chunked_as_commonmark_reads_it():
     documents = []
     for _ in range(400):
         body = [rng.choice(_FRAGMENTS) for _ in range(rng.randrange(4, 30))]
-        documents.append("\n".join(body + ["```", "~~~", "~~~~", "````"]) + "\n")
+        documents.append("\n".join([*body, "```", "~~~", "~~~~", "````"]) + "\n")
     assert not _disagreements(documents)[:3]
 
 

@@ -56,7 +56,7 @@ async def test_mcp_boundary_rejects_unknown_format():
     # A loopback URL the SSRF guard rejects on sight: if validation ever regresses,
     # this fails with "blocked address" instead of reaching the network.
     mcp = server.build_server()
-    with pytest.raises(Exception, match="(?i)literal|enum|validation"):
+    with pytest.raises(Exception, match=r"(?i)literal|enum|validation"):
         await mcp.call_tool("read_url", {"url": "http://127.0.0.1:1/", "format": "json"})
 
 

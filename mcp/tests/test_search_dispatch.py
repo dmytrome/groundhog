@@ -191,11 +191,13 @@ async def test_every_hit_text_field_is_sanitized_and_bounded(
 
     monkeypatch.setattr(search.serp, "search", _serp)
     hits, _ = await search.search("q", _cfg(search_backend="serp"), limit=5)
-    assert hits == [{
-        "title": "T" * 300,
-        "url": "https://ex.com/",
-        "snippet": "S" * 500,
-        "engine": "E" * 60,
-        "score": 1.0,
-        "published": "P" * 40,
-    }]
+    assert hits == [
+        {
+            "title": "T" * 300,
+            "url": "https://ex.com/",
+            "snippet": "S" * 500,
+            "engine": "E" * 60,
+            "score": 1.0,
+            "published": "P" * 40,
+        }
+    ]

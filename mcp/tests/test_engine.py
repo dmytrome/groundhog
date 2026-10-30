@@ -686,7 +686,6 @@ async def test_document_requests_are_intercepted_only_while_private_addresses_ar
     assert fetch == [{"patterns": requests + responses}]
 
 
-
 _PDF_PAUSE = json.loads((_FIXTURES / "cdp_paused_pdf_response.json").read_text())
 _PDF_EOF = json.loads((_FIXTURES / "cdp_io_read_eof.json").read_text())
 _PDF_BYTES = (_FIXTURES / "copyright_circular_1.pdf").read_bytes()
@@ -857,6 +856,7 @@ async def test_a_captured_pdf_that_cannot_be_read_says_why(
     page = await _pdf_page(monkeypatch, data, challenge_seen=challenge_seen)
 
     assert page.retrieval_status == status
+
 
 def test_a_chrome_path_that_is_not_an_executable_is_reported_as_not_found(tmp_path):
     missing = tmp_path / "no-chrome"
@@ -1225,7 +1225,7 @@ async def test_a_private_address_is_refused_before_any_browser_is_contacted(monk
     monkeypatch.setattr(engine, "CDPClient", no_browser)
     provider = engine.EngineProvider(_cfg())
 
-    with pytest.raises(engine.safety.BlockedURLError, match="127.0.0.1"):
+    with pytest.raises(engine.safety.BlockedURLError, match=r"127\.0\.0\.1"):
         await provider.fetch("http://127.0.0.1:8080/admin")
 
 
@@ -1415,7 +1415,7 @@ async def test_a_command_the_browser_never_answers_fails_instead_of_hanging(
         client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
         await client.connect()
         try:
-            with pytest.raises(TimeoutError, match="Target.closeTarget"):
+            with pytest.raises(TimeoutError, match=r"Target\.closeTarget"):
                 await client.send("Target.closeTarget", {"targetId": "t"})
             closed_after_timeout = client.closed
         finally:
@@ -1438,7 +1438,7 @@ async def test_a_session_command_timeout_leaves_the_client_usable(
         client = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
         await client.connect()
         try:
-            with pytest.raises(cdp.CommandTimeout, match="Page.navigate"):
+            with pytest.raises(cdp.CommandTimeout, match=r"Page\.navigate"):
                 await client.send(
                     "Page.navigate", {"url": "https://example.com/"}, session_id="tab"
                 )
@@ -1491,7 +1491,7 @@ def test_json_responses_larger_than_the_default_limit_are_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def response(url: str, timeout: float) -> io.BytesIO:
-        return io.BytesIO(b'{"value":"' + b'x' * (5 * 1024 * 1024) + b'"}')
+        return io.BytesIO(b'{"value":"' + b"x" * (5 * 1024 * 1024) + b'"}')
 
     monkeypatch.setattr(http._opener, "open", response)
     with pytest.raises(ValueError, match="response body exceeded"):
@@ -1652,18 +1652,20 @@ def test_a_canonical_metadata_url_that_cleaning_would_change_is_dropped(
         ("cdp_thrown_null_details.json", "null"),
     ],
 )
-async def test_a_real_page_exception_is_reported_by_its_message(
-    fixture: str, message: str
-) -> None:
+async def test_a_real_page_exception_is_reported_by_its_message(fixture: str, message: str) -> None:
     details = json.loads((_FIXTURES / fixture).read_text())
 
     async def respond(ws: websockets.ServerConnection) -> None:
         async for raw in ws:
             request = json.loads(raw)
-            await ws.send(json.dumps({
-                "id": request["id"],
-                "result": {"result": {"type": "object"}, "exceptionDetails": details},
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": request["id"],
+                        "result": {"result": {"type": "object"}, "exceptionDetails": details},
+                    }
+                )
+            )
 
     async with websockets.serve(respond, "127.0.0.1", 0) as server:
         provider = engine.EngineProvider(_cfg())
@@ -1861,15 +1863,23 @@ async def test_unavailable_isolated_world_commands_degrade_without_hanging(
             request = json.loads(raw)
             if request["method"] == command:
                 if failure == "refused":
-                    await ws.send(json.dumps({
-                        "id": request["id"],
-                        "error": {"code": -32601, "message": "method unavailable"},
-                    }))
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "id": request["id"],
+                                "error": {"code": -32601, "message": "method unavailable"},
+                            }
+                        )
+                    )
             else:
-                await ws.send(json.dumps({
-                    "id": request["id"],
-                    "result": {"frameTree": {"frame": {"id": "root"}}},
-                }))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "id": request["id"],
+                            "result": {"frameTree": {"frame": {"id": "root"}}},
+                        }
+                    )
+                )
 
     monkeypatch.setattr(engine, "_EVAL_TIMEOUT_S", 0.05)
     async with websockets.serve(respond, "127.0.0.1", 0) as server:
@@ -1897,10 +1907,14 @@ async def test_page_evaluation_exception_details_are_bounded() -> None:
                 "lineNumber": 0,
                 "columnNumber": 0,
             }
-            await ws.send(json.dumps({
-                "id": request["id"],
-                "result": {"result": {"type": "undefined"}, "exceptionDetails": details},
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": request["id"],
+                        "result": {"result": {"type": "undefined"}, "exceptionDetails": details},
+                    }
+                )
+            )
 
     async with websockets.serve(respond, "127.0.0.1", 0) as server:
         provider = engine.EngineProvider(_cfg())
@@ -1918,10 +1932,13 @@ async def test_page_evaluation_exception_details_are_bounded() -> None:
 def test_a_sub_frame_navigation_does_not_replace_the_main_documents_response() -> None:
     responses = engine._MainResponse()
     for loader, status in (("main", 200), ("child", 403)):
-        responses._on_response({
-            "requestId": loader, "loaderId": loader,
-            "response": {"status": status, "mimeType": "text/html", "headers": {}},
-        })
+        responses._on_response(
+            {
+                "requestId": loader,
+                "loaderId": loader,
+                "response": {"status": status, "mimeType": "text/html", "headers": {}},
+            }
+        )
     responses._on_frame_navigated({"frame": {"id": "root", "loaderId": "main"}})
     responses._on_frame_navigated({"frame": {"id": "ad", "parentId": "root", "loaderId": "child"}})
     selected = responses.main(None)
@@ -1930,10 +1947,13 @@ def test_a_sub_frame_navigation_does_not_replace_the_main_documents_response() -
 
 def test_an_unobserved_document_is_not_classified_from_another_documents_response() -> None:
     responses = engine._MainResponse()
-    responses._on_response({
-        "requestId": "observed", "loaderId": "observed",
-        "response": {"status": 200, "mimeType": "text/html", "headers": {}},
-    })
+    responses._on_response(
+        {
+            "requestId": "observed",
+            "loaderId": "observed",
+            "response": {"status": 200, "mimeType": "text/html", "headers": {}},
+        }
+    )
     for loader in ("unobserved", None):
         selected = responses.main(loader)
         assert engine.classify.classify(selected, False, "An article", "Some content") == "unknown"

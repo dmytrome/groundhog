@@ -6,7 +6,7 @@ import os
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import pytest
 
@@ -100,17 +100,41 @@ def _local_service(host: str = "127.0.0.1") -> tuple[ThreadingHTTPServer, list[s
     return srv, hits
 
 
-async def test_a_public_redirect_into_a_local_service_never_reaches_it():
+def _redirect_to(location: str) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+async def test_a_public_redirect_into_a_local_service_never_reaches_it(monkeypatch):
     srv, hits = _local_service()
-    local = f"http://127.0.0.1:{srv.server_address[1]}/admin"
+    v = srv.server_address[1]
+
+    async def only_the_victim_is_private(url, cfg):
+        if urlparse(url).port == v:
+            raise BlockedURLError(f"blocked address: 127.0.0.1:{v}")
+
+    monkeypatch.setattr(safety, "check_url", only_the_victim_is_private)
+    redirector = _redirect_to(f"http://127.0.0.1:{v}/admin")
     provider = EngineProvider(load_config())
     await provider.start()
     try:
-        with pytest.raises(BlockedURLError, match="127.0.0.1"):
-            await provider.fetch("https://httpbin.org/redirect-to?url=" + quote(local, safe=""))
+        with pytest.raises(BlockedURLError, match=r"127\.0\.0\.1"):
+            await provider.fetch(f"http://{PAGE_HOST}:{redirector.server_address[1]}/")
     finally:
         await provider.aclose()
         srv.shutdown()
+        redirector.shutdown()
     assert hits == []
 
 
@@ -557,9 +581,7 @@ async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
     normal_ready = asyncio.Event()
     large_done = asyncio.Event()
 
-    async def overlapping_eval(
-        sid: str, expression: str, context_id: int | None = None
-    ) -> object:
+    async def overlapping_eval(sid: str, expression: str, context_id: int | None = None) -> object:
         value = await evaluate(sid, expression, context_id)
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
             assert isinstance(value, dict)
@@ -626,9 +648,7 @@ async def test_every_collected_field_is_capped_before_it_leaves_the_page(
     evaluate = provider._eval
     checked = False
 
-    async def check_collected(
-        sid: str, expression: str, context_id: int | None = None
-    ) -> object:
+    async def check_collected(sid: str, expression: str, context_id: int | None = None) -> object:
         nonlocal checked
         value = await evaluate(sid, expression, context_id)
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
@@ -2305,11 +2325,11 @@ async def test_include_hidden_still_returns_shadow_content():
 async def test_settle_probes_are_not_visible_to_a_page_that_instruments_dom_queries() -> None:
     html = (
         '<html><body><p id="status">UNPROBED_CONTENT_MARKER</p><script>'
-        'const query = document.querySelectorAll.bind(document);'
-        'document.querySelectorAll = function(...args) {'
+        "const query = document.querySelectorAll.bind(document);"
+        "document.querySelectorAll = function(...args) {"
         'document.getElementById("status").textContent = "SETTLE_PROBE_EXPOSED";'
-        'return query(...args);'
-        '};</script></body></html>'
+        "return query(...args);"
+        "};</script></body></html>"
     )
     page = await _fetch_local(html)
     assert "UNPROBED_CONTENT_MARKER" in page.text
@@ -2514,9 +2534,7 @@ STILL_PAINTED = {
         '<table><tr><td style="transform:scale(0)">{m}</td></tr></table>'
     ),
     "inset_to_the_middle_on_both_axes": ('<div style="clip-path:inset(50% 50%)">{m}</div>'),
-    "inset_to_the_edge_from_two_sides": (
-        '<div style="clip-path:inset(0% 0% 100% 100%)">{m}</div>'
-    ),
+    "inset_to_the_edge_from_two_sides": ('<div style="clip-path:inset(0% 0% 100% 100%)">{m}</div>'),
     "filter_slightly_transparent": ('<div style="filter:opacity(0.5)">{m}</div>'),
     "tiny_scale": ('<div style="transform:scale(0.01)">{m}</div>'),
     "rotation_undone_by_rotate": (

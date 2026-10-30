@@ -286,7 +286,7 @@ class _Rewriter:
         hidden = state.hidden()
         self.found = self.found or hidden
         if hidden == self._keep_hidden_runs:
-            return lead + [([operands[-1]], b"TJ" if op == b"TJ" else b"Tj")]
+            return [*lead, ([operands[-1]], b"TJ" if op == b"TJ" else b"Tj")]
         parts = list(operands[-1]) if op == b"TJ" else [operands[-1]]
         try:
             gap = _advance(parts, self._measured(state.font), state)
@@ -294,7 +294,7 @@ class _Rewriter:
             if self._keep_hidden_runs:
                 return lead
             raise
-        return lead + [([ArrayObject([FloatObject(gap)])], b"TJ")]
+        return [*lead, ([ArrayObject([FloatObject(gap)])], b"TJ")]
 
     def _form(self, resources: DictionaryObject, name: PdfObject, state: _State) -> PdfObject:
         xobjects = resources.get("/XObject")
