@@ -3,17 +3,28 @@ const ws = new WebSocket(`ws://127.0.0.1:${GROUNDHOG.port}/ego/${GROUNDHOG.token
 const byTarget = new Map();
 const bySession = new Map();
 const out = (o) => ws.send(JSON.stringify(o));
+const TAKEOVER = "Control of this task space is with the user";
+let takenOver = false;
+
+function stopOnTakeover(e) {
+  if (takenOver || !String(e?.message ?? e).includes(TAKEOVER)) return;
+  takenOver = true;
+  bySession.clear();
+  ws.close(4000, TAKEOVER);
+}
 
 async function poll(sid) {
   const entry = bySession.get(sid);
+  let idle = 2;
   while (bySession.get(sid) === entry) {
     let evs;
-    try { evs = await entry.page.events(); } catch { break; }
+    try { evs = await entry.page.events(); } catch (e) { stopOnTakeover(e); break; }
     for (const e of evs) {
       out({ cid: entry.cid, msg: { method: e.method, params: e.params, sessionId: sid } });
       settleNavigation(entry, e);
     }
-    if (!evs.length) await new Promise((r) => setTimeout(r, 2));
+    idle = evs.length ? 2 : Math.min(idle * 2, 50);
+    if (!evs.length) await new Promise((r) => setTimeout(r, idle));
   }
 }
 
@@ -27,14 +38,18 @@ function settleNavigation(entry, e) {
 }
 
 async function navigate(entry, params) {
-  const reply = new Promise((resolve) => {
-    const timer = setTimeout(() => done({ frameId: entry.tid, errorText: "net::ERR_TIMED_OUT" }), 85000);
-    const done = (r) => { if (entry.nav === nav) { entry.nav = null; clearTimeout(timer); resolve(r); } };
-    const nav = { done, loaderId: null };
+  let nav;
+  const reply = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => nav.done({ frameId: entry.tid, errorText: "net::ERR_TIMED_OUT" }), 85000);
+    const settle = (fn) => (v) => { if (entry.nav === nav) { entry.nav = null; clearTimeout(timer); fn(v); } };
+    nav = { done: settle(resolve), fail: settle(reject), loaderId: null };
     entry.nav = nav;
   });
-  const quick = await entry.page.cdp("Page.navigate", params, { timeout: 250 }).then((r) => r, () => null);
-  if (quick && entry.nav) entry.nav.done(quick);
+  try {
+    nav.done(await entry.page.cdp("Page.navigate", params, { timeout: 250 }));
+  } catch (e) {
+    if (e?.code !== "EGO_CDP_REQUEST_TIMEOUT") nav.fail(e);
+  }
   return reply;
 }
 
@@ -87,10 +102,13 @@ ws.onmessage = async (ev) => {
     const result = await handle(m.cid, method, params, sessionId);
     out({ cid: m.cid, msg: { id, result: result ?? {}, ...tag } });
   } catch (e) {
+    stopOnTakeover(e);
     out({ cid: m.cid, msg: { id, error: { code: -32000, message: String(e?.message ?? e) }, ...tag } });
   }
 };
 
 await new Promise((resolve) => { ws.onclose = resolve; });
-for (const tid of [...byTarget.keys()]) await close(tid);
-await task.finish({ keep: [] }).catch(() => {});
+if (!takenOver) {
+  for (const tid of [...byTarget.keys()]) await close(tid);
+  await task.finish({ keep: [] }).catch(() => {});
+}

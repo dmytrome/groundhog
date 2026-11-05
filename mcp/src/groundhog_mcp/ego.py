@@ -9,11 +9,17 @@ from pathlib import Path
 import websockets
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from . import sanitize
+
 _BRIDGE = Path(__file__).with_name("ego_bridge.mjs")
 STUB = Path(__file__).with_name("ego_stub.js").read_text()
 TAKEOVER = "Control of this task space is with the user"
+_TAKEOVER_CLOSE = 4000
+_NAME_IN_USE = "EGO_TASK_SPACE_NAME_IN_USE"
 _CONNECT_TIMEOUT_S = 30.0
+_PROBE_TIMEOUT_S = 5.0
 _EXIT_TIMEOUT_S = 10.0
+_KEPT_OUTPUT_BYTES = 4096
 
 
 def installed() -> bool:
@@ -29,6 +35,27 @@ def remediation() -> str:
     return "Could not reach Ego Lite through `ego-browser`: check that Ego Lite is open."
 
 
+async def reachable() -> bool:
+    binary = shutil.which("ego-browser")
+    if binary is None:
+        return False
+    process = await asyncio.create_subprocess_exec(
+        binary,
+        "nodejs",
+        "-e",
+        "0",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        return await asyncio.wait_for(process.wait(), _PROBE_TIMEOUT_S) == 0
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        return False
+
+
 class Bridge:
     def __init__(self) -> None:
         self._token = secrets.token_urlsafe(24)
@@ -38,12 +65,8 @@ class Bridge:
         self._connected = asyncio.Event()
         self._server: Server | None = None
         self._process: asyncio.subprocess.Process | None = None
-
-    @property
-    def alive(self) -> bool:
-        return (
-            self._ego is not None and self._process is not None and self._process.returncode is None
-        )
+        self._output = bytearray()
+        self._reader: asyncio.Task[None] | None = None
 
     async def start(self) -> str:
         binary = shutil.which("ego-browser")
@@ -55,12 +78,16 @@ class Bridge:
         self._process = await asyncio.create_subprocess_exec(
             binary,
             "nodejs",
-            "-e",
-            prelude + _BRIDGE.read_text(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
+        assert self._process.stdin is not None and self._process.stdout is not None
+        self._reader = asyncio.ensure_future(self._keep_output(self._process.stdout))
+        self._process.stdin.write((prelude + _BRIDGE.read_text()).encode())
+        with contextlib.suppress(ConnectionError):
+            await self._process.stdin.drain()
+        self._process.stdin.close()
         exited = asyncio.ensure_future(self._process.wait())
         connected = asyncio.ensure_future(self._connected.wait())
         try:
@@ -72,8 +99,16 @@ class Bridge:
             connected.cancel()
         if not self._connected.is_set():
             await self.aclose()
-            raise OSError(remediation())
+            raise OSError(_startup_error(self._said()))
         return f"ws://127.0.0.1:{port}/cdp/{self._token}"
+
+    async def _keep_output(self, stream: asyncio.StreamReader) -> None:
+        while chunk := await stream.read(_KEPT_OUTPUT_BYTES):
+            self._output += chunk
+            del self._output[:-_KEPT_OUTPUT_BYTES]
+
+    def _said(self) -> str:
+        return self._output.decode(errors="replace").replace(self._token, "***")
 
     async def _handle(self, ws: ServerConnection) -> None:
         path = ws.request.path if ws.request is not None else ""
@@ -88,25 +123,32 @@ class Bridge:
         self._ego = ws
         self._connected.set()
         try:
-            async for raw in ws:
-                message = json.loads(raw)
-                client = self._clients.get(message.get("cid"))
-                if client is not None:
-                    with contextlib.suppress(websockets.ConnectionClosed):
-                        await client.send(json.dumps(message["msg"]))
+            with contextlib.suppress(websockets.ConnectionClosed):
+                async for raw in ws:
+                    message = json.loads(raw)
+                    client = self._clients.get(message.get("cid"))
+                    if client is not None:
+                        with contextlib.suppress(websockets.ConnectionClosed):
+                            await client.send(json.dumps(message["msg"]))
         finally:
             self._ego = None
+            taken_over = ws.close_code == _TAKEOVER_CLOSE
             for client in list(self._clients.values()):
-                await client.close()
+                if taken_over:
+                    await client.close(_TAKEOVER_CLOSE, TAKEOVER)
+                else:
+                    await client.close()
 
     async def _serve_client(self, ws: ServerConnection) -> None:
         cid = next(self._ids)
         self._clients[cid] = ws
         try:
-            async for raw in ws:
-                if self._ego is None:
-                    break
-                await self._ego.send(json.dumps({"cid": cid, "msg": json.loads(raw)}))
+            with contextlib.suppress(websockets.ConnectionClosed):
+                async for raw in ws:
+                    if self._ego is None:
+                        break
+                    with contextlib.suppress(websockets.ConnectionClosed):
+                        await self._ego.send(json.dumps({"cid": cid, "msg": json.loads(raw)}))
         finally:
             self._clients.pop(cid, None)
             if self._ego is not None:
@@ -125,3 +167,16 @@ class Bridge:
             except TimeoutError:
                 process.terminate()
                 await process.wait()
+        if self._reader is not None:
+            await self._reader
+            self._reader = None
+
+
+def _startup_error(said: str) -> str:
+    if _NAME_IN_USE in said:
+        return (
+            "Ego Lite's `groundhog` task space is with you, so Groundhog will not use it. "
+            "Close it in Ego Lite to let Groundhog open a new one."
+        )
+    detail = sanitize.clean_field(said.strip()[-400:], sanitize.MAX_ERROR_CHARS)
+    return remediation() + (f" ego-browser said: {detail}" if detail else "")
