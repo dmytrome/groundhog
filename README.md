@@ -73,14 +73,15 @@ as you:
 - Requests carry your cookies and logged-in sessions, and your extensions run in the page. A
   page can read and write its site's storage in your profile, and opening a link can act on
   your account, as it would if you clicked it.
-- Every request the page makes is checked before it goes out, and refused if it is not a
-  `GET` or `HEAD`, aims at a private address, or loads a cross-site frame. WebSocket,
+- Every request the page makes is checked before it goes out. It is refused if it is not a
+  `GET` or `HEAD` or would load a page into a frame, and, unless
+  `GROUNDHOG_BLOCK_PRIVATE_IPS=false`, if it aims at a private address. WebSocket,
   WebTransport, WebRTC and service workers are switched off in the page and its workers, and
   a page can see that they are.
 - A `<link rel=preconnect>` to a local address can still open an empty TCP connection to it,
   because Groundhog does not change Ego Lite's preloading setting.
 - If Ego Lite hands the task space to you, the fetch fails and Groundhog does not take it
-  back.
+  back. Close that space in Ego Lite and the next fetch opens a new one.
 
 `CDP_URL` points Groundhog at any browser and is used as given: `http://` is probed for
 `/json/version`, `ws://` or `wss://` (what hosted browsers hand out) is connected to directly.

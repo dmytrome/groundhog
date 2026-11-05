@@ -965,7 +965,7 @@ class EngineProvider:
                 {"source": ego.STUB, "runImmediately": True},
                 session_id=sid,
             )
-        if self._cfg.block_private_ips:
+        if in_ego or self._cfg.block_private_ips:
             guarded = _GUARDED_REQUESTS if in_ego else _GUARDED_DOCUMENTS
             await self._cdp.send(
                 "Fetch.enable",
