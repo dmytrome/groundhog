@@ -65,6 +65,23 @@ docker run -d --rm --name groundhog-browser --shm-size 512m \
   -p 127.0.0.1:9222:9222 -- ghcr.io/dmytrome/groundhog:latest
 ```
 
+`GROUNDHOG_BROWSER=ego` reads pages in [Ego Lite](https://lite.ego.app/) instead, if you have it
+installed and open. Nothing else needs setting up: Groundhog opens its own task space there,
+and closes it when it stops. Your profile and settings are never changed, but pages are read
+as you:
+
+- Requests carry your cookies and logged-in sessions, and your extensions run in the page. A
+  page can read and write its site's storage in your profile, and opening a link can act on
+  your account, as it would if you clicked it.
+- Every request the page makes is checked before it goes out, and refused if it is not a
+  `GET` or `HEAD`, aims at a private address, or loads a cross-site frame. WebSocket,
+  WebTransport, WebRTC and service workers are switched off in the page and its workers, and
+  a page can see that they are.
+- A `<link rel=preconnect>` to a local address can still open an empty TCP connection to it,
+  because Groundhog does not change Ego Lite's preloading setting.
+- If Ego Lite hands the task space to you, the fetch fails and Groundhog does not take it
+  back.
+
 `CDP_URL` points Groundhog at any browser and is used as given: `http://` is probed for
 `/json/version`, `ws://` or `wss://` (what hosted browsers hand out) is connected to directly.
 Auto-start only runs for a local address that isn't answering, and
@@ -72,7 +89,8 @@ Auto-start only runs for a local address that isn't answering, and
 
 All four tools are annotated `readOnlyHint`: they write nothing and change no remote state.
 The one side effect is auto-start, which may launch Chrome or, with `stealth`, run the
-container after removing an unreachable one named `groundhog-browser`.
+container after removing an unreachable one named `groundhog-browser`. With `ego`, pages are
+read with your Ego Lite sessions, so a page can still change state on sites you are signed in to.
 
 ## What makes it different
 
@@ -225,7 +243,7 @@ browser can't be reached.
 | Env var                          | Default                 | Purpose |
 | -------------------------------- | ----------------------- | ------- |
 | `CDP_URL`                        | `http://127.0.0.1:9222` | CDP endpoint, local or remote. Unauthenticated, so keep it private |
-| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome` or `stealth`. Defaults to `stealth` when `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is set |
+| `GROUNDHOG_BROWSER`              | `chrome`                | What auto-start launches: `chrome`, `stealth`, or `ego` for Ego Lite. Defaults to `stealth` when `GROUNDHOG_COMPOSE_FILE` or `GROUNDHOG_BROWSER_IMAGE` is set |
 | `GROUNDHOG_CHROME_PATH`          | _(found)_               | Chrome executable |
 | `GROUNDHOG_CHROME_PROFILE`       | `~/.groundhog/chrome`   | Profile directory; a login made here is reused |
 | `GROUNDHOG_BLOCK_PRIVATE_IPS`    | `true`                  | The SSRF guard |

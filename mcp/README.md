@@ -36,6 +36,11 @@ already local. The first pull takes a few minutes. That means a mutable `:latest
 and run on your machine, Chrome runs `--no-sandbox` inside it, and any stale container named
 `groundhog-browser` is removed first on that path (a reachable browser is never touched).
 
+**Have [Ego Lite](https://lite.ego.app/) open?** Set `GROUNDHOG_BROWSER=ego` and pages are read
+there, in a task space Groundhog opens and closes itself. They are read as you, with your
+cookies, sessions and extensions; the [project README](https://github.com/dmytrome/groundhog#quick-start)
+lists what that means and what Groundhog blocks.
+
 **Prefer to manage the browser yourself?** Start it and Groundhog will just use it — the
 default `CDP_URL` already points there, so there is nothing else to configure:
 
