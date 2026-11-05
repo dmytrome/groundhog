@@ -16,7 +16,7 @@ async def status() -> StatusResult:
     diagnose setup before fetching: if `browser_reachable` is false, follow
     `hint` to start the browser, then retry."""
     cfg = load_config()
-    reachable = ego.installed() if cfg.browser == "ego" else await check_browser(cfg.cdp_url)
+    reachable = await (ego.reachable() if cfg.browser == "ego" else check_browser(cfg.cdp_url))
     hint = None if reachable else remediation(cfg)
     return {
         "browser_reachable": reachable,

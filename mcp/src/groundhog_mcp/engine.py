@@ -944,7 +944,8 @@ class EngineProvider:
         try:
             return await self._fetch_in_target(url, strip_hidden)
         except CDPError as exc:
-            if ego.TAKEOVER in str(exc):
+            closed_by = self._cdp.close_reason if self._cdp is not None else ""
+            if ego.TAKEOVER in str(exc) or ego.TAKEOVER in closed_by:
                 raise BrowserUnavailableError(
                     "Ego Lite handed Groundhog's task space to you, so Groundhog stopped and "
                     "will not take it back. Close that task space in Ego Lite to let "

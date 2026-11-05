@@ -464,6 +464,7 @@ class _ScriptedCDP:
         self.hints = hints
         self.calls: list[tuple[str, dict | None, str | None]] = []
         self.closed = False
+        self.close_reason = ""
 
     async def connect(self) -> None:
         pass
