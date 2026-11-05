@@ -726,9 +726,10 @@ async def test_outside_ego_a_page_may_still_post(monkeypatch):
     assert cdp.methods() == ["Fetch.continueRequest"]
 
 
-async def test_an_ego_tab_is_guarded_before_the_page_loads():
+@pytest.mark.parametrize("block", [True, False])
+async def test_an_ego_tab_is_guarded_before_the_page_loads(block):
     cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
-    provider = engine.EngineProvider(_cfg(browser="ego"))
+    provider = engine.EngineProvider(_cfg(browser="ego", block_private_ips=block))
     provider._cdp = cdp
 
     await provider._prepare_tab("tab")
