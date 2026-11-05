@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from .. import safety
+from .. import ego, safety
 from ..config import load_config
 from ..engine import check_browser, remediation
 
@@ -16,7 +16,7 @@ async def status() -> StatusResult:
     diagnose setup before fetching: if `browser_reachable` is false, follow
     `hint` to start the browser, then retry."""
     cfg = load_config()
-    reachable = await check_browser(cfg.cdp_url)
+    reachable = await (ego.reachable() if cfg.browser == "ego" else check_browser(cfg.cdp_url))
     hint = None if reachable else remediation(cfg)
     return {
         "browser_reachable": reachable,

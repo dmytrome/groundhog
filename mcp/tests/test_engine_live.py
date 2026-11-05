@@ -27,6 +27,11 @@ pytestmark = pytest.mark.skipif(
     reason="requires the engine running; set RUN_LIVE=1 and CDP_URL",
 )
 
+_IN_EGO = load_config().browser == "ego"
+_CDP_ENDPOINT = pytest.mark.skipif(_IN_EGO, reason="Ego Lite is reached through its bridge")
+_CROSS_SITE_FRAMES = pytest.mark.skipif(_IN_EGO, reason="Ego Lite refuses cross-site frames")
+_NO_EXTENSIONS = pytest.mark.skipif(_IN_EGO, reason="the user's extensions run in Ego Lite pages")
+
 
 async def test_fetch_example_com():
     provider = EngineProvider(load_config())
@@ -40,6 +45,7 @@ async def test_fetch_example_com():
         await provider.aclose()
 
 
+@_CDP_ENDPOINT
 async def test_a_browser_is_reachable_by_the_websocket_url_it_advertises():
     cfg = load_config()
     ws_url = await engine._browser_ws_url(cfg.cdp_url)
@@ -138,6 +144,7 @@ async def test_a_public_redirect_into_a_local_service_never_reaches_it(monkeypat
     assert hits == []
 
 
+@_CDP_ENDPOINT
 async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
     srv, hits = _local_service()
     port = srv.server_address[1]
@@ -311,6 +318,7 @@ async def test_a_cross_site_frame_cannot_navigate_itself_to_a_private_address(mo
 
 
 @_LOCAL_PAGES
+@_CROSS_SITE_FRAMES
 async def test_a_cross_site_frame_sees_the_same_identity_as_the_page():
     routes: dict[str, tuple[int, str]] = {}
     srv = _serve_paths(routes)
@@ -1912,6 +1920,7 @@ async def test_text_rebuilt_from_a_shadow_tree_is_disclosed():
     assert page.strip_incomplete is True
 
 
+@_CDP_ENDPOINT
 async def test_the_page_never_sees_which_nodes_were_flagged():
     srv = _serve(
         '<html lang="en"><head><title>T</title></head><body>'
@@ -2322,6 +2331,7 @@ async def test_include_hidden_still_returns_shadow_content():
     assert kept.strip_incomplete is False
 
 
+@_NO_EXTENSIONS
 async def test_settle_probes_are_not_visible_to_a_page_that_instruments_dom_queries() -> None:
     html = (
         '<html><body><p id="status">UNPROBED_CONTENT_MARKER</p><script>'

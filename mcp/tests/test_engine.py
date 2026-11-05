@@ -464,6 +464,7 @@ class _ScriptedCDP:
         self.hints = hints
         self.calls: list[tuple[str, dict | None, str | None]] = []
         self.closed = False
+        self.close_reason = ""
 
     async def connect(self) -> None:
         pass
@@ -684,6 +685,84 @@ async def test_document_requests_are_intercepted_only_while_private_addresses_ar
     requests = [{"urlPattern": "*", "resourceType": "Document"}] if block else []
     responses = [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"}]
     assert fetch == [{"patterns": requests + responses}]
+
+
+_EGO_PAUSED = json.loads((_FIXTURES / "ego_paused_requests.json").read_text())
+_EGO_TAKEOVER = json.loads((_FIXTURES / "ego_takeover_error.json").read_text())
+
+
+def _ego_paused(url: str) -> dict:
+    return next(p for p in _EGO_PAUSED["paused"] if p["request"]["url"] == url)
+
+
+async def _public_address(url, cfg):
+    return None
+
+
+@pytest.mark.parametrize(
+    "url,decision",
+    [
+        ("https://example.com/", "Fetch.continueRequest"),
+        ("https://example.com/probe", "Fetch.failRequest"),
+        ("https://www.iana.org/", "Fetch.failRequest"),
+    ],
+)
+async def test_in_ego_a_page_may_only_read_in_its_own_frame(monkeypatch, url, decision):
+    monkeypatch.setattr(engine.safety, "check_url", _public_address)
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    guard = engine._PrivateDocuments(_cfg(browser="ego"), _EGO_PAUSED["main_frame"])
+
+    await guard._decide(cdp, "tab", _ego_paused(url))
+
+    assert cdp.methods() == [decision]
+
+
+async def test_outside_ego_a_page_may_still_post(monkeypatch):
+    monkeypatch.setattr(engine.safety, "check_url", _public_address)
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    guard = engine._PrivateDocuments(_cfg(browser="chrome"), _EGO_PAUSED["main_frame"])
+
+    await guard._decide(cdp, "tab", _ego_paused("https://example.com/probe"))
+
+    assert cdp.methods() == ["Fetch.continueRequest"]
+
+
+@pytest.mark.parametrize("block", [True, False])
+async def test_an_ego_tab_is_guarded_before_the_page_loads(block):
+    cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+    provider = engine.EngineProvider(_cfg(browser="ego", block_private_ips=block))
+    provider._cdp = cdp
+
+    await provider._prepare_tab("tab")
+
+    sent = {method: params for method, params, _ in cdp.calls}
+    assert sent["Fetch.enable"] == {
+        "patterns": [
+            {"urlPattern": "*"},
+            {"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"},
+        ]
+    }
+    assert sent["Page.addScriptToEvaluateOnNewDocument"] == {
+        "source": engine.ego.STUB,
+        "runImmediately": True,
+    }
+    assert sent["Page.setPrerenderingAllowed"] == {"isAllowed": False}
+    assert sent["Network.setBypassServiceWorker"] == {"bypass": True}
+    assert not {"Target.setAutoAttach", "Browser.getVersion"} & set(sent)
+
+
+async def test_ego_handing_the_space_to_the_user_stops_the_fetch(monkeypatch):
+    monkeypatch.setattr(engine.safety, "check_url", _public_address)
+    provider = engine.EngineProvider(_cfg(browser="ego"))
+    provider._cdp = _ScriptedCDP(_HEADLESS_UA, _HINTS)
+
+    async def taken_over(url, strip_hidden):
+        raise engine.CDPError(str(_EGO_TAKEOVER))
+
+    monkeypatch.setattr(provider, "_fetch_in_target", taken_over)
+
+    with pytest.raises(engine.BrowserUnavailableError, match="will not take it back"):
+        await provider.fetch("https://example.com/")
 
 
 _PDF_PAUSE = json.loads((_FIXTURES / "cdp_paused_pdf_response.json").read_text())

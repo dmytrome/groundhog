@@ -37,6 +37,7 @@ class CDPClient:
         self._event_listeners: dict[tuple[str | None, str], list[Callable[[dict], None]]] = {}
         self._reader: asyncio.Task | None = None
         self._closed = False
+        self.close_reason = ""
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._ws_url, max_size=_MAX_FRAME_BYTES)
@@ -73,6 +74,7 @@ class CDPClient:
 
     def _fail_all(self, exc: Exception) -> None:
         self._closed = True
+        self.close_reason = self.close_reason or str(exc)
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(exc)
