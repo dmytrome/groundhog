@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `GROUNDHOG_BROWSER=ego` reads pages in Ego Lite, in a task space Groundhog opens and closes
+  itself. Every request a page makes is checked first; WebSocket, WebRTC and service workers
+  are switched off in the page.
+
 ### Changed
 
 - Page metadata is read without a second full extraction, so large pages are processed
