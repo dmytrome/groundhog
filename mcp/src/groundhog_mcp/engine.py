@@ -19,7 +19,7 @@ import tldextract
 import websockets
 from websockets.exceptions import WebSocketException
 
-from . import classify, http, pdf, safety, sanitize
+from . import classify, ego, http, pdf, safety, sanitize
 from .cdp import CDPClient, CDPError
 from .config import Config, load_config
 from .detect_js import DETECT_AND_COLLECT
@@ -73,6 +73,8 @@ _HEADLESS_PRODUCT = "HeadlessChrome/"
 _IDENTITY_TIMEOUT_S = 10.0
 _IDENTITY_ATTEMPTS = 3
 _GUARDED_DOCUMENTS = {"urlPattern": "*", "resourceType": "Document"}
+_GUARDED_REQUESTS = {"urlPattern": "*"}
+_READ_METHODS = ("GET", "HEAD")
 _DOCUMENT_RESPONSES = {**_GUARDED_DOCUMENTS, "requestStage": "Response"}
 _PDF_TYPES = frozenset(
     {
@@ -199,6 +201,8 @@ def _chrome_remediation(cfg: Config) -> str:
 
 
 def remediation(cfg: Config) -> str:
+    if cfg.browser == "ego":
+        return ego.remediation()
     if _is_websocket(cfg.cdp_url) or not _is_local(cfg.cdp_url):
         return (
             f"Cannot reach the browser at {safety.redacted_url(cfg.cdp_url)}. A browser "
@@ -649,8 +653,9 @@ def _on_paused(
 
 
 class _PrivateDocuments:
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, main_frame: str | None = None) -> None:
         self._cfg = cfg
+        self._main_frame = main_frame
         self.blocked: str | None = None
         self._pending: set[asyncio.Task[None]] = set()
 
@@ -661,7 +666,9 @@ class _PrivateDocuments:
         url = request.get("url") if isinstance(request, dict) else None
         refusal: str | None = "NameNotResolved"
         try:
-            if not (isinstance(url, str) and urlparse(url).scheme in ("http", "https")):
+            if self._cfg.browser == "ego" and self._outside_a_read(params, request):
+                refusal = "BlockedByClient"
+            elif not (isinstance(url, str) and urlparse(url).scheme in ("http", "https")):
                 refusal = None
             else:
                 await safety.check_url(url, self._cfg)
@@ -673,6 +680,13 @@ class _PrivateDocuments:
             pass
         finally:
             await self._resolve(cdp, session_id, params.get("requestId"), refusal)
+
+    def _outside_a_read(self, params: dict, request: object) -> bool:
+        method = request.get("method", "GET") if isinstance(request, dict) else None
+        subframe = params.get("resourceType") == "Document" and params.get("frameId") != (
+            self._main_frame
+        )
+        return method not in _READ_METHODS or subframe
 
     @staticmethod
     async def _resolve(
@@ -855,6 +869,7 @@ class EngineProvider:
         self._identity_settled = False
         self._identity_failures = 0
         self._identity_lock = asyncio.Lock()
+        self._ego: ego.Bridge | None = None
 
     async def start(self) -> None:
         ws_url = await self._resolve_ws()
@@ -869,6 +884,9 @@ class EngineProvider:
         assert self._cdp is not None
         async with self._identity_lock:
             if self._identity_settled:
+                return
+            if self._cfg.browser == "ego":
+                self._identity_settled = True
                 return
             try:
                 self._identity = await asyncio.wait_for(
@@ -887,6 +905,8 @@ class EngineProvider:
 
     async def _resolve_ws(self) -> str:
         cfg = self._cfg
+        if cfg.browser == "ego":
+            return await self._start_ego()
         try:
             return await _browser_ws_url(cfg.cdp_url)
         except (OSError, ValueError, KeyError) as exc:
@@ -897,6 +917,15 @@ class EngineProvider:
             return await _browser_ws_url(cfg.cdp_url)
         except (OSError, ValueError, KeyError) as exc:
             raise BrowserUnavailableError(remediation(cfg)) from exc
+
+    async def _start_ego(self) -> str:
+        if self._ego is not None:
+            await self._ego.aclose()
+        self._ego = ego.Bridge()
+        try:
+            return await self._ego.start()
+        except OSError as exc:
+            raise BrowserUnavailableError(ego.remediation()) from exc
 
     async def _ensure_connected(self) -> None:
         if self._cdp is not None and not self._cdp.closed:
@@ -914,6 +943,14 @@ class EngineProvider:
             await self._pages.acquire()
         try:
             return await self._fetch_in_target(url, strip_hidden)
+        except CDPError as exc:
+            if ego.TAKEOVER in str(exc):
+                raise BrowserUnavailableError(
+                    "Ego Lite handed Groundhog's task space to you, so Groundhog stopped and "
+                    "will not take it back. Close that task space in Ego Lite to let "
+                    "Groundhog start a new one."
+                ) from exc
+            raise
         finally:
             self._pages.release()
 
@@ -924,10 +961,22 @@ class EngineProvider:
             await self._cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
         await self._cdp.send("Page.enable", session_id=sid)
         await self._cdp.send("Network.enable", session_id=sid)
+        in_ego = self._cfg.browser == "ego"
+        if in_ego:
+            await self._cdp.send(
+                "Page.setPrerenderingAllowed", {"isAllowed": False}, session_id=sid
+            )
+            await self._cdp.send("Network.setBypassServiceWorker", {"bypass": True}, session_id=sid)
+            await self._cdp.send(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": ego.STUB, "runImmediately": True},
+                session_id=sid,
+            )
         if self._cfg.block_private_ips:
+            guarded = _GUARDED_REQUESTS if in_ego else _GUARDED_DOCUMENTS
             await self._cdp.send(
                 "Fetch.enable",
-                {"patterns": [_GUARDED_DOCUMENTS, _DOCUMENT_RESPONSES]},
+                {"patterns": [guarded, _DOCUMENT_RESPONSES]},
                 session_id=sid,
             )
         else:
@@ -935,7 +984,7 @@ class EngineProvider:
                 await self._cdp.send(
                     "Fetch.enable", {"patterns": [_DOCUMENT_RESPONSES]}, session_id=sid
                 )
-        if self._identity is not None or self._cfg.block_private_ips:
+        if not in_ego and (self._identity is not None or self._cfg.block_private_ips):
             await self._cdp.send("Target.setAutoAttach", _FRAME_AUTO_ATTACH, session_id=sid)
 
     async def _prepare_frame(self, cdp: CDPClient, sid: str) -> list[Callable[[], None]]:
@@ -963,7 +1012,7 @@ class EngineProvider:
             inflight = _InflightRequests()
             responses = _MainResponse()
             challenge_assets = _ChallengeAssets()
-            private_documents = _PrivateDocuments(self._cfg)
+            private_documents = _PrivateDocuments(self._cfg, tid)
             pdf_documents = _PdfDocuments(tid)
             child_frames = _ChildFrames(self._prepare_frame, guarded=self._cfg.block_private_ips)
             unsubscribes = (
@@ -1201,6 +1250,9 @@ class EngineProvider:
         if self._cdp is not None:
             await self._cdp.close()
             self._cdp = None
+        if self._ego is not None:
+            await self._ego.aclose()
+            self._ego = None
 
 
 _provider: EngineProvider | None = None
