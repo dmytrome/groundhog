@@ -32,6 +32,15 @@ try {{ new WebSocket('ws://127.0.0.1:{port}/ws'); }} catch (e) {{ ws = 'blocked'
 document.body.append(' websocket ' + ws);
 const w = "try {{ new WebSocket('ws://127.0.0.1:{port}/worker') }} catch (e) {{}}";
 new Worker(URL.createObjectURL(new Blob([w], {{ type: 'text/javascript' }})));
+for (const kind of ['blank', 'srcdoc']) {{
+  const child = document.createElement('iframe');
+  if (kind === 'srcdoc') child.srcdoc = 'child';
+  document.body.append(child);
+  let state = 'open';
+  try {{ new child.contentWindow.WebSocket('ws://127.0.0.1:{port}/' + kind); }}
+  catch (e) {{ state = 'blocked'; }}
+  document.body.append(' ' + kind + ' frame websocket ' + state);
+}}
 </script>
 """
 
@@ -99,3 +108,5 @@ async def test_a_page_in_ego_opens_no_connection_to_a_local_port(monkeypatch):
     assert hits == []
     assert "probe page" in page.text
     assert "websocket blocked" in page.text
+    assert "blank frame websocket blocked" in page.text
+    assert "srcdoc frame websocket blocked" in page.text
