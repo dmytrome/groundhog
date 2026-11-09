@@ -12,7 +12,7 @@ import pytest
 
 from groundhog_mcp import document, engine, extract, safety, sanitize
 from groundhog_mcp.cdp import CDPClient
-from groundhog_mcp.config import load_config
+from groundhog_mcp.config import Config, load_config
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
 
@@ -179,8 +179,17 @@ _LOCAL_PAGES = pytest.mark.skipif(
 )
 
 
-def _public(html: str) -> str:
-    return "https://httpbin.org/base64/" + base64.urlsafe_b64encode(html.encode()).decode()
+def _probe_page(html: str, monkeypatch: pytest.MonkeyPatch) -> tuple[str, ThreadingHTTPServer]:
+    srv = _serve(html)
+    port = srv.server_address[1]
+    real_check = safety.check_url
+
+    async def only_the_probe_page_passes(url: str, cfg: Config) -> None:
+        if urlparse(url).port != port:
+            await real_check(url, cfg)
+
+    monkeypatch.setattr(safety, "check_url", only_the_probe_page_passes)
+    return f"http://{PAGE_HOST}:{port}/", srv
 
 
 _SCRIPT = "<script>location = 'http://{h}:{v}/script'</script>"
@@ -203,60 +212,72 @@ def _host(network: str) -> str:
 @pytest.mark.parametrize(
     "route,network",
     [
-        (_SCRIPT, "loopback"),
-        (_META, "loopback"),
-        (_FORM, "loopback"),
-        (_SCRIPT, "lan"),
-        (_META, "lan"),
+        pytest.param(_SCRIPT, "loopback", id="script-loopback", marks=_LOCAL_PAGES),
+        pytest.param(_META, "loopback", id="meta-loopback", marks=_LOCAL_PAGES),
+        pytest.param(_FORM, "loopback", id="form-loopback", marks=_LOCAL_PAGES),
+        pytest.param(_SCRIPT, "lan", id="script-lan"),
+        pytest.param(_META, "lan", id="meta-lan"),
     ],
-    ids=["script-loopback", "meta-loopback", "form-loopback", "script-lan", "meta-lan"],
 )
-async def test_a_public_page_cannot_send_the_browser_to_a_local_service(route, network):
+async def test_a_page_cannot_send_the_browser_to_a_local_service(
+    monkeypatch: pytest.MonkeyPatch, route: str, network: str
+) -> None:
     host = _host(network)
-    await _assert_unreached(route, host, host)
+    await _assert_unreached(monkeypatch, route, host, host)
 
 
 @pytest.mark.parametrize(
     "route,network",
     [
-        (_OBJECT, "loopback"),
-        (_FRAME, "loopback"),
-        (_FORM, "lan"),
-        (_OBJECT, "lan"),
-        (_FRAME, "lan"),
+        pytest.param(_OBJECT, "loopback", id="object-loopback", marks=_LOCAL_PAGES),
+        pytest.param(_FRAME, "loopback", id="frame-loopback", marks=_LOCAL_PAGES),
+        pytest.param(_FORM, "lan", id="form-lan"),
+        pytest.param(_OBJECT, "lan", id="object-lan"),
+        pytest.param(_FRAME, "lan", id="frame-lan"),
     ],
-    ids=["object-loopback", "frame-loopback", "form-lan", "object-lan", "frame-lan"],
 )
-async def test_chrome_refuses_a_public_page_embedding_a_local_service(route, network):
+async def test_a_page_cannot_embed_a_local_service(
+    monkeypatch: pytest.MonkeyPatch, route: str, network: str
+) -> None:
     host = _host(network)
-    await _assert_unreached(route, host, host)
+    await _assert_unreached(monkeypatch, route, host, host)
 
 
+@_LOCAL_PAGES
 @pytest.mark.parametrize(
     "spelling", ["0x7f000001", "[::ffff:127.0.0.1]"], ids=["hex-address", "mapped-v6"]
 )
-async def test_no_spelling_of_loopback_reaches_a_local_service(spelling):
+async def test_no_spelling_of_loopback_reaches_a_local_service(
+    monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
     await _assert_unreached(
-        "<script>location = 'http://{h}:{v}/spelled'</script>", spelling, "127.0.0.1"
+        monkeypatch, "<script>location = 'http://{h}:{v}/spelled'</script>", spelling, "127.0.0.1"
     )
 
 
-async def _assert_unreached(route: str, host: str, bind: str) -> None:
+async def _assert_unreached(
+    monkeypatch: pytest.MonkeyPatch, route: str, host: str, bind: str
+) -> None:
     victim, hits = _local_service(bind)
+    url, page = _probe_page(
+        "public" + route.format(h=host, v=victim.server_address[1]), monkeypatch
+    )
     provider = EngineProvider(load_config())
-    await provider.start()
     try:
-        await provider.fetch(_public("public" + route.format(h=host, v=victim.server_address[1])))
+        await provider.start()
+        await provider.fetch(url)
         await asyncio.sleep(1.5)
     except BlockedURLError:
         pass
     finally:
         await provider.aclose()
         victim.shutdown()
+        page.shutdown()
     assert hits == []
 
 
-async def test_a_public_page_cannot_preload_a_local_service():
+@_LOCAL_PAGES
+async def test_a_page_cannot_preload_a_local_service(monkeypatch: pytest.MonkeyPatch) -> None:
     victim, hits = _local_service()
     local = f"http://127.0.0.1:{victim.server_address[1]}"
     rules = "".join(
@@ -265,14 +286,16 @@ async def test_a_public_page_cannot_preload_a_local_service():
         + "</script>"
         for kind in ("prefetch", "prerender")
     )
+    url, page = _probe_page("public" + rules, monkeypatch)
     provider = EngineProvider(load_config())
-    await provider.start()
     try:
-        await provider.fetch(_public("public" + rules))
+        await provider.start()
+        await provider.fetch(url)
         await asyncio.sleep(3)
     finally:
         await provider.aclose()
         victim.shutdown()
+        page.shutdown()
     assert hits == []
 
 
