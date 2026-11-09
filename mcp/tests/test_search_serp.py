@@ -82,3 +82,15 @@ def test_hits_keep_the_result_pages_order() -> None:
     )
     hits = serp.parse(page)
     assert [hit["url"] for hit in hits] == ["https://ex.com/first", "https://ex.com/second"]
+
+
+def test_a_human_check_page_says_search_was_challenged_and_how_to_avoid_it() -> None:
+    challenge = (Path(__file__).parent / "fixtures" / "ddg_anomaly.html").read_text()
+
+    with pytest.raises(SearchUnavailableError, match=r"challenged.*SEARXNG_URL"):
+        serp.parse(challenge)
+
+
+def test_an_empty_page_is_reported_as_search_unavailable() -> None:
+    with pytest.raises(SearchUnavailableError, match="SEARXNG_URL"):
+        serp.parse("")
