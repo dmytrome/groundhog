@@ -7,7 +7,7 @@ _DEFAULT_BROWSER_IMAGE = "ghcr.io/dmytrome/groundhog:latest"
 
 SearchBackend = Literal["auto", "searxng", "serp"]
 _SEARCH_BACKENDS = get_args(SearchBackend)
-Browser = Literal["chrome", "stealth"]
+Browser = Literal["chrome", "stealth", "ego"]
 _BROWSERS = get_args(Browser)
 ALLOWED_SCHEMES = ("http", "https")
 

@@ -83,6 +83,17 @@ def test_the_browser_can_be_switched_to_the_stealth_image(monkeypatch):
     )
 
 
+def test_ego_is_used_only_when_asked_for(monkeypatch, tmp_path):
+    (tmp_path / "ego-browser").write_text("#!/bin/sh\n")
+    (tmp_path / "ego-browser").chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.delenv("GROUNDHOG_BROWSER", raising=False)
+    assert load_config().browser == "chrome"
+
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "Ego")
+    assert load_config().browser == "ego"
+
+
 def test_an_unknown_browser_is_refused(monkeypatch):
     monkeypatch.setenv("GROUNDHOG_BROWSER", "firefox")
     with pytest.raises(ValueError, match="GROUNDHOG_BROWSER"):

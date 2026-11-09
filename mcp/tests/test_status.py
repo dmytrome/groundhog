@@ -22,6 +22,22 @@ async def test_status_reports_unreachable(monkeypatch):
     assert result["hint"]
 
 
+@pytest.mark.parametrize("installed", [True, False])
+async def test_status_in_ego_reports_whether_ego_lite_is_installed(
+    monkeypatch, tmp_path, installed
+):
+    if installed:
+        (tmp_path / "ego-browser").write_text("#!/bin/sh\n")
+        (tmp_path / "ego-browser").chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "ego")
+
+    result = await status()
+
+    assert result["browser_reachable"] is installed
+    assert (result["hint"] is None) is installed
+
+
 async def test_start_raises_actionable_error(monkeypatch):
     monkeypatch.setenv("CDP_URL", _UNREACHABLE)
     monkeypatch.setenv("GROUNDHOG_BROWSER", "stealth")
