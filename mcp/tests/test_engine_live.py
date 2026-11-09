@@ -534,6 +534,22 @@ async def test_a_403_is_classified_as_blocked_not_returned_as_content():
     assert page.retrieval_status == "blocked"
 
 
+@pytest.mark.parametrize(
+    ("status", "content_type", "expected"),
+    [
+        (403, "text/plain", "blocked"),
+        (503, "text/plain", "server_error"),
+        (403, "application/octet-stream", "blocked"),
+    ],
+)
+async def test_an_error_status_with_no_body_is_classified_not_raised(
+    status, content_type, expected
+):
+    page = await _fetch_local("", content_type=content_type, status=status)
+
+    assert (page.http_status, page.retrieval_status, page.text) == (status, expected, "")
+
+
 async def test_a_challenge_response_header_is_honored_over_ordinary_content():
     page = await _fetch_local(
         "<html lang='en'><body><p>Ordinary looking content here.</p></body></html>",

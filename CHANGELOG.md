@@ -13,6 +13,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- An error status with an empty body, as X sends for a refused profile, is returned with
+  its status (`blocked`, `not_found`, `rate_limited`, `server_error`, or `challenge` when a
+  mitigation header says so) instead of failing with `ERR_HTTP_RESPONSE_CODE_FAILURE`.
+- A DuckDuckGo human check or an empty results page now says search was challenged and
+  suggests `SEARXNG_URL`, instead of reporting a changed layout or `Document is empty`.
 - A very large page, or a server that never answers, no longer fails other fetches running
   at the same time.
 - A fetch now fails when hidden-text detection cannot be isolated from the page.

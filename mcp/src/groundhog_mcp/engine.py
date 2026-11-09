@@ -568,11 +568,18 @@ class _MainResponse:
             cdp.on_event("Page.frameNavigated", session_id, self._on_frame_navigated),
         ]
 
+    def for_loader(self, loader_id: object) -> dict[str, object] | None:
+        return self._by_loader.get(loader_id) if isinstance(loader_id, str) else None
+
     def main(self, navigated_loader_id: object) -> dict | None:
-        loader_id = self._loader_id if self._loader_id is not None else navigated_loader_id
-        if isinstance(loader_id, str):
-            return self._by_loader.get(loader_id)
-        return None
+        return self.for_loader(
+            self._loader_id if self._loader_id is not None else navigated_loader_id
+        )
+
+
+def _is_error_status(response: dict[str, object] | None) -> bool:
+    status = response.get("status") if response else None
+    return isinstance(status, int) and status >= 400
 
 
 class _ChallengeAssets:
@@ -981,6 +988,9 @@ class EngineProvider:
                 if nav.get("errorText"):
                     if private_documents.blocked:
                         raise safety.BlockedURLError(private_documents.blocked)
+                    refused = responses.for_loader(nav.get("loaderId"))
+                    if _is_error_status(refused):
+                        return await self._refused_page(refused, challenge_assets.seen)
                     reason = sanitize.clean_field(str(nav["errorText"]), sanitize.MAX_ERROR_CHARS)
                     raise CDPError(f"navigation failed: {reason or 'unknown error'}")
                 await asyncio.wait_for(loaded, timeout=_GOTO_TIMEOUT_S)
@@ -1041,6 +1051,27 @@ class EngineProvider:
             if not self._cdp.closed:
                 with contextlib.suppress(CDPError, OSError, WebSocketException):
                     await self._cdp.send("Target.closeTarget", {"targetId": tid})
+
+    async def _refused_page(
+        self, response: dict[str, object], challenge_seen: bool
+    ) -> RenderedPage:
+        final_url = _as_text(response.get("url"))
+        await safety.check_url(final_url, self._cfg)
+        status = response.get("status")
+        bodiless = {name: value for name, value in response.items() if name != "mimeType"}
+        return RenderedPage(
+            html="",
+            text="",
+            final_url=final_url,
+            title="",
+            isolated=True,
+            strip_incomplete=False,
+            spans_dropped=0,
+            http_status=status if isinstance(status, int) else None,
+            retrieval_status=classify.classify(bodiless, challenge_seen, None, ""),
+            hidden_spans=[],
+            meta={"meta": {}, "lang": None, "canonical": None},
+        )
 
     async def _pdf_page(
         self, captured: _CapturedPdf, challenge_seen: bool, strip_hidden: bool

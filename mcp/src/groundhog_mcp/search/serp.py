@@ -12,6 +12,8 @@ _RESULT_XPATH = "//div[contains(@class,'result__body')]"
 _TITLE_XPATH = ".//a[contains(@class,'result__a')]"
 _SNIPPET_XPATH = ".//a[contains(@class,'result__snippet')]"
 _EMPTY_XPATH = "//div[contains(@class,'no-results')]"
+_CHALLENGE_XPATH = "//*[contains(@class,'anomaly-modal')]"
+_SEARXNG_HINT = "Set SEARXNG_URL to a SearXNG instance for dependable search."
 
 
 def _real_url(href: str) -> str | None:
@@ -28,12 +30,18 @@ def _real_url(href: str) -> str | None:
 
 
 def parse(page_html: str) -> list[SearchHit]:
+    if not page_html.strip():
+        raise SearchUnavailableError(f"DuckDuckGo returned an empty page. {_SEARXNG_HINT}")
     tree = lxml.html.fromstring(page_html)
+    if tree.xpath(_CHALLENGE_XPATH):
+        raise SearchUnavailableError(
+            f"DuckDuckGo challenged the request with a human check. {_SEARXNG_HINT}"
+        )
     blocks = tree.xpath(_RESULT_XPATH)
     if not blocks and not tree.xpath(_EMPTY_XPATH):
         raise SearchUnavailableError(
             "DuckDuckGo returned a page with neither results nor a no-results marker — "
-            "the SERP layout likely changed, or the request was challenged."
+            f"the SERP layout likely changed, or the request was challenged. {_SEARXNG_HINT}"
         )
     hits: list[SearchHit] = []
     for position, block in enumerate(blocks):
