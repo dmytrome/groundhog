@@ -77,7 +77,6 @@ jobs:
       CDP_URL: http://127.0.0.1:9222
       GROUNDHOG_BROWSER: chrome
       GROUNDHOG_AUTO_START_BROWSER: "true"
-      GROUNDHOG_CHROME_PROFILE: ${{ runner.temp }}/chrome
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -87,6 +86,8 @@ jobs:
           python-version: "3.12"
       - name: Start Chrome once for every test worker
         working-directory: mcp
+        env:
+          GROUNDHOG_CHROME_PROFILE: ${{ runner.temp }}/chrome
         run: |
           uv run python -c "
           import asyncio
@@ -102,4 +103,6 @@ jobs:
           "
       - name: Run the browser-backed tests on the runner's Chrome
         working-directory: mcp
+        env:
+          GROUNDHOG_CHROME_PROFILE: ${{ runner.temp }}/chrome
         run: uv run pytest -q -n 4 --durations=10
