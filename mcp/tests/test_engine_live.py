@@ -609,9 +609,10 @@ async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
         {
             "/large": (
                 200,
-                "<html lang='en'><head><title>Large</title></head><body><pre></pre>"
+                "<html lang='en'><head><title>Large</title></head><body>"
+                "<pre style='display:none'></pre>"
                 "<script>document.querySelector('pre').appendChild("
-                "document.createTextNode('x'.repeat(45_000_000)))</script></body></html>",
+                "document.createTextNode('x'.repeat(70_000_000)))</script></body></html>",
             ),
             "/normal": (
                 200,
@@ -662,9 +663,31 @@ async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
 
     try:
         await provider.start()
-        async with asyncio.timeout(90), asyncio.TaskGroup() as group:
-            large = group.create_task(fetch_large())
-            normal = group.create_task(document.fetch_document(f"{base}/normal"))
+        assert provider._cdp is not None
+        send = provider._cdp.send
+        calls: list[str] = []
+
+        async def timed_send(
+            method: str, params: dict | None = None, session_id: str | None = None
+        ) -> dict:
+            started = asyncio.get_running_loop().time()
+            outcome = "ok"
+            try:
+                return await send(method, params, session_id)
+            except BaseException as exc:
+                outcome = type(exc).__name__
+                raise
+            finally:
+                elapsed = asyncio.get_running_loop().time() - started
+                calls.append(f"{elapsed:6.2f}s {method} {outcome}")
+
+        monkeypatch.setattr(provider._cdp, "send", timed_send)
+        try:
+            async with asyncio.timeout(90), asyncio.TaskGroup() as group:
+                large = group.create_task(fetch_large())
+                normal = group.create_task(document.fetch_document(f"{base}/normal"))
+        except BaseExceptionGroup as exc:
+            raise AssertionError("CDP calls:\n" + "\n".join(calls)) from exc
         assert large.result().status == "too_large"
         assert large.result().markdown == ""
         assert normal.result().status == "ok"
