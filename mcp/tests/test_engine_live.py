@@ -602,6 +602,7 @@ async def _fetch_path(srv: ThreadingHTTPServer, path: str) -> engine.RenderedPag
         await provider.aclose()
 
 
+@pytest.mark.serial
 async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
