@@ -16,12 +16,15 @@ _TAKEOVER = json.loads(
     (Path(__file__).parent / "fixtures" / "ego_takeover_error.json").read_text()
 )["message"]
 
+_TIMEOUT = json.loads((Path(__file__).parent / "fixtures" / "ego_timeout_error.json").read_text())
+
 _FAKE_SDK = textwrap.dedent(
     """
-    import { writeFileSync } from "node:fs";
+    import { appendFileSync, writeFileSync } from "node:fs";
     const mode = process.env.FAKE_EGO_MODE || "";
     const dir = process.env.FAKE_EGO_DIR;
     const takeover = %s;
+    const timedOut = %s;
     let pages = 1;
     if (mode === "closed") await new Promise((r) => setTimeout(r, 30000));
     globalThis.taskSpace = async () => {
@@ -36,9 +39,12 @@ _FAKE_SDK = textwrap.dedent(
             label: `p${id}`,
             targetId: `T${id}`,
             async cdp(method, params, opts) {
+              const line = `${method} ${opts.timeout}\n`;
+              if (mode === "record") appendFileSync(`${dir}/timeouts`, line);
               if (mode === "hold" && method !== "Page.navigate") {
                 await new Promise((r) => setTimeout(r, opts.timeout));
-                throw new Error(`CDP request timed out: ${method}`);
+                const { name, code, message } = timedOut;
+                throw Object.assign(new Error(message), { name, code });
               }
               if (method !== "Page.navigate") return {};
               if (mode === "takeover-navigate") throw new Error(takeover);
@@ -56,7 +62,7 @@ _FAKE_SDK = textwrap.dedent(
       };
     };
     """
-) % json.dumps(_TAKEOVER)
+) % (json.dumps(_TAKEOVER), json.dumps(_TIMEOUT))
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the bridge")
 
@@ -163,25 +169,41 @@ async def test_a_navigation_ego_refuses_fails_at_once(fake_ego, monkeypatch):
         await bridge.aclose()
 
 
-@pytest.mark.parametrize(
-    ("method", "params"),
-    [
-        ("Runtime.evaluate", {"expression": "1", "timeout": 300}),
-        ("Page.getFrameTree", {}),
-        ("Page.createIsolatedWorld", {"frameId": "T2"}),
-    ],
-)
-async def test_a_quick_call_ego_holds_gives_up_in_seconds(fake_ego, monkeypatch, method, params):
+async def test_a_held_evaluation_with_a_time_limit_gives_up_when_it_runs_out(fake_ego, monkeypatch):
     monkeypatch.setenv("FAKE_EGO_MODE", "hold")
     bridge = ego.Bridge()
     cdp, sid = await _attached(await bridge.start())
 
     try:
-        with pytest.raises(CDPError, match="timed out"):
-            await asyncio.wait_for(cdp.send(method, params, session_id=sid), timeout=5)
+        with pytest.raises(CDPError, match=_TIMEOUT["message"]):
+            await asyncio.wait_for(
+                cdp.send("Runtime.evaluate", {"expression": "1", "timeout": 300}, session_id=sid),
+                timeout=2,
+            )
     finally:
         await cdp.close()
         await bridge.aclose()
+
+
+async def test_ego_holds_a_call_no_longer_than_groundhog_waits_for_it(fake_ego, monkeypatch):
+    monkeypatch.setenv("FAKE_EGO_MODE", "record")
+    bridge = ego.Bridge()
+    cdp, sid = await _attached(await bridge.start())
+
+    try:
+        await cdp.send("Runtime.evaluate", {"expression": "1", "timeout": 300}, session_id=sid)
+        await cdp.send("Runtime.evaluate", {"expression": "1"}, session_id=sid)
+        await cdp.send("Page.getFrameTree", session_id=sid)
+    finally:
+        await cdp.close()
+        await bridge.aclose()
+
+    budget = int(engine._EVAL_TIMEOUT_S * 1000)
+    assert (fake_ego / "timeouts").read_text().splitlines() == [
+        "Runtime.evaluate 300",
+        f"Runtime.evaluate {budget}",
+        f"Page.getFrameTree {budget}",
+    ]
 
 
 async def test_a_space_the_user_holds_is_left_alone(fake_ego, monkeypatch):

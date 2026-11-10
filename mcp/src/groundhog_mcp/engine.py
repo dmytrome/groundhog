@@ -37,8 +37,8 @@ _EVAL_TIMEOUT_S = 20.0
 _SETTLE_POLL_S = 0.25
 _SETTLE_QUIET_S = 1.0
 _SETTLE_TIMEOUT_S = 8.0
-_SETTLE_STALL_S = 2.0
-_SETTLE_PROBE_MS = 2000
+_SETTLE_STALL_S = 3.0
+_SETTLE_PROBE_MS = int((_SETTLE_STALL_S - 1.0) * 1000)
 _DOM_SIZE_EXPR = (
     "document.querySelectorAll('*').length + '|' + "
     "(document.body ? document.body.innerText.length : 0)"
@@ -1059,7 +1059,9 @@ class EngineProvider:
             if ctx is None:
                 raise CDPError("could not isolate hidden-text detection from the page")
 
-            final_url = _as_text(await self._eval(sid, "document.location.href", ctx))
+            final_url = _as_text(
+                await self._eval(sid, "document.location.href", ctx, _SETTLE_PROBE_MS)
+            )
             await safety.check_url(final_url, self._cfg)
             detect_expr = (
                 f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)}, {json.dumps(_COLLECT_CAPS)})"
