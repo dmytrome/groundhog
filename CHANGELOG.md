@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-11-10
+
 ### Fixed
 
 - Pages read at the same time all render their scripted content. Every tab but one was
@@ -746,6 +748,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.23.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.2
 [0.23.1]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.1
 [0.23.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.0
 [0.22.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.22.0
