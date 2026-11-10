@@ -1939,6 +1939,18 @@ async def test_a_fetch_never_enables_the_runtime_or_console_domains(
     assert not {"Runtime.enable", "Console.enable"} & set(sent)
 
 
+async def test_every_tab_is_read_as_the_focused_visible_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, fake = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+
+    await asyncio.wait_for(provider._fetch_in_target("https://example.com/", True), 5)
+
+    assert ("Emulation.setFocusEmulationEnabled", {"enabled": True}) in [
+        (method, params) for method, params, _ in fake.calls
+    ]
+
+
 async def test_an_unanswered_evaluation_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     async def silent(ws: websockets.ServerConnection) -> None:
         await ws.wait_closed()

@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Pages read at the same time all render their scripted content. Every tab but one was
+  treated as hidden, so its timers were throttled and late content was missed: with 8 reads
+  at once, 7 came back without it.
 - `GROUNDHOG_MAX_TOKENS` below 1 is refused at startup, like the page limit.
 
 ## [0.23.1] - 2026-11-10
