@@ -602,7 +602,6 @@ async def _fetch_path(srv: ThreadingHTTPServer, path: str) -> engine.RenderedPag
         await provider.aclose()
 
 
-@pytest.mark.serial
 async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -610,9 +609,10 @@ async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
         {
             "/large": (
                 200,
-                "<html lang='en'><head><title>Large</title></head><body><pre></pre>"
+                "<html lang='en'><head><title>Large</title></head><body>"
+                "<pre style='display:none'></pre>"
                 "<script>document.querySelector('pre').appendChild("
-                "document.createTextNode('x'.repeat(45_000_000)))</script></body></html>",
+                "document.createTextNode('x'.repeat(70_000_000)))</script></body></html>",
             ),
             "/normal": (
                 200,
