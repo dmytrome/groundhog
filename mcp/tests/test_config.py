@@ -167,6 +167,14 @@ def test_a_page_limit_below_one_is_refused(monkeypatch: pytest.MonkeyPatch, valu
         load_config()
 
 
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_a_token_limit_below_one_is_refused(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("GROUNDHOG_MAX_TOKENS", value)
+
+    with pytest.raises(ValueError, match="GROUNDHOG_MAX_TOKENS"):
+        load_config()
+
+
 @pytest.mark.parametrize("value", ["", "  "])
 def test_a_blank_number_takes_its_default(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     for name in (

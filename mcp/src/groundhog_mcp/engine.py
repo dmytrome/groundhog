@@ -963,6 +963,9 @@ class EngineProvider:
             await self._cdp.send("Emulation.setUserAgentOverride", self._identity, session_id=sid)
         await self._cdp.send("Page.enable", session_id=sid)
         await self._cdp.send("Network.enable", session_id=sid)
+        await self._cdp.send(
+            "Emulation.setFocusEmulationEnabled", {"enabled": True}, session_id=sid
+        )
         in_ego = self._cfg.browser == "ego"
         if in_ego:
             await self._cdp.send(

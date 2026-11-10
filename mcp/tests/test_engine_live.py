@@ -1586,6 +1586,23 @@ async def test_fetch_waits_for_content_rendered_after_domcontentloaded():
     assert "LATE RENDERED PRODUCT GRID MARKER" in page.html
 
 
+async def test_pages_read_at_the_same_time_all_render_their_late_content():
+    srv = _serve(SPA_HTML)
+    cfg = dataclasses.replace(
+        load_config(), block_private_ips=False, max_concurrent_pages=7, min_delay_ms=0
+    )
+    provider = EngineProvider(cfg)
+    await provider.start()
+    try:
+        url = f"http://{PAGE_HOST}:{srv.server_address[1]}/"
+        pages = await asyncio.gather(*(provider.fetch(f"{url}?tab={i}") for i in range(7)))
+    finally:
+        await provider.aclose()
+        srv.shutdown()
+
+    assert all("LATE RENDERED PRODUCT GRID MARKER" in page.text for page in pages)
+
+
 async def test_fetch_reconnects_after_connection_drop():
     srv = _serve(HIDDEN_HTML)
     cfg = dataclasses.replace(load_config(), block_private_ips=False)

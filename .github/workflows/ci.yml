@@ -65,13 +65,18 @@ jobs:
           CDP_URL: http://127.0.0.1:9222
           GROUNDHOG_BROWSER: stealth
           GROUNDHOG_AUTO_START_BROWSER: "false"
-        run: uv run pytest -q --durations=10
+        run: uv run pytest -q -n 4 --durations=10
       - name: Browser logs on failure
         if: failure()
         run: docker compose logs --no-color chrome | tail -100
 
   live-chrome:
     runs-on: ubuntu-latest
+    env:
+      RUN_LIVE: "1"
+      CDP_URL: http://127.0.0.1:9222
+      GROUNDHOG_BROWSER: chrome
+      GROUNDHOG_AUTO_START_BROWSER: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -79,12 +84,25 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
           python-version: "3.12"
+      - name: Start Chrome once for every test worker
+        working-directory: mcp
+        env:
+          GROUNDHOG_CHROME_PROFILE: ${{ runner.temp }}/chrome
+        run: |
+          uv run python -c "
+          import asyncio
+          from groundhog_mcp.config import load_config
+          from groundhog_mcp.engine import EngineProvider
+
+          async def start():
+              provider = EngineProvider(load_config())
+              await provider.start()
+              await provider.aclose()
+
+          asyncio.run(start())
+          "
       - name: Run the browser-backed tests on the runner's Chrome
         working-directory: mcp
         env:
-          RUN_LIVE: "1"
-          CDP_URL: http://127.0.0.1:9222
-          GROUNDHOG_BROWSER: chrome
-          GROUNDHOG_AUTO_START_BROWSER: "true"
           GROUNDHOG_CHROME_PROFILE: ${{ runner.temp }}/chrome
-        run: uv run pytest -q --durations=10
+        run: uv run pytest -q -n 4 --durations=10
