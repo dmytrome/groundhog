@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `GROUNDHOG_MAX_TOKENS` below 1 is refused at startup, like the page limit.
+
 ## [0.23.1] - 2026-11-10
 
 ### Fixed

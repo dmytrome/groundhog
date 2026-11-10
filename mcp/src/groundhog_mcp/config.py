@@ -57,7 +57,7 @@ def load_config() -> Config:
         cdp_url=os.environ.get("CDP_URL", "http://127.0.0.1:9222"),
         min_delay_ms=_int("GROUNDHOG_MIN_DELAY_MS", 5000),
         block_private_ips=_bool("GROUNDHOG_BLOCK_PRIVATE_IPS", True),
-        max_tokens=_int("GROUNDHOG_MAX_TOKENS", 20000),
+        max_tokens=_positive("GROUNDHOG_MAX_TOKENS", 20000),
         auto_start_browser=_bool("GROUNDHOG_AUTO_START_BROWSER", True),
         compose_file=os.environ.get("GROUNDHOG_COMPOSE_FILE") or None,
         browser_image=os.environ.get("GROUNDHOG_BROWSER_IMAGE") or _DEFAULT_BROWSER_IMAGE,
