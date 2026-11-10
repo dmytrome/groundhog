@@ -1818,7 +1818,9 @@ def _provider_collecting(
     async def public(url: str, cfg: Config) -> None:
         return None
 
-    async def evaluate(sid: str, expression: str, context_id: int | None = None) -> object:
+    async def evaluate(
+        sid: str, expression: str, context_id: int | None = None, *rest: int | None
+    ) -> object:
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
             if collected is None:
                 await asyncio.Event().wait()
@@ -1864,9 +1866,11 @@ async def test_hidden_text_detection_requires_an_isolated_world(
     evaluations: list[tuple[str, int | None]] = []
     evaluate = provider._eval
 
-    async def record_eval(sid: str, expression: str, context_id: int | None = None) -> object:
+    async def record_eval(
+        sid: str, expression: str, context_id: int | None = None, *rest: int | None
+    ) -> object:
         evaluations.append((expression, context_id))
-        return await evaluate(sid, expression, context_id)
+        return await evaluate(sid, expression, context_id, *rest)
 
     client = RefusesIsolation(_HEADLESS_UA, _HINTS)
     provider._cdp = client
@@ -1888,6 +1892,32 @@ async def test_hidden_text_detection_requires_an_isolated_world(
         assert client.methods()[-1] == "Target.closeTarget"
     finally:
         await provider.aclose()
+
+
+async def test_reading_where_the_page_landed_gives_up_as_fast_as_a_settle_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, _ = _provider_collecting(monkeypatch, {"title": "Cats", "text": "Cats nap."})
+    evaluate = provider._eval
+    limits: dict[str, tuple[int | None, ...]] = {}
+
+    async def settled(sid: str, inflight: engine._InflightRequests) -> None:
+        return None
+
+    async def record_eval(
+        sid: str, expression: str, context_id: int | None = None, *rest: int | None
+    ) -> object:
+        limits[expression] = rest
+        return await evaluate(sid, expression, context_id, *rest)
+
+    monkeypatch.setattr(provider, "_settle", settled)
+    monkeypatch.setattr(provider, "_eval", record_eval)
+    try:
+        await provider.fetch("https://example.com/")
+    finally:
+        await provider.aclose()
+
+    assert limits["document.location.href"] == (2000,)
 
 
 async def test_a_collector_that_never_answers_fails_the_fetch(
@@ -2123,6 +2153,53 @@ async def test_settling_never_evaluates_in_the_page_world_when_isolation_fails(
 
     assert "Page.createIsolatedWorld" in methods
     assert "Runtime.evaluate" not in methods
+
+
+async def _evaluations_while_settling(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    evaluations: list[dict] = []
+    replies = {
+        "Page.getFrameTree": json.loads((_FIXTURES / "cdp_frame_tree.json").read_text()),
+        "Page.createIsolatedWorld": json.loads((_FIXTURES / "cdp_isolated_world.json").read_text()),
+    }
+
+    async def respond(ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            request = json.loads(raw)
+            if request["method"] == "Runtime.evaluate":
+                evaluations.append(request["params"])
+                result = json.loads((_FIXTURES / "cdp_evaluate_result.json").read_text())
+                result["result"]["value"] = f"{len(evaluations)}|0"
+            else:
+                result = replies.get(request["method"], {})
+            await ws.send(json.dumps({"id": request["id"], "result": result}))
+
+    monkeypatch.setattr(engine, "_SETTLE_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(engine, "_SETTLE_POLL_S", 0.05)
+    async with websockets.serve(respond, "127.0.0.1", 0) as server:
+        provider = engine.EngineProvider(_cfg())
+        provider._cdp = cdp.CDPClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+        await provider._cdp.connect()
+        try:
+            await provider._settle("tab", engine._InflightRequests())
+        finally:
+            await provider._cdp.close()
+    return evaluations
+
+
+def test_a_probe_held_at_the_settle_cap_gives_up_before_settling_stops_waiting() -> None:
+    probe_budget_s = engine._SETTLE_PROBE_MS / 1000
+
+    assert probe_budget_s < engine._SETTLE_STALL_S
+
+
+async def test_settling_bounds_each_dom_probe_so_a_held_probe_gives_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluations = await _evaluations_while_settling(monkeypatch)
+
+    probes = [e for e in evaluations if e["expression"] == engine._DOM_SIZE_EXPR]
+    assert len(probes) > 2
+    assert {probe.get("timeout") for probe in probes} == {2000}
 
 
 @pytest.mark.parametrize(

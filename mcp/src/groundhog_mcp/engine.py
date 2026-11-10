@@ -37,7 +37,8 @@ _EVAL_TIMEOUT_S = 20.0
 _SETTLE_POLL_S = 0.25
 _SETTLE_QUIET_S = 1.0
 _SETTLE_TIMEOUT_S = 8.0
-_SETTLE_STALL_S = 2.0
+_SETTLE_STALL_S = 3.0
+_SETTLE_PROBE_MS = int((_SETTLE_STALL_S - 1.0) * 1000)
 _DOM_SIZE_EXPR = (
     "document.querySelectorAll('*').length + '|' + "
     "(document.body ? document.body.innerText.length : 0)"
@@ -1058,7 +1059,9 @@ class EngineProvider:
             if ctx is None:
                 raise CDPError("could not isolate hidden-text detection from the page")
 
-            final_url = _as_text(await self._eval(sid, "document.location.href", ctx))
+            final_url = _as_text(
+                await self._eval(sid, "document.location.href", ctx, _SETTLE_PROBE_MS)
+            )
             await safety.check_url(final_url, self._cfg)
             detect_expr = (
                 f"({DETECT_AND_COLLECT})({json.dumps(strip_hidden)}, {json.dumps(_COLLECT_CAPS)})"
@@ -1162,7 +1165,9 @@ class EngineProvider:
                         if ctx is None:
                             await asyncio.sleep(_SETTLE_POLL_S)
                             continue
-                    pending = asyncio.ensure_future(self._eval(session_id, _DOM_SIZE_EXPR, ctx))
+                    pending = asyncio.ensure_future(
+                        self._eval(session_id, _DOM_SIZE_EXPR, ctx, _SETTLE_PROBE_MS)
+                    )
                     try:
                         current = await asyncio.shield(pending)
                     except CDPError:
@@ -1182,7 +1187,7 @@ class EngineProvider:
                 pending = asyncio.ensure_future(
                     self._isolated_context(session_id)
                     if ctx is None
-                    else self._eval(session_id, _DOM_SIZE_EXPR, ctx)
+                    else self._eval(session_id, _DOM_SIZE_EXPR, ctx, _SETTLE_PROBE_MS)
                 )
             try:
                 await asyncio.wait_for(pending, _SETTLE_STALL_S)
@@ -1216,7 +1221,11 @@ class EngineProvider:
             return None
 
     async def _eval(
-        self, session_id: str, expression: str, context_id: int | None = None
+        self,
+        session_id: str,
+        expression: str,
+        context_id: int | None = None,
+        timeout_ms: int | None = None,
     ) -> object:
         res = await asyncio.wait_for(
             self._cdp.send(
@@ -1226,6 +1235,7 @@ class EngineProvider:
                     "returnByValue": True,
                     "awaitPromise": True,
                     **({"contextId": context_id} if context_id is not None else {}),
+                    **({"timeout": timeout_ms} if timeout_ms is not None else {}),
                 },
                 session_id=session_id,
             ),

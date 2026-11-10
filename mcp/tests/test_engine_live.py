@@ -628,8 +628,10 @@ async def test_a_very_large_page_does_not_fail_a_concurrent_fetch(
     normal_ready = asyncio.Event()
     large_done = asyncio.Event()
 
-    async def overlapping_eval(sid: str, expression: str, context_id: int | None = None) -> object:
-        value = await evaluate(sid, expression, context_id)
+    async def overlapping_eval(
+        sid: str, expression: str, context_id: int | None = None, *rest: int | None
+    ) -> object:
+        value = await evaluate(sid, expression, context_id, *rest)
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
             assert isinstance(value, dict)
             if value["title"] == "Large":
@@ -695,9 +697,11 @@ async def test_every_collected_field_is_capped_before_it_leaves_the_page(
     evaluate = provider._eval
     checked = False
 
-    async def check_collected(sid: str, expression: str, context_id: int | None = None) -> object:
+    async def check_collected(
+        sid: str, expression: str, context_id: int | None = None, *rest: int | None
+    ) -> object:
         nonlocal checked
-        value = await evaluate(sid, expression, context_id)
+        value = await evaluate(sid, expression, context_id, *rest)
         if expression.startswith(f"({engine.DETECT_AND_COLLECT})"):
             assert isinstance(value, dict)
             for field in ("title", "lang", "canonical"):

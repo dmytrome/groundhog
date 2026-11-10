@@ -15,6 +15,7 @@ async def test_check_browser_unreachable():
 
 
 async def test_status_reports_unreachable(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_BROWSER", "chrome")
     monkeypatch.setenv("CDP_URL", _UNREACHABLE)
     result = await status()
     assert result["browser_reachable"] is False
