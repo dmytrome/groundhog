@@ -3,6 +3,7 @@ const ws = new WebSocket(`ws://127.0.0.1:${GROUNDHOG.port}/ego/${GROUNDHOG.token
 const byTarget = new Map();
 const bySession = new Map();
 const out = (o) => ws.send(JSON.stringify(o));
+const QUICK = new Set(["Page.getFrameTree", "Page.createIsolatedWorld"]);
 const TAKEOVER = "Control of this task space is with the user";
 let takenOver = false;
 
@@ -37,6 +38,11 @@ function settleNavigation(entry, e) {
   else if (e.method === "Network.loadingFailed" && p.requestId === nav.loaderId) nav.done({ frameId: entry.tid, loaderId: nav.loaderId, errorText: p.errorText });
 }
 
+function callTimeout(method, params) {
+  if (method === "Runtime.evaluate" && Number.isFinite(params.timeout)) return params.timeout + 500;
+  return QUICK.has(method) ? 2000 : 85000;
+}
+
 async function navigate(entry, params) {
   let nav;
   const reply = new Promise((resolve, reject) => {
@@ -66,7 +72,7 @@ async function handle(cid, method, params, sessionId) {
     const entry = bySession.get(sessionId);
     if (!entry) throw new Error(`session ${sessionId} is not reachable through ego`);
     if (method === "Page.navigate") return navigate(entry, params);
-    return entry.page.cdp(method, params, { timeout: 85000 });
+    return entry.page.cdp(method, params, { timeout: callTimeout(method, params) });
   }
   switch (method) {
     case "Target.createTarget": {

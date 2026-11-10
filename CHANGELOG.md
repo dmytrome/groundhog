@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- In Ego Lite, a page that redirects itself, such as with a meta refresh, is read from where
+  it lands instead of hanging for 85 seconds and failing.
+
 ## [0.23.0] - 2026-11-09
 
 ### Added

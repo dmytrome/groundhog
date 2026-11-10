@@ -35,7 +35,11 @@ _FAKE_SDK = textwrap.dedent(
           return {
             label: `p${id}`,
             targetId: `T${id}`,
-            async cdp(method) {
+            async cdp(method, params, opts) {
+              if (mode === "hold" && method !== "Page.navigate") {
+                await new Promise((r) => setTimeout(r, opts.timeout));
+                throw new Error(`CDP request timed out: ${method}`);
+              }
               if (method !== "Page.navigate") return {};
               if (mode === "takeover-navigate") throw new Error(takeover);
               if (mode === "bad-url") throw new Error("Cannot navigate to invalid URL");
@@ -154,6 +158,27 @@ async def test_a_navigation_ego_refuses_fails_at_once(fake_ego, monkeypatch):
                 cdp.send("Page.navigate", {"url": "nota"}, session_id=sid), timeout=5
             )
         assert not cdp.closed
+    finally:
+        await cdp.close()
+        await bridge.aclose()
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("Runtime.evaluate", {"expression": "1", "timeout": 300}),
+        ("Page.getFrameTree", {}),
+        ("Page.createIsolatedWorld", {"frameId": "T2"}),
+    ],
+)
+async def test_a_quick_call_ego_holds_gives_up_in_seconds(fake_ego, monkeypatch, method, params):
+    monkeypatch.setenv("FAKE_EGO_MODE", "hold")
+    bridge = ego.Bridge()
+    cdp, sid = await _attached(await bridge.start())
+
+    try:
+        with pytest.raises(CDPError, match="timed out"):
+            await asyncio.wait_for(cdp.send(method, params, session_id=sid), timeout=5)
     finally:
         await cdp.close()
         await bridge.aclose()
