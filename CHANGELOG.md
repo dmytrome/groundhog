@@ -8,10 +8,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
-- The security docs now say that with `chrome` and `stealth`, WebSocket, WebTransport and
-  WebRTC connections are left to Chrome's Local Network Access rule, as sub-resources
-  already were. A live test checks that a public page cannot open a WebSocket to a local
-  service.
+- The security docs now say that with `chrome` and `stealth`, WebSocket and WebTransport are
+  left to Chrome's Local Network Access rule, as sub-resources already were, and that a page
+  can send WebRTC packets to a private address. A live test checks that a public page cannot
+  open a WebSocket to a local service.
 
 ## [0.23.2] - 2026-11-10
 
