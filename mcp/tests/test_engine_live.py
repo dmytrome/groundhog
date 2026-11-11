@@ -2723,10 +2723,8 @@ async def test_hidden_text_beside_an_open_popover_is_still_reported_and_stripped
     assert "HELD_PAYLOAD" not in stripped.text
 
 
-@_CDP_ENDPOINT
-async def test_a_public_page_cannot_open_a_websocket_to_a_local_service():
-    srv, hits = _local_service()
-    port = srv.server_address[1]
+
+async def _evaluate_on_a_public_page(probe: str) -> object:
     warm = EngineProvider(load_config())
     await warm.start()
     await warm.aclose()
@@ -2742,12 +2740,6 @@ async def test_a_public_page_cannot_open_a_websocket_to_a_local_service():
         loaded = cdp.expect_event("Page.loadEventFired", session_id=sid)
         await cdp.send("Page.navigate", {"url": "https://example.org/"}, session_id=sid)
         await asyncio.wait_for(loaded, timeout=30)
-        probe = (
-            "new Promise(r => { try {"
-            f" const w = new WebSocket('ws://127.0.0.1:{port}/ws');"
-            " w.onerror = () => r('error'); w.onopen = () => r('open');"
-            " } catch (e) { r('threw ' + e.name); } setTimeout(() => r('timeout'), 3000); })"
-        )
         result = await cdp.send(
             "Runtime.evaluate",
             {"expression": probe, "awaitPromise": True, "returnByValue": True},
@@ -2756,6 +2748,57 @@ async def test_a_public_page_cannot_open_a_websocket_to_a_local_service():
         await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
     finally:
         await cdp.close()
+    return result["result"]["value"]
+
+
+@_CDP_ENDPOINT
+async def test_a_public_page_cannot_open_a_websocket_to_a_local_service():
+    srv, hits = _local_service()
+    port = srv.server_address[1]
+    probe = (
+        "new Promise(r => { try {"
+        f" const w = new WebSocket('ws://127.0.0.1:{port}/ws');"
+        " w.onerror = () => r('error'); w.onopen = () => r('open');"
+        " } catch (e) { r('threw ' + e.name); } setTimeout(() => r('timeout'), 3000); })"
+    )
+    try:
+        state = await _evaluate_on_a_public_page(probe)
+    finally:
         srv.shutdown()
-    assert result["result"]["value"] != "open"
+    assert state != "open"
     assert hits == []
+
+
+@_CDP_ENDPOINT
+async def test_a_public_page_cannot_send_webrtc_packets_to_a_private_address():
+    lan = _lan_address()
+    if lan is None:
+        pytest.skip("no LAN address on this machine")
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener.bind(("0.0.0.0", 0))
+    listener.settimeout(0.2)
+    packets: list[bytes] = []
+    stop = threading.Event()
+
+    def receive() -> None:
+        while not stop.is_set():
+            try:
+                packets.append(listener.recvfrom(2048)[0])
+            except TimeoutError:
+                continue
+
+    threading.Thread(target=receive, daemon=True).start()
+    stun = f"stun:{lan}:{listener.getsockname()[1]}"
+    probe = (
+        "(async () => {"
+        f" const pc = new RTCPeerConnection({{iceServers: [{{urls: '{stun}'}}]}});"
+        " pc.createDataChannel('probe');"
+        " await pc.setLocalDescription(await pc.createOffer());"
+        " await new Promise(r => setTimeout(r, 4000)); pc.close(); return 'done'; })()"
+    )
+    try:
+        assert await _evaluate_on_a_public_page(probe) == "done"
+    finally:
+        stop.set()
+        listener.close()
+    assert packets == []
