@@ -103,8 +103,8 @@ involved** — your agent does the synthesis.
   [Security section](https://github.com/dmytrome/groundhog#security)), and it
   refuses every redirect hop and frame navigation into one before Chrome sends it. That
   matters most in `research`, where a *third party* picks the URLs. Known limits: page-issued
-  sub-resource requests, WebSocket and WebTransport are left to Chrome's Local Network Access
-  rule, a page can send WebRTC packets to a private address, and Chrome resolves
+  sub-resource requests, WebSocket, WebTransport and WebRTC are left to Chrome's Local Network
+  Access rule (a browser you supply may not apply it to WebRTC), and Chrome resolves
   DNS independently, so a short-TTL rebind is not fully closed. See
   [Security](https://github.com/dmytrome/groundhog#security).
 - **Reads pages plain fetchers can't.** Real Chrome, presenting a headful identity, driven

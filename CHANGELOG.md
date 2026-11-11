@@ -6,12 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- With `chrome` and `stealth`, a page can no longer send WebRTC packets to a local or private
+  address: Chrome's Local Network Access rule now covers WebRTC in the browsers Groundhog
+  launches.
+
 ### Added
 
-- The security docs now say that with `chrome` and `stealth`, WebSocket and WebTransport are
-  left to Chrome's Local Network Access rule, as sub-resources already were, and that a page
-  can send WebRTC packets to a private address. A live test checks that a public page cannot
-  open a WebSocket to a local service.
+- The security docs say which page connections are left to Chrome's Local Network Access
+  rule. Live tests check that a public page can't open a WebSocket to a local service or send
+  WebRTC packets to a private address.
 
 ## [0.23.2] - 2026-11-10
 
