@@ -159,6 +159,7 @@ exec /usr/local/bin/chrome \
   --disable-blink-features=AutomationControlled \
   --use-fake-device-for-media-stream \
   --force-webrtc-ip-handling-policy=disable_non_proxied_udp \
+  --enable-features=LocalNetworkAccessChecksWebRTC \
   --force-dark-mode \
   --enable-webgl \
   "${GPU_ARGS[@]}" \

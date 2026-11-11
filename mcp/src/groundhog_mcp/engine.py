@@ -178,6 +178,7 @@ def _chrome_argv(binary: str, cfg: Config) -> list[str]:
         "--window-size=1440,900",
         "--no-first-run",
         "--no-default-browser-check",
+        "--enable-features=LocalNetworkAccessChecksWebRTC",
         "about:blank",
     ]
 

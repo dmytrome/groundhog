@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import dataclasses
 import json
 import os
@@ -11,7 +12,7 @@ from urllib.parse import urlparse
 import pytest
 
 from groundhog_mcp import document, engine, extract, safety, sanitize
-from groundhog_mcp.cdp import CDPClient
+from groundhog_mcp.cdp import CDPClient, CDPError
 from groundhog_mcp.config import Config, load_config
 from groundhog_mcp.engine import EngineProvider
 from groundhog_mcp.safety import BlockedURLError
@@ -144,17 +145,14 @@ async def test_a_public_redirect_into_a_local_service_never_reaches_it(monkeypat
     assert hits == []
 
 
-@_CDP_ENDPOINT
-async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
-    srv, hits = _local_service()
-    port = srv.server_address[1]
+async def _evaluate_on_a_public_page(probe: str) -> object:
     warm = EngineProvider(load_config())
     await warm.start()
     await warm.aclose()
     cdp = CDPClient(await engine._browser_ws_url(load_config().cdp_url))
     await cdp.connect()
+    target = await cdp.send("Target.createTarget", {"url": "about:blank"})
     try:
-        target = await cdp.send("Target.createTarget", {"url": "about:blank"})
         att = await cdp.send(
             "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
         )
@@ -163,21 +161,31 @@ async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
         loaded = cdp.expect_event("Page.loadEventFired", session_id=sid)
         await cdp.send("Page.navigate", {"url": "https://example.org/"}, session_id=sid)
         await asyncio.wait_for(loaded, timeout=30)
-        probe = (
-            f"new Image().src = 'http://127.0.0.1:{port}/img';"
-            f"fetch('http://127.0.0.1:{port}/fetch').then(r => r.text(), e => 'refused')"
-            ".then(t => new Promise(r => setTimeout(() => r(t), 1500)))"
-        )
         result = await cdp.send(
             "Runtime.evaluate",
             {"expression": probe, "awaitPromise": True, "returnByValue": True},
             session_id=sid,
         )
-        await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
     finally:
+        with contextlib.suppress(CDPError, OSError):
+            await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
         await cdp.close()
+    return result["result"]["value"]
+
+
+@_CDP_ENDPOINT
+async def test_a_public_page_cannot_make_the_browser_request_a_local_service():
+    srv, hits = _local_service()
+    port = srv.server_address[1]
+    probe = (
+        f"new Image().src = 'http://127.0.0.1:{port}/img';"
+        f"fetch('http://127.0.0.1:{port}/fetch').then(r => r.text(), e => 'refused')"
+        ".then(t => new Promise(r => setTimeout(() => r(t), 1500)))"
+    )
+    try:
+        assert await _evaluate_on_a_public_page(probe) == "refused"
+    finally:
         srv.shutdown()
-    assert result["result"]["value"] == "refused"
     assert hits == []
 
 
@@ -2721,3 +2729,84 @@ async def test_hidden_text_beside_an_open_popover_is_still_reported_and_stripped
     assert [h["reason"] for h in kept.hidden_spans if "HELD_PAYLOAD" in h["text"]] == [reason]
     assert "HELD_PAYLOAD" not in stripped.html
     assert "HELD_PAYLOAD" not in stripped.text
+
+
+def _target_host(network: str) -> str:
+    if network == "loopback" and PAGE_HOST != "127.0.0.1":
+        pytest.skip("the browser's loopback is not this machine's")
+    return _host(network)
+
+
+@_CDP_ENDPOINT
+@pytest.mark.parametrize("network", ["loopback", "lan"])
+async def test_a_public_page_cannot_open_a_websocket_to_a_local_service(network: str) -> None:
+    host = _target_host(network)
+    srv, hits = _local_service(host)
+    probe = (
+        "new Promise(r => { try {"
+        f" const w = new WebSocket('ws://{host}:{srv.server_address[1]}/ws');"
+        " w.onerror = () => r('error'); w.onopen = () => r('open');"
+        " } catch (e) { r('threw ' + e.name); } setTimeout(() => r('timeout'), 3000); })"
+    )
+    try:
+        await _evaluate_on_a_public_page(probe)
+    finally:
+        srv.shutdown()
+    assert hits == []
+
+
+def _recording(kind: int, host: str) -> tuple[socket.socket, list[bytes], threading.Thread]:
+    sock = socket.socket(socket.AF_INET, kind)
+    sock.bind((host, 0))
+    sock.settimeout(0.2)
+    if kind == socket.SOCK_STREAM:
+        sock.listen()
+    received: list[bytes] = []
+
+    def receive() -> None:
+        while True:
+            try:
+                if kind == socket.SOCK_DGRAM:
+                    received.append(sock.recvfrom(2048)[0])
+                else:
+                    conn, _ = sock.accept()
+                    with conn:
+                        received.append(conn.recv(2048))
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+
+    thread = threading.Thread(target=receive, daemon=True)
+    thread.start()
+    return sock, received, thread
+
+
+@_CDP_ENDPOINT
+@pytest.mark.parametrize("network", ["loopback", "lan"])
+async def test_a_public_page_cannot_send_webrtc_packets_to_a_local_address(network: str) -> None:
+    host = _target_host(network)
+    udp, stun_packets, udp_thread = _recording(socket.SOCK_DGRAM, host)
+    tcp, turn_packets, tcp_thread = _recording(socket.SOCK_STREAM, host)
+    servers = (
+        f"{{urls: 'stun:{host}:{udp.getsockname()[1]}'}},"
+        f"{{urls: 'turn:{host}:{tcp.getsockname()[1]}?transport=tcp',"
+        " username: 'u', credential: 'p'}"
+    )
+    probe = (
+        "(async () => {"
+        f" const pc = new RTCPeerConnection({{iceServers: [{servers}]}});"
+        " pc.createDataChannel('probe');"
+        " await pc.setLocalDescription(await pc.createOffer());"
+        " await new Promise(r => setTimeout(r, 4000)); pc.close(); return 'done'; })()"
+    )
+    try:
+        assert await _evaluate_on_a_public_page(probe) == "done"
+    finally:
+        udp.close()
+        tcp.close()
+        udp_thread.join()
+        tcp_thread.join()
+    lacks_flag = "the browser lacks --enable-features=LocalNetworkAccessChecksWebRTC"
+    assert stun_packets == [], lacks_flag
+    assert turn_packets == [], lacks_flag

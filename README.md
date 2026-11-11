@@ -302,8 +302,12 @@ launches has preloading turned off.
 
 Limits of the guard:
 
-- Only documents are checked. An older Chrome, or a site granted local-network access in the
-  profile, isn't covered for sub-resources.
+- Only documents are checked. Sub-resources, WebSocket, WebTransport and WebRTC are left to
+  Chrome's Local Network Access rule, which an older Chrome, or a site granted local-network
+  access in the profile, doesn't apply. The Chrome that Groundhog launches, and the stealth
+  image, also apply it to WebRTC (`--enable-features=LocalNetworkAccessChecksWebRTC`); a
+  browser you supply through `CDP_URL` may not, and then a page can send WebRTC packets to a
+  private address. Ego Lite checks every request and switches all of these off.
 - Preloading stays on in the stealth container and in a browser you supply.
 - Groundhog and Chrome resolve DNS separately, so a short-TTL rebinding window remains.
 - Fetches share one profile, so cookies set by one page persist into later fetches, and page
