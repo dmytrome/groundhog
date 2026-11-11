@@ -2721,3 +2721,41 @@ async def test_hidden_text_beside_an_open_popover_is_still_reported_and_stripped
     assert [h["reason"] for h in kept.hidden_spans if "HELD_PAYLOAD" in h["text"]] == [reason]
     assert "HELD_PAYLOAD" not in stripped.html
     assert "HELD_PAYLOAD" not in stripped.text
+
+
+@_CDP_ENDPOINT
+async def test_a_public_page_cannot_open_a_websocket_to_a_local_service():
+    srv, hits = _local_service()
+    port = srv.server_address[1]
+    warm = EngineProvider(load_config())
+    await warm.start()
+    await warm.aclose()
+    cdp = CDPClient(await engine._browser_ws_url(load_config().cdp_url))
+    await cdp.connect()
+    try:
+        target = await cdp.send("Target.createTarget", {"url": "about:blank"})
+        att = await cdp.send(
+            "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
+        )
+        sid = att["sessionId"]
+        await cdp.send("Page.enable", session_id=sid)
+        loaded = cdp.expect_event("Page.loadEventFired", session_id=sid)
+        await cdp.send("Page.navigate", {"url": "https://example.org/"}, session_id=sid)
+        await asyncio.wait_for(loaded, timeout=30)
+        probe = (
+            "new Promise(r => { try {"
+            f" const w = new WebSocket('ws://127.0.0.1:{port}/ws');"
+            " w.onerror = () => r('error'); w.onopen = () => r('open');"
+            " } catch (e) { r('threw ' + e.name); } setTimeout(() => r('timeout'), 3000); })"
+        )
+        result = await cdp.send(
+            "Runtime.evaluate",
+            {"expression": probe, "awaitPromise": True, "returnByValue": True},
+            session_id=sid,
+        )
+        await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
+    finally:
+        await cdp.close()
+        srv.shutdown()
+    assert result["result"]["value"] != "open"
+    assert hits == []
