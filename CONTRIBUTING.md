@@ -18,6 +18,15 @@ docker compose up --build -d
 cd mcp && RUN_LIVE=1 CDP_URL=http://127.0.0.1:9222 uv run pytest -q
 ```
 
+The proxy-only WebRTC test also needs a stealth browser started with a proxy, which CI runs
+next to the first one:
+
+```bash
+docker run -d --shm-size 512m -e PROXY=http://127.0.0.1:9 -p 127.0.0.1:9223:9222 chrome-cdp
+cd mcp && RUN_LIVE=1 CDP_URL=http://127.0.0.1:9222 GROUNDHOG_BROWSER=stealth \
+  GROUNDHOG_TEST_PROXIED_CDP_URL=http://127.0.0.1:9223 uv run pytest -q
+```
+
 ## Pull requests
 
 - Keep changes focused and the diff small; one logical change per PR.

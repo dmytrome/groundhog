@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- With `stealth` behind a proxy, WebRTC no longer reveals the real IP. The image passed the
+  IP handling policy under a switch name Chrome does not recognise, so the policy was never
+  applied; it is now `--webrtc-ip-handling-policy=disable_non_proxied_udp`.
+
+### Added
+
+- Live tests that the stealth image gathers no UDP WebRTC candidates behind a proxy and
+  gathers them as usual without one. CI starts a second, proxied stealth browser for them.
+
 ## [0.23.3] - 2026-11-11
 
 ### Fixed
