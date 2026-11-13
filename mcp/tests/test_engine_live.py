@@ -2810,3 +2810,59 @@ async def test_a_public_page_cannot_send_webrtc_packets_to_a_local_address(netwo
     lacks_flag = "the browser lacks --enable-features=LocalNetworkAccessChecksWebRTC"
     assert stun_packets == [], lacks_flag
     assert turn_packets == [], lacks_flag
+
+
+_GATHER_CANDIDATES = (
+    "(async () => { const pc = new RTCPeerConnection(); const found = [];"
+    " pc.onicecandidate = e => { if (e.candidate)"
+    " found.push(e.candidate.type + ' ' + e.candidate.protocol); };"
+    " pc.createDataChannel('probe');"
+    " const done = new Promise(r => { pc.onicegatheringstatechange = () =>"
+    " pc.iceGatheringState === 'complete' && r('complete');"
+    " setTimeout(() => r('timeout'), 4000); });"
+    " await pc.setLocalDescription(await pc.createOffer());"
+    " const state = await done; pc.close(); return [state, found]; })()"
+)
+
+
+async def _ice_candidates(cdp_url: str) -> tuple[str, list[str]]:
+    cdp = CDPClient(await engine._browser_ws_url(cdp_url))
+    await cdp.connect()
+    target = await cdp.send("Target.createTarget", {"url": "about:blank"})
+    try:
+        att = await cdp.send(
+            "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
+        )
+        result = await cdp.send(
+            "Runtime.evaluate",
+            {"expression": _GATHER_CANDIDATES, "awaitPromise": True, "returnByValue": True},
+            session_id=att["sessionId"],
+        )
+    finally:
+        with contextlib.suppress(CDPError, OSError):
+            await cdp.send("Target.closeTarget", {"targetId": target["targetId"]})
+        await cdp.close()
+    state, found = result["result"]["value"]
+    return state, found
+
+
+_STEALTH_ONLY = pytest.mark.skipif(
+    load_config().browser != "stealth", reason="the stealth image sets the policy"
+)
+
+
+@_STEALTH_ONLY
+async def test_webrtc_in_the_stealth_image_without_a_proxy_gathers_udp_as_usual() -> None:
+    state, found = await _ice_candidates(load_config().cdp_url)
+    assert state == "complete"
+    assert "host udp" in found
+
+
+@_STEALTH_ONLY
+async def test_webrtc_in_the_stealth_image_behind_a_proxy_gathers_no_udp() -> None:
+    proxied = os.environ.get("GROUNDHOG_TEST_PROXIED_CDP_URL")
+    if not proxied:
+        pytest.skip("set GROUNDHOG_TEST_PROXIED_CDP_URL to a stealth browser started with PROXY")
+    state, found = await _ice_candidates(proxied)
+    assert state == "complete"
+    assert [c for c in found if c.endswith(" udp")] == []

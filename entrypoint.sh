@@ -101,7 +101,7 @@ EOF
   if ! kill -0 "$RELAY_PID" 2>/dev/null; then
     echo "[chrome-cdp] WARN: proxy relay exited on startup; check PROXY" >&2
   fi
-  PROXY_ARGS=(--proxy-server="http://127.0.0.1:$RELAY_PORT")
+  PROXY_ARGS=(--proxy-server="http://127.0.0.1:$RELAY_PORT" --webrtc-ip-handling-policy=disable_non_proxied_udp)
 fi
 
 export DISPLAY=:99
@@ -158,7 +158,6 @@ exec /usr/local/bin/chrome \
   "${PROXY_ARGS[@]}" \
   --disable-blink-features=AutomationControlled \
   --use-fake-device-for-media-stream \
-  --force-webrtc-ip-handling-policy=disable_non_proxied_udp \
   --enable-features=LocalNetworkAccessChecksWebRTC \
   --force-dark-mode \
   --enable-webgl \
