@@ -14,7 +14,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  tested:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    outputs:
+      verified: ${{ steps.pr.outputs.verified }}
+    steps:
+      - name: Check that a merged PR already passed every job on this tree
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          verified=false
+          head=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at)][0].head.sha // empty' || true)
+          if [ -n "$head" ]; then
+            tree=$(gh api "repos/$REPO/git/commits/$SHA" --jq .tree.sha || true)
+            head_tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha || true)
+            passed=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.conclusion == "success") | .name | select(. == "test" or . == "live" or . == "live-chrome")] | unique | length' || true)
+            if [ -n "$tree" ] && [ "$tree" = "$head_tree" ] && [ "$passed" = 3 ]; then
+              verified=true
+            fi
+          fi
+          echo "PR head ${head:-none}: verified=$verified"
+          echo "verified=$verified" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: tested
+    if: ${{ !cancelled() && needs.tested.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,12 +71,9 @@ jobs:
       - run: uv build --build-constraint build-requirements.txt
       - run: uvx twine check --strict dist/*
 
-  # The suite above skips every test that needs a browser — which is all of the
-  # hidden-text and injection-containment coverage, the part most worth gating. Those
-  # ran only on a maintainer's machine, so a regression in the strip reached `main`
-  # green. This job runs them against the real browser.
   live:
-    if: github.event_name == 'pull_request'
+    needs: tested
+    if: ${{ !cancelled() && needs.tested.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -76,7 +106,8 @@ jobs:
         run: docker compose logs --no-color chrome | tail -100
 
   live-chrome:
-    if: github.event_name == 'pull_request'
+    needs: tested
+    if: ${{ !cancelled() && needs.tested.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     env:
       RUN_LIVE: "1"
