@@ -2,6 +2,7 @@
 
 [![Conformance](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml/badge.svg)](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml)
 [![Glama](https://glama.ai/mcp/servers/dmytrome/groundhog/badges/score.svg)](https://glama.ai/mcp/servers/dmytrome/groundhog)
+[![Groundhog MCP on mcprush](https://mcprush.com/badge/groundhog-mcp/score.svg)](https://mcprush.com/to/groundhog-mcp?ref=badge)
 
 Web search, read and research for AI agents, through a real, stealth-patched Chrome.
 Groundhog is an [MCP](https://modelcontextprotocol.io) server that returns clean Markdown a
