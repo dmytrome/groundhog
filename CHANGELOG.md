@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format is based on
 
 - `read_url` returns a markdown file or `llms.txt` as written, with its headings and links
   intact, instead of escaping them. Other plain text comes back fenced.
+- A card outside the page's `<main>`, such as a "See also" listing, no longer leads the
+  extracted article.
 
 ## [0.23.4] - 2026-11-15
 

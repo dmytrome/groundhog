@@ -15,6 +15,7 @@ class ExtractMeta:
 
 
 _BACKTICKS_RE = re.compile(r"`+")
+_ARTICLES_OUTSIDE_MAIN = ["//article[not(ancestor::main)][//main]"]
 
 
 def fenced(text: str) -> str:
@@ -48,6 +49,7 @@ def to_document(html: str, url: str) -> tuple[str, ExtractMeta]:
             output_format="markdown",
             include_links=True,
             include_tables=True,
+            prune_xpath=_ARTICLES_OUTSIDE_MAIN,
         )
         or ""
     )

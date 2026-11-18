@@ -130,3 +130,23 @@ def test_attribute_text_never_reaches_the_markdown() -> None:
     assert "Cats nap a lot during the day" in markdown
     sentinels = ["ALTSHORT", "ALTLONG", "TITLESHORT", "TITLELONG", "ARIASHORT", "DESCSHORT"]
     assert [s for s in [*sentinels, "FIGALT"] if s in markdown] == []
+
+
+def test_a_related_card_outside_main_does_not_lead_the_article():
+    html = (Path(__file__).parent / "fixtures" / "mcprush_listing.html").read_text(encoding="utf-8")
+    md, _ = to_document(html, "https://mcprush.com/dmytrome/groundhog-mcp")
+    assert "Stealthy browser automation" not in md
+    assert "## What it does" in md
+
+
+def test_an_article_inside_main_is_still_the_article():
+    html = (
+        "<html><body><main><article><h1>Head</h1>"
+        "<p>First paragraph with enough words to be extracted by trafilatura here now.</p>"
+        "<p>Second paragraph so the extractor crosses its content threshold and returns.</p>"
+        "</article></main><aside><article><p>Related card tagline</p></article></aside>"
+        "</body></html>"
+    )
+    md, _ = to_document(html, "https://ex.com/p")
+    assert "First paragraph" in md
+    assert "Related card tagline" not in md
