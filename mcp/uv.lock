@@ -378,7 +378,7 @@ wheels = [
 
 [[package]]
 name = "groundhog-mcp"
-version = "0.23.4"
+version = "0.23.5"
 source = { editable = "." }
 dependencies = [
     { name = "idna" },

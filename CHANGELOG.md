@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.23.5] - 2026-11-18
+
 ### Added
 
 - `read_url` takes an `offset` and returns `next_offset`, so a page cut off by the token
@@ -20,6 +22,11 @@ All notable changes to this project are documented here. The format is based on
   intact, instead of escaping them. Other plain text comes back fenced.
 - A card outside the page's `<main>`, such as a "See also" listing, no longer leads the
   extracted article.
+
+### Changed
+
+- `markdown-it-py` 4.3, which fixes two parsing paths crafted input could stall, and `pypdf`
+  7.1.
 
 ## [0.23.4] - 2026-11-15
 
@@ -795,6 +802,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.23.5]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.5
 [0.23.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.4
 [0.23.3]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.3
 [0.23.2]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.2
