@@ -181,3 +181,95 @@ async def test_a_matching_code_block_too_big_to_return_is_left_out_whole(
     result = await read_url("https://ex.com/p", format="text", query="needle", max_tokens=10)
 
     assert (result["markdown"], result["matches"], result["truncated"]) == ("", [], True)
+
+
+_PARAGRAPHS = [f"Paragraph {n} says something worth reading about dogs." for n in range(40)]
+
+
+async def test_reading_on_from_next_offset_covers_the_page_without_gaps_or_repeats(
+    fake_provider, make_page
+):
+    fake_provider(make_page(text="\n\n".join(_PARAGRAPHS)))
+    whole = (await read_url("https://ex.com/p", format="text"))["markdown"]
+    pieces, offset = [], 0
+    for _ in range(50):
+        result = await read_url("https://ex.com/p", format="text", max_tokens=40, offset=offset)
+        pieces.append(result["markdown"].removesuffix(extract.TRUNCATION_MARKER))
+        if result["next_offset"] is None:
+            assert result["truncated"] is False
+            break
+        assert result["truncated"] is True
+        offset = result["next_offset"]
+    assert len(pieces) > 2
+    assert " ".join(" ".join(pieces).split()) == " ".join(whole.split())
+
+
+async def test_an_offset_past_the_end_returns_nothing(fake_provider, make_page):
+    fake_provider(make_page(text="short page"))
+    result = await read_url("https://ex.com/p", format="text", offset=10_000)
+    assert (result["markdown"], result["truncated"], result["next_offset"]) == ("", False, None)
+
+
+async def test_a_whole_page_read_has_no_next_offset(fake_provider, make_page):
+    fake_provider(make_page())
+    result = await read_url("https://ex.com/p")
+    assert result["next_offset"] is None
+
+
+async def test_offset_is_ignored_when_a_query_picks_the_passages(fake_provider, make_page):
+    fake_provider(make_page())
+    with_offset = await read_url("https://ex.com/p", query="loyal domesticated dogs", offset=5)
+    without = await read_url("https://ex.com/p", query="loyal domesticated dogs")
+    assert with_offset["markdown"] == without["markdown"]
+
+
+async def test_mcp_boundary_rejects_a_negative_offset():
+    mcp = server.build_server()
+    with pytest.raises(Exception, match=r"(?i)greater than or equal|validation"):
+        await mcp.call_tool("read_url", {"url": "http://127.0.0.1:1/", "offset": -1})
+
+
+async def test_paging_moves_on_past_blank_space_before_a_long_block(fake_provider, make_page):
+    fake_provider(make_page(text="intro words here  \n\n" + "x" * 500))
+    seen, offset = [], 0
+    for _ in range(30):
+        result = await read_url("https://ex.com/p", format="text", max_tokens=10, offset=offset)
+        if result["next_offset"] is None:
+            break
+        assert result["next_offset"] > offset
+        seen.append(result["markdown"])
+        offset = result["next_offset"]
+    else:
+        pytest.fail("paging never reached the end")
+    assert all(piece.removesuffix(extract.TRUNCATION_MARKER).strip() for piece in seen)
+
+
+async def test_a_piece_that_starts_inside_a_code_block_reopens_it(fake_provider, make_page):
+    code = "\n".join(f"line {n} of the listing" for n in range(60))
+    fake_provider(
+        make_page(
+            text=code,
+            final_url="https://ex.com/notes.txt",
+            mime_type="text/plain",
+            html="<html><body><pre>x</pre></body></html>",
+        )
+    )
+    first = await read_url("https://ex.com/notes.txt", max_tokens=60)
+    second = await read_url("https://ex.com/notes.txt", max_tokens=60, offset=first["next_offset"])
+    for piece in (first["markdown"], second["markdown"]):
+        body = piece.removesuffix(extract.TRUNCATION_MARKER)
+        assert body.startswith("```\n") and body.endswith("\n```")
+
+
+async def test_a_query_that_matches_nothing_offers_no_offset_to_follow(fake_provider, make_page):
+    fake_provider(make_page(text="\n\n".join(_PARAGRAPHS)))
+    result = await read_url("https://ex.com/p", format="text", query="zebra", max_tokens=40)
+    assert result["truncated"] is True
+    assert result["next_offset"] is None
+
+
+async def test_a_negative_offset_from_a_direct_call_reads_from_the_start(fake_provider, make_page):
+    fake_provider(make_page(text="\n\n".join(_PARAGRAPHS)))
+    start = await read_url("https://ex.com/p", format="text", max_tokens=40)
+    negative = await read_url("https://ex.com/p", format="text", max_tokens=40, offset=-5)
+    assert negative["markdown"] == start["markdown"]

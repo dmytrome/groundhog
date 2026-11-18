@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import zip_longest
 from typing import Literal
+from urllib.parse import urlsplit
 
 from . import classify, engine, extract, pdf, provenance, sanitize
 
@@ -11,6 +12,8 @@ _MAX_THREATS = 50
 _ATTRIBUTE_REASON_PREFIX = "attribute:"
 _TEMPLATE_REASON = "template"
 _LOW_SIGNAL_CARRIERS = ("hidden_attribute", "hidden_template")
+_MARKDOWN_TYPES = frozenset({"text/markdown", "text/x-markdown"})
+_MARKDOWN_PATHS = (".md", ".markdown", "/llms.txt", "/llms-full.txt")
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,15 @@ def _pdf_markdown(pages: list[str]) -> str:
     )
 
 
+def _plain_kind(page: engine.RenderedPage, url: str) -> Literal["markdown", "text"] | None:
+    if page.mime_type in _MARKDOWN_TYPES:
+        return "markdown"
+    if page.mime_type != "text/plain":
+        return None
+    path = urlsplit(url).path.lower()
+    return "markdown" if path.endswith(_MARKDOWN_PATHS) else "text"
+
+
 def by_type(threats: list[sanitize.Threat]) -> Counter[str]:
     found: Counter[str] = Counter()
     for threat in threats:
@@ -160,7 +172,8 @@ async def fetch_document(
     final_url = page.final_url or url
 
     too_large = _over(page.html, sanitize.MAX_HTML_BYTES)
-    if format == "text" or too_large:
+    plain = _plain_kind(page, final_url) if format == "markdown" else None
+    if format == "text" or too_large or plain:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     elif page.pdf_pages is not None:
         markdown, meta = _pdf_markdown(page.pdf_pages), extract.ExtractMeta(None, None, None)
@@ -177,8 +190,10 @@ async def fetch_document(
     if not too_large:
         visible_text = sanitize.strip_invisible(page.text, scans[-1])
         text = page.text if include_hidden else visible_text
-        if format == "text":
+        if format == "text" or plain == "markdown":
             markdown = text
+        elif plain == "text":
+            markdown = extract.fenced(text)
         elif not include_hidden:
             markdown = sanitize.strip_invisible(markdown, scans[0])
         if format == "markdown" and not markdown.strip():

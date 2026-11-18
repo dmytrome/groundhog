@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import functools
 import re
 from collections import Counter, deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Literal, TypedDict
@@ -9,6 +11,7 @@ from urllib.parse import urlsplit
 
 import idna
 import pydantic_core
+from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from .. import (
@@ -257,6 +260,14 @@ def _per_domain(min_delay_ms: int, pages: int) -> int:
     return min(1 + int(_STARTS_WITHIN_S * 1000 / min_delay_ms), pages)
 
 
+def _take(taken: Counter[str], url: str, per_domain: int) -> bool:
+    domain = engine.registrable_domain(url)
+    if taken[domain] >= per_domain:
+        return False
+    taken[domain] += 1
+    return True
+
+
 def _round_robin(
     hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
 ) -> tuple[list[SearchHit], int]:
@@ -271,13 +282,46 @@ def _round_robin(
         for queue in queues.values():
             while queue and len(picked) < max_sources:
                 hit = queue.popleft()
-                registrable = engine.registrable_domain(hit["url"])
-                if taken[registrable] >= per_domain:
+                if not _take(taken, hit["url"], per_domain):
                     skipped += 1
                     continue
-                taken[registrable] += 1
                 picked.append(hit)
                 break
+    return picked, skipped
+
+
+def _given(urls: list[str]) -> list[SearchHit]:
+    hits: list[SearchHit] = []
+    for raw in urls:
+        url = safety.safe_url(raw.strip()) if isinstance(raw, str) else None
+        if url is None or _host(url) is None:
+            raise safety.InvalidArgument(f"not an absolute http(s) URL: {str(raw)[:80]!r}")
+        hits.append(
+            {
+                "title": "",
+                "url": url,
+                "snippet": "",
+                "engine": "urls",
+                "score": 0.0,
+                "published": None,
+            }
+        )
+    return hits
+
+
+def _per_site(
+    hits: list[SearchHit], max_sources: int, per_domain: int
+) -> tuple[list[SearchHit], int]:
+    taken: Counter[str] = Counter()
+    picked: list[SearchHit] = []
+    skipped = 0
+    for hit in hits:
+        if len(picked) == max_sources:
+            break
+        if _take(taken, hit["url"], per_domain):
+            picked.append(hit)
+        else:
+            skipped += 1
     return picked, skipped
 
 
@@ -316,13 +360,34 @@ def _retire(task: asyncio.Task[document.Document]) -> None:
         task.exception()
 
 
-async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]:
+Progress = Callable[[float, float | None, str | None], Awaitable[None]]
+
+
+async def _report(progress: Progress | None, done: int, total: int) -> None:
+    if progress is None:
+        return
+    with contextlib.suppress(Exception):
+        await progress(done, total, f"read {done} of {total} pages")
+
+
+async def _fetch_all(
+    urls: list[str], progress: Progress | None = None
+) -> list[document.Document | BaseException]:
     tasks = [
         asyncio.create_task(document.fetch_document(url, max_threats=_MAX_THREATS_PER_SOURCE))
         for url in urls
     ]
     try:
-        _, pending = await asyncio.wait(tasks, timeout=_DEADLINE_S)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _DEADLINE_S
+        pending: set[asyncio.Task[document.Document]] = set(tasks)
+        await _report(progress, 0, len(tasks))
+        while pending and (remaining := deadline - loop.time()) > 0:
+            done, pending = await asyncio.wait(
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            if done:
+                await _report(progress, len(tasks) - len(pending), len(tasks))
         for task in pending:
             task.cancel()
         if pending:
@@ -372,19 +437,17 @@ def _picked(
             continue
         url = grant["fetch_url"]
         key = links.identity(url)
-        domain = engine.registrable_domain(url)
         outcome: FollowOutcome = "read"
         if _excluded(url, excluded) or (included and not _within(url, included)):
             outcome = "filtered"
         elif key in seen:
             outcome = "duplicate"
-        elif taken[domain] >= per_domain:
+        elif not _take(taken, url, per_domain):
             outcome = "same_domain_limit"
         followed.append({"url": url, "why": why, "outcome": outcome})
         if outcome != "read":
             continue
         seen.add(key)
-        taken[domain] += 1
         targets.append(
             _Target(
                 url=url,
@@ -740,6 +803,18 @@ async def research(
             )
         ),
     ] = None,
+    urls: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                f"Read these pages (up to {_MAX_SOURCES}) instead of searching, and rank "
+                "their passages against `query`. The domain filters and `max_sources` still "
+                "apply, and no more pages per site are read than the per-domain rate limit "
+                "allows in one call; the receipt counts what was left unread. Not with `follow`."
+            )
+        ),
+    ] = None,
+    ctx: Context | None = None,
 ) -> ResearchResult:
     """Search the web and return ranked passages drawn from several sources.
 
@@ -759,6 +834,10 @@ async def research(
         raise safety.InvalidArgument(f"query must be at most {_MAX_QUERY_CHARS} characters")
     if aim is not None and len(aim) > _MAX_AIM_CHARS:
         raise safety.InvalidArgument(f"aim must be at most {_MAX_AIM_CHARS} characters")
+    if follow is not None and urls is not None:
+        raise safety.InvalidArgument("pass follow or urls, not both")
+    if urls is not None and not 1 <= len(urls) <= _MAX_SOURCES:
+        raise safety.InvalidArgument(f"urls takes 1-{_MAX_SOURCES} entries")
     if follow is not None and not 1 <= len(follow) <= _MAX_FOLLOW:
         raise safety.InvalidArgument(f"follow takes 1-{_MAX_FOLLOW} entries")
     after = _date(published_after)
@@ -782,25 +861,28 @@ async def research(
         per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
         targets, followed = _picked(follow, included, excluded, per_domain)
     else:
-        executed = query
-        if included:
-            executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
-        executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(included)])
         capped = max(1, min(max_sources, _MAX_SOURCES))
-        try:
-            found, backend = await search_backend.search(
-                executed,
-                cfg,
-                _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH,
-            )
-        except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
-            raise
-        except Exception as exc:
-            raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
+        if urls is not None:
+            backend, found = "urls", _given(urls)
+        else:
+            executed = query
+            if included:
+                executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
+            executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(included)])
+            try:
+                found, backend = await search_backend.search(
+                    executed,
+                    cfg,
+                    _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH,
+                )
+            except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
+                raise
+            except Exception as exc:
+                raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
         unique: dict[str, SearchHit] = {}
         for hit in found:
             if _host(hit["url"]) is not None:
-                unique.setdefault(hit["url"], hit)
+                unique.setdefault(links.identity(hit["url"]) if urls else hit["url"], hit)
         hits = list(unique.values())
         for hit in hits:
             if domain := _within(hit["url"], included):
@@ -816,7 +898,10 @@ async def research(
             for hit in in_domains
             if not (after and (dated := _date(hit["published"])) and dated < after)
         ]
-        if included:
+        if urls is not None:
+            per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
+            chosen, same_domain = _per_site(kept, capped, per_domain)
+        elif included:
             per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
             chosen, same_domain = _round_robin(kept, included, capped, per_domain)
         else:
@@ -827,7 +912,8 @@ async def research(
             )
             for hit in chosen
         ]
-    outcomes = await _fetch_all([target.url for target in targets]) if targets else []
+    progress = ctx.report_progress if ctx is not None else None
+    outcomes = await _fetch_all([t.url for t in targets], progress) if targets else []
 
     sources: list[Source] = []
     counts = {

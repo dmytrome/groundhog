@@ -2,6 +2,7 @@
 
 [![Conformance](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml/badge.svg)](https://github.com/dmytrome/groundhog/actions/workflows/conformance.yml)
 [![Glama](https://glama.ai/mcp/servers/dmytrome/groundhog/badges/score.svg)](https://glama.ai/mcp/servers/dmytrome/groundhog)
+[![Groundhog MCP on mcprush](https://mcprush.com/badge/groundhog-mcp/score.svg)](https://mcprush.com/to/groundhog-mcp?ref=badge)
 
 Web search, read and research for AI agents, through a real, stealth-patched Chrome.
 Groundhog is an [MCP](https://modelcontextprotocol.io) server that returns clean Markdown a
@@ -111,11 +112,11 @@ read with your Ego Lite sessions, so a page can still change state on sites you 
 
 ## Tools
 
-### `read_url(url, format="markdown", max_tokens=None, query=None, include_hidden=False)`
+### `read_url(url, format="markdown", max_tokens=None, query=None, offset=0, include_hidden=False)`
 
 | Key          | Meaning |
 | ------------ | ------- |
-| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown; a PDF comes back as one `## Page N` section per page with its text fenced. `format` may be `markdown` or `text` |
+| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown. A file served as `text/markdown`, or as plain text from a `.md` or `llms.txt` path, comes back as written; other plain text comes back fenced; a PDF comes back as one `## Page N` section per page with its text fenced. `format` may be `markdown` or `text` |
 | `title`      | Page title |
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
@@ -123,6 +124,7 @@ read with your Ego Lite sessions, so a page can still change state on sites you 
 | `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `too_large` means the page had over 5 MiB of HTML or 2 MiB of text, or was a PDF over 10 MiB, 100 pages or 20 seconds of parsing, and nothing of it is returned. An encrypted or malformed PDF is `unsupported_content`. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
+| `next_offset`| Where a cut-off read stopped in the page's full markdown: pass it back as `offset` to read on. `null` when nothing was cut or `query` is set. `offset` is ignored with `query`; a piece that starts or ends inside a code block gets its fence lines back, and each call fetches the page again, so a changed `content_hash` means the page moved under you |
 | `threats`    | What was stripped; empty when nothing was found |
 | `matches`    | With `query`: ranked passages with `id`, `heading`, `offset`, `end`, `score` and `clamped` (cut short to fit `max_tokens`). `offset` and `end` index the page's full markdown, and that span is the text returned; a piece of a long code block comes back with its fence lines added around it. Code is never cut mid-piece: a matching code block or piece larger than `max_tokens` is left out, and when nothing fits `markdown` is empty with `truncated` set, so raise `max_tokens` |
 | `set_aside`  | With `query`: scoring passages the relevance floor dropped |
@@ -175,9 +177,10 @@ URL would change under cleaning, isn't `http(s)`, carries credentials or exceeds
 characters is dropped. A backend that can't answer raises an error instead of returning an
 empty web.
 
-### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None)`
+### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None, urls=None)`
 
-Searches, reads the top sources and ranks passages from all of them in one pass.
+Searches, reads the top sources and ranks passages from all of them in one pass. A client
+that asks for progress hears each page as it is read.
 
 - `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
   `fence`. `text` is exactly `markdown[start:end]`; `clamped` says it was cut short to fit
@@ -223,6 +226,10 @@ calls. A follow runs no search, and `followed` says for each entry whether it wa
 `not_content`, `failed`, `filtered`, a `duplicate`, over the `same_domain_limit` (as many
 pages per site as can start before the deadline), an `invalid_token` or `expired`. Tokens are
 signed by the server and expire after 30 minutes or on restart.
+
+To rank passages across pages you already have, pass them as `urls` (up to 10) instead of
+searching. The domain filters, `max_sources` and the per-site limit apply as they do to search
+results, the receipt counts what they left out, and `backend` is `urls`. `urls` and `follow` don't mix.
 
 The JSON text block of a response never exceeds 40,000 characters; the MCP result carries the
 same object again as `structuredContent`. When it would, cards go first, then threat

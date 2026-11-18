@@ -191,3 +191,15 @@ async def test_a_page_a_reader_sees_nothing_on_is_empty(
         srv.shutdown()
 
     assert result["status"] == status
+
+
+async def test_an_llms_txt_comes_back_as_the_markdown_it_is(monkeypatch):
+    monkeypatch.setenv("GROUNDHOG_BLOCK_PRIVATE_IPS", "false")
+    await engine.shutdown_provider()
+    body = "# Docs\n\n- [Guide](https://example.com/guide.md): start here\n"
+    srv = _serve_paths({"/llms.txt": (200, body)}, content_type="text/plain; charset=utf-8")
+    try:
+        result = await read_url(f"http://{PAGE_HOST}:{srv.server_address[1]}/llms.txt")
+    finally:
+        srv.shutdown()
+    assert result["markdown"].strip() == body.strip()

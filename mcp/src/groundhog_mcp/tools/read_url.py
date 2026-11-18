@@ -6,6 +6,26 @@ from .. import classify, config, document, engine, extract, provenance, retrieva
 from ..config import load_config
 
 
+def _skip_space(text: str, at: int) -> int:
+    while at < len(text) and text[at].isspace():
+        at += 1
+    return at
+
+
+def _refenced(body: str, start: int, end: int, kept: str) -> str:
+    if not kept:
+        return kept
+    lines = body.split("\n")
+    inside = retrieval.fenced_lines(lines)
+    first, last = body.count("\n", 0, start), body.count("\n", 0, end - 1)
+    opened, closing = inside.get(first), inside.get(last)
+    if opened is not None and opened != first:
+        kept = lines[opened] + "\n" + kept
+    if closing is not None and max(i for i, o in inside.items() if o == closing) > last:
+        kept = kept.rstrip("\n") + "\n" + retrieval.fence_run(lines[closing])
+    return kept
+
+
 class ReadResult(TypedDict):
     markdown: str
     title: str
@@ -15,6 +35,7 @@ class ReadResult(TypedDict):
     status: classify.RetrievalStatus
     http_status: int | None
     truncated: bool
+    next_offset: int | None
     threats: list[sanitize.Threat]
     matches: list[retrieval.Match]
     set_aside: int
@@ -56,6 +77,18 @@ async def read_url(
             )
         ),
     ] = None,
+    offset: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Start the content this many characters into the page's full markdown: pass "
+                "`next_offset` from a truncated read to continue it, or a match's `offset`. "
+                "Ignored when `query` is set. The page is fetched again, so compare "
+                "`provenance.content_hash` to see whether it changed in between."
+            ),
+        ),
+    ] = 0,
     include_hidden: Annotated[
         bool,
         Field(
@@ -97,11 +130,23 @@ async def read_url(
         if selected_matches or selected_truncated:
             body, matches, truncated = selected, selected_matches, selected_truncated
             set_aside = selected_set_aside
+    next_offset: int | None = None
     if matches:
         body += extract.TRUNCATION_MARKER if truncated else ""
-    else:
+    elif query and query.strip():
         body, over_budget = extract.truncate(body, limit)
         truncated = truncated or over_budget
+    else:
+        start = _skip_space(body, min(max(offset, 0), len(body)))
+        kept = extract.cut(body[start:], limit)
+        end = start + len(kept)
+        if format == "markdown":
+            kept = _refenced(body, start, end, kept)
+        if _skip_space(body, end) < len(body):
+            truncated, next_offset = True, _skip_space(body, end)
+            body = kept + extract.TRUNCATION_MARKER
+        else:
+            body = kept
 
     return {
         "markdown": body,
@@ -112,6 +157,7 @@ async def read_url(
         "status": doc.status,
         "http_status": doc.http_status,
         "truncated": truncated,
+        "next_offset": next_offset,
         "threats": doc.threats,
         "matches": matches,
         "set_aside": set_aside,
