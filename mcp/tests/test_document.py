@@ -1322,3 +1322,11 @@ async def test_text_format_of_a_markdown_file_is_unchanged(fake_provider, make_p
     fake_provider(make_page(html=_CHROME_PRE, text=_LLMS_TXT, mime_type="text/markdown"))
     doc = await fetch_document("https://ex.com/notes", format="text")
     assert doc.markdown == _LLMS_TXT
+
+
+async def test_an_llms_txt_whose_final_url_was_suppressed_is_still_read_as_markdown(
+    fake_provider, make_page
+):
+    fake_provider(make_page(html=_CHROME_PRE, text=_LLMS_TXT, final_url="", mime_type="text/plain"))
+    doc = await fetch_document("https://ex.com/llms.txt")
+    assert doc.markdown == _LLMS_TXT

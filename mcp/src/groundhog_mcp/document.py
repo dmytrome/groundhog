@@ -140,12 +140,12 @@ def _pdf_markdown(pages: list[str]) -> str:
     )
 
 
-def _plain_kind(page: engine.RenderedPage) -> Literal["markdown", "text"] | None:
+def _plain_kind(page: engine.RenderedPage, url: str) -> Literal["markdown", "text"] | None:
     if page.mime_type in _MARKDOWN_TYPES:
         return "markdown"
     if page.mime_type != "text/plain":
         return None
-    path = urlsplit(page.final_url).path.lower()
+    path = urlsplit(url).path.lower()
     return "markdown" if path.endswith(_MARKDOWN_PATHS) else "text"
 
 
@@ -172,7 +172,7 @@ async def fetch_document(
     final_url = page.final_url or url
 
     too_large = _over(page.html, sanitize.MAX_HTML_BYTES)
-    plain = _plain_kind(page) if format == "markdown" else None
+    plain = _plain_kind(page, final_url) if format == "markdown" else None
     if format == "text" or too_large or plain:
         markdown, meta = page.text, extract.ExtractMeta(None, None, None)
     elif page.pdf_pages is not None:
