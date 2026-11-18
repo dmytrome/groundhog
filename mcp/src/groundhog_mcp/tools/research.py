@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import functools
 import re
 from collections import Counter, deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Literal, TypedDict
@@ -9,6 +11,7 @@ from urllib.parse import urlsplit
 
 import idna
 import pydantic_core
+from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from .. import (
@@ -316,13 +319,34 @@ def _retire(task: asyncio.Task[document.Document]) -> None:
         task.exception()
 
 
-async def _fetch_all(urls: list[str]) -> list[document.Document | BaseException]:
+Progress = Callable[[float, float | None, str | None], Awaitable[None]]
+
+
+async def _report(progress: Progress | None, done: int, total: int) -> None:
+    if progress is None:
+        return
+    with contextlib.suppress(Exception):
+        await progress(done, total, f"read {done} of {total} pages")
+
+
+async def _fetch_all(
+    urls: list[str], progress: Progress | None = None
+) -> list[document.Document | BaseException]:
     tasks = [
         asyncio.create_task(document.fetch_document(url, max_threats=_MAX_THREATS_PER_SOURCE))
         for url in urls
     ]
     try:
-        _, pending = await asyncio.wait(tasks, timeout=_DEADLINE_S)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _DEADLINE_S
+        pending: set[asyncio.Task[document.Document]] = set(tasks)
+        await _report(progress, 0, len(tasks))
+        while pending and (remaining := deadline - loop.time()) > 0:
+            done, pending = await asyncio.wait(
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            if done:
+                await _report(progress, len(tasks) - len(pending), len(tasks))
         for task in pending:
             task.cancel()
         if pending:
@@ -740,6 +764,7 @@ async def research(
             )
         ),
     ] = None,
+    ctx: Context | None = None,
 ) -> ResearchResult:
     """Search the web and return ranked passages drawn from several sources.
 
@@ -827,7 +852,8 @@ async def research(
             )
             for hit in chosen
         ]
-    outcomes = await _fetch_all([target.url for target in targets]) if targets else []
+    progress = ctx.report_progress if ctx is not None else None
+    outcomes = await _fetch_all([t.url for t in targets], progress) if targets else []
 
     sources: list[Source] = []
     counts = {

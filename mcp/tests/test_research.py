@@ -1900,3 +1900,27 @@ async def test_a_source_section_is_found_by_the_words_in_its_heading(fake_web: F
     assert [p["text"] for p in result["passages"]] == [
         "The first release mapped organic carbon on a coarse grid."
     ]
+
+
+async def test_a_client_asking_for_progress_hears_each_page_as_it_is_read(fake_web):
+    from mcp.client.client import Client
+
+    from groundhog_mcp import server
+
+    pages = {f"https://site{n}.com/p": f"# Cats\n\nCats nap number {n}." for n in range(3)}
+    fake_web([_hit(url) for url in pages], {url: _doc(url, text) for url, text in pages.items()})
+    heard: list[tuple[float, float | None, str | None]] = []
+
+    async def on_progress(progress: float, total: float | None, message: str | None) -> None:
+        heard.append((progress, total, message))
+
+    async with Client(server.build_server()) as client:
+        result = await client.call_tool(
+            "research", {"query": "cats", "max_sources": 3}, progress_callback=on_progress
+        )
+
+    assert not result.is_error
+    counts = [progress for progress, _, _ in heard]
+    assert counts[0] == 0 and counts[-1] == 3 and counts == sorted(counts)
+    assert {total for _, total, _ in heard} == {3}
+    assert heard[-1][2] == "read 3 of 3 pages"

@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format is based on
 
 - `read_url` takes an `offset` and returns `next_offset`, so a page cut off by the token
   budget can be read on from where it stopped.
+- `research` reports progress as each page is read, to clients that ask for it, so a long
+  call shows it is alive.
 
 ### Fixed
 

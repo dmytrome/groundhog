@@ -178,7 +178,8 @@ empty web.
 
 ### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None)`
 
-Searches, reads the top sources and ranks passages from all of them in one pass.
+Searches, reads the top sources and ranks passages from all of them in one pass. A client
+that asks for progress hears each page as it is read.
 
 - `passages`: `id`, `text`, `source_url`, `heading`, `score`, `start`, `end`, `clamped`,
   `fence`. `text` is exactly `markdown[start:end]`; `clamped` says it was cut short to fit
