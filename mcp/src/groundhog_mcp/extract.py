@@ -15,7 +15,10 @@ class ExtractMeta:
 
 
 _BACKTICKS_RE = re.compile(r"`+")
-_ARTICLES_OUTSIDE_MAIN = ["//article[not(ancestor::main)][//main]"]
+_ARTICLES_OUTSIDE_MAIN = [
+    "//article[not(ancestor::main)][not(.//main)]"
+    "[preceding-sibling::article or following-sibling::article][//main]"
+]
 
 
 def fenced(text: str) -> str:

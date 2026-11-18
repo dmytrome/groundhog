@@ -150,3 +150,27 @@ def test_an_article_inside_main_is_still_the_article():
     md, _ = to_document(html, "https://ex.com/p")
     assert "First paragraph" in md
     assert "Related card tagline" not in md
+
+
+_STORY = (
+    "<h1>Story</h1>"
+    "<p>First paragraph with enough words to be extracted by trafilatura here now.</p>"
+    "<p>Second paragraph so the extractor crosses its content threshold and returns.</p>"
+)
+
+
+def test_an_article_that_wraps_main_is_kept():
+    html = (
+        f"<html><body><article><header>Site</header><main>{_STORY}</main></article></body></html>"
+    )
+    md, _ = to_document(html, "https://ex.com/p")
+    assert "First paragraph" in md
+
+
+def test_a_lone_article_beside_a_decorative_main_is_kept():
+    html = (
+        f"<html><body><article>{_STORY}</article>"
+        "<main><nav><a href='/a'>A</a> <a href='/b'>B</a></nav></main></body></html>"
+    )
+    md, _ = to_document(html, "https://ex.com/p")
+    assert "First paragraph" in md
