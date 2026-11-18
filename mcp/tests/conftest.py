@@ -82,6 +82,7 @@ def make_page():
         spans_dropped: int = 0,
         http_status: int | None = 200,
         retrieval_status: classify.RetrievalStatus = "ok",
+        mime_type: str | None = None,
     ) -> RenderedPage:
         return RenderedPage(
             html=html,
@@ -95,6 +96,7 @@ def make_page():
             spans_dropped=spans_dropped,
             http_status=http_status,
             retrieval_status=retrieval_status,
+            mime_type=mime_type,
         )
 
     return _make

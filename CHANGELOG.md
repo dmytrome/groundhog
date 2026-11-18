@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `read_url` returns a markdown file or `llms.txt` as written, with its headings and links
+  intact, instead of escaping them. Other plain text comes back fenced.
+
 ## [0.23.4] - 2026-11-15
 
 ### Fixed

@@ -453,6 +453,7 @@ class RenderedPage:
     http_status: int | None
     retrieval_status: classify.RetrievalStatus
     pdf_pages: list[str] | None = None
+    mime_type: str | None = None
 
     def __post_init__(self) -> None:
         self.html, self.text = _as_text(self.html), _as_text(self.text)
@@ -484,6 +485,8 @@ class RenderedPage:
         }
         status = self.http_status
         self.http_status = status if isinstance(status, int) and status > 0 else None
+        mime = self.mime_type
+        self.mime_type = mime.split(";", 1)[0].strip().lower() if isinstance(mime, str) else None
 
 
 def _as_text(value: object) -> str:
@@ -1101,6 +1104,7 @@ class EngineProvider:
                     "lang": found.get("lang"),
                     "canonical": found.get("canonical"),
                 },
+                mime_type=main.get("mimeType") if main else None,
             )
         finally:
             for unsubscribe in unsubscribes:

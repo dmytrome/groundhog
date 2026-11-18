@@ -579,7 +579,9 @@ async def test_a_non_text_body_is_classified_as_unsupported_content():
     assert page.retrieval_status == "unsupported_content"
 
 
-def _serve_paths(routes: dict[str, tuple[int, str]]) -> ThreadingHTTPServer:
+def _serve_paths(
+    routes: dict[str, tuple[int, str]], content_type: str = "text/html"
+) -> ThreadingHTTPServer:
     """Serve `{path: (status, html)}`, for navigations that end on a second document."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -587,7 +589,7 @@ def _serve_paths(routes: dict[str, tuple[int, str]]) -> ThreadingHTTPServer:
             status, body = routes.get(self.path, (404, "<html><body>nothing</body></html>"))
             payload = body.encode()
             self.send_response(status)
-            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)

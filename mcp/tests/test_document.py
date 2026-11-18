@@ -1263,3 +1263,62 @@ async def test_a_pdf_whose_only_text_is_drawn_invisibly_is_empty(fake_provider, 
     doc = await fetch_document("https://ex.com/scan.pdf")
 
     assert doc.status == "empty"
+
+
+_LLMS_TXT = "# Model Context Protocol\n\n- [Architecture](https://ex.com/arch.md): how it fits\n"
+_CHROME_PRE = f"<html><body><pre>{_LLMS_TXT}</pre></body></html>"
+
+
+async def test_an_llms_txt_served_as_plain_text_keeps_its_headings_and_links(
+    fake_provider, make_page
+):
+    fake_provider(
+        make_page(
+            html=_CHROME_PRE,
+            text=_LLMS_TXT,
+            final_url="https://ex.com/llms.txt",
+            mime_type="text/plain; charset=utf-8",
+        )
+    )
+    doc = await fetch_document("https://ex.com/llms.txt")
+    assert doc.markdown == _LLMS_TXT
+
+
+async def test_a_file_served_as_markdown_is_returned_as_written(fake_provider, make_page):
+    fake_provider(make_page(html=_CHROME_PRE, text=_LLMS_TXT, mime_type="text/markdown"))
+    doc = await fetch_document("https://ex.com/notes")
+    assert doc.markdown == _LLMS_TXT
+
+
+async def test_other_plain_text_is_fenced_rather_than_read_as_markdown(fake_provider, make_page):
+    robots = "# robots\nUser-agent: *\nDisallow: /private\n"
+    fake_provider(
+        make_page(
+            html=f"<html><body><pre>{robots}</pre></body></html>",
+            text=robots,
+            final_url="https://ex.com/robots.txt",
+            mime_type="text/plain",
+        )
+    )
+    doc = await fetch_document("https://ex.com/robots.txt")
+    assert doc.markdown == extract.fenced(robots)
+
+
+async def test_invisible_characters_are_stripped_from_a_markdown_file(fake_provider, make_page):
+    fake_provider(
+        make_page(
+            html=_CHROME_PRE,
+            text=f"# Title{ZERO_WIDTH}\n",
+            final_url="https://ex.com/README.md",
+            mime_type="text/plain",
+        )
+    )
+    doc = await fetch_document("https://ex.com/README.md")
+    assert doc.markdown == "# Title\n"
+    assert doc.characters_found == 1
+
+
+async def test_text_format_of_a_markdown_file_is_unchanged(fake_provider, make_page):
+    fake_provider(make_page(html=_CHROME_PRE, text=_LLMS_TXT, mime_type="text/markdown"))
+    doc = await fetch_document("https://ex.com/notes", format="text")
+    assert doc.markdown == _LLMS_TXT

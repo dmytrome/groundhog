@@ -115,7 +115,7 @@ read with your Ego Lite sessions, so a page can still change state on sites you 
 
 | Key          | Meaning |
 | ------------ | ------- |
-| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown; a PDF comes back as one `## Page N` section per page with its text fenced. `format` may be `markdown` or `text` |
+| `markdown`   | Extracted content, article first, falling back to the rendered text inside a code fence, so none of it reads as markdown. A file served as `text/markdown`, or as plain text from a `.md` or `llms.txt` path, comes back as written; other plain text comes back fenced; a PDF comes back as one `## Page N` section per page with its text fenced. `format` may be `markdown` or `text` |
 | `title`      | Page title |
 | `url`        | The URL you asked for |
 | `final_url`  | The URL after redirects, re-checked by the SSRF guard. If unusable, the requested URL is reported with a `final_url_suppressed` threat |
