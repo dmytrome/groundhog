@@ -260,6 +260,14 @@ def _per_domain(min_delay_ms: int, pages: int) -> int:
     return min(1 + int(_STARTS_WITHIN_S * 1000 / min_delay_ms), pages)
 
 
+def _take(taken: Counter[str], url: str, per_domain: int) -> bool:
+    domain = engine.registrable_domain(url)
+    if taken[domain] >= per_domain:
+        return False
+    taken[domain] += 1
+    return True
+
+
 def _round_robin(
     hits: list[SearchHit], domains: list[str], max_sources: int, per_domain: int
 ) -> tuple[list[SearchHit], int]:
@@ -274,11 +282,9 @@ def _round_robin(
         for queue in queues.values():
             while queue and len(picked) < max_sources:
                 hit = queue.popleft()
-                registrable = engine.registrable_domain(hit["url"])
-                if taken[registrable] >= per_domain:
+                if not _take(taken, hit["url"], per_domain):
                     skipped += 1
                     continue
-                taken[registrable] += 1
                 picked.append(hit)
                 break
     return picked, skipped
@@ -303,15 +309,20 @@ def _given(urls: list[str]) -> list[SearchHit]:
     return hits
 
 
-def _per_site(hits: list[SearchHit], per_domain: int) -> tuple[list[SearchHit], int]:
+def _per_site(
+    hits: list[SearchHit], max_sources: int, per_domain: int
+) -> tuple[list[SearchHit], int]:
     taken: Counter[str] = Counter()
     picked: list[SearchHit] = []
+    skipped = 0
     for hit in hits:
-        domain = engine.registrable_domain(hit["url"])
-        if taken[domain] < per_domain:
-            taken[domain] += 1
+        if len(picked) == max_sources:
+            break
+        if _take(taken, hit["url"], per_domain):
             picked.append(hit)
-    return picked, len(hits) - len(picked)
+        else:
+            skipped += 1
+    return picked, skipped
 
 
 def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], int]:
@@ -426,19 +437,17 @@ def _picked(
             continue
         url = grant["fetch_url"]
         key = links.identity(url)
-        domain = engine.registrable_domain(url)
         outcome: FollowOutcome = "read"
         if _excluded(url, excluded) or (included and not _within(url, included)):
             outcome = "filtered"
         elif key in seen:
             outcome = "duplicate"
-        elif taken[domain] >= per_domain:
+        elif not _take(taken, url, per_domain):
             outcome = "same_domain_limit"
         followed.append({"url": url, "why": why, "outcome": outcome})
         if outcome != "read":
             continue
         seen.add(key)
-        taken[domain] += 1
         targets.append(
             _Target(
                 url=url,
@@ -799,9 +808,9 @@ async def research(
         Field(
             description=(
                 f"Read these pages (up to {_MAX_SOURCES}) instead of searching, and rank "
-                "their passages against `query`. The domain filters still apply, and no more "
-                "pages per site are read than the per-domain rate limit allows in one call. "
-                "Not with `follow`."
+                "their passages against `query`. The domain filters and `max_sources` still "
+                "apply, and no more pages per site are read than the per-domain rate limit "
+                "allows in one call; the receipt counts what was left unread. Not with `follow`."
             )
         ),
     ] = None,
@@ -891,7 +900,7 @@ async def research(
         ]
         if urls is not None:
             per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
-            chosen, same_domain = _per_site(kept, per_domain)
+            chosen, same_domain = _per_site(kept, capped, per_domain)
         elif included:
             per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
             chosen, same_domain = _round_robin(kept, included, capped, per_domain)

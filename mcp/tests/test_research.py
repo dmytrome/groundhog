@@ -1960,7 +1960,7 @@ async def test_given_urls_on_one_site_are_capped_like_any_other_read(
     urls = [f"https://isric.org/{i}" for i in range(10)]
     fake_web([], {url: _doc(url, _KITTEN) for url in urls})
 
-    result = await research("kitten", urls=urls)
+    result = await research("kitten", urls=urls, max_sources=10)
 
     assert len(result["sources"]) == 7
     assert result["receipt"]["hits_same_domain"] == 3
@@ -1991,3 +1991,13 @@ async def test_urls_and_follow_together_are_refused(fake_web: FakeWeb) -> None:
         await research(
             "kitten", urls=["https://a.com/x"], follow=[{"token": "t", "why": "check it"}]
         )
+
+
+async def test_given_urls_are_read_no_more_than_max_sources(fake_web: FakeWeb) -> None:
+    urls = [f"https://site{i}.com/p" for i in range(6)]
+    fake_web([], {url: _doc(url, _KITTEN) for url in urls})
+
+    result = await research("kitten", urls=urls, max_sources=2)
+
+    assert fetched == urls[:2]
+    assert result["receipt"]["hits_unread"] == 4
