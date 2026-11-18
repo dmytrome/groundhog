@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format is based on
   budget can be read on from where it stopped.
 - `research` reports progress as each page is read, to clients that ask for it, so a long
   call shows it is alive.
+- `research` takes `urls`: up to 10 pages to read and rank instead of searching.
 
 ### Fixed
 

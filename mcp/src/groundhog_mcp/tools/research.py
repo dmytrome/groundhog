@@ -284,6 +284,36 @@ def _round_robin(
     return picked, skipped
 
 
+def _given(urls: list[str]) -> list[SearchHit]:
+    hits: list[SearchHit] = []
+    for raw in urls:
+        url = safety.safe_url(raw.strip()) if isinstance(raw, str) else None
+        if url is None or _host(url) is None:
+            raise safety.InvalidArgument(f"not an absolute http(s) URL: {str(raw)[:80]!r}")
+        hits.append(
+            {
+                "title": "",
+                "url": url,
+                "snippet": "",
+                "engine": "urls",
+                "score": 0.0,
+                "published": None,
+            }
+        )
+    return hits
+
+
+def _per_site(hits: list[SearchHit], per_domain: int) -> tuple[list[SearchHit], int]:
+    taken: Counter[str] = Counter()
+    picked: list[SearchHit] = []
+    for hit in hits:
+        domain = engine.registrable_domain(hit["url"])
+        if taken[domain] < per_domain:
+            taken[domain] += 1
+            picked.append(hit)
+    return picked, len(hits) - len(picked)
+
+
 def _diverse(hits: list[SearchHit], max_sources: int) -> tuple[list[SearchHit], int]:
     seen: set[str] = set()
     picked: list[SearchHit] = []
@@ -764,6 +794,17 @@ async def research(
             )
         ),
     ] = None,
+    urls: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                f"Read these pages (up to {_MAX_SOURCES}) instead of searching, and rank "
+                "their passages against `query`. The domain filters still apply, and no more "
+                "pages per site are read than the per-domain rate limit allows in one call. "
+                "Not with `follow`."
+            )
+        ),
+    ] = None,
     ctx: Context | None = None,
 ) -> ResearchResult:
     """Search the web and return ranked passages drawn from several sources.
@@ -784,6 +825,10 @@ async def research(
         raise safety.InvalidArgument(f"query must be at most {_MAX_QUERY_CHARS} characters")
     if aim is not None and len(aim) > _MAX_AIM_CHARS:
         raise safety.InvalidArgument(f"aim must be at most {_MAX_AIM_CHARS} characters")
+    if follow is not None and urls is not None:
+        raise safety.InvalidArgument("pass follow or urls, not both")
+    if urls is not None and not 1 <= len(urls) <= _MAX_SOURCES:
+        raise safety.InvalidArgument(f"urls takes 1-{_MAX_SOURCES} entries")
     if follow is not None and not 1 <= len(follow) <= _MAX_FOLLOW:
         raise safety.InvalidArgument(f"follow takes 1-{_MAX_FOLLOW} entries")
     after = _date(published_after)
@@ -807,25 +852,28 @@ async def research(
         per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
         targets, followed = _picked(follow, included, excluded, per_domain)
     else:
-        executed = query
-        if included:
-            executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
-        executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(included)])
         capped = max(1, min(max_sources, _MAX_SOURCES))
-        try:
-            found, backend = await search_backend.search(
-                executed,
-                cfg,
-                _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH,
-            )
-        except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
-            raise
-        except Exception as exc:
-            raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
+        if urls is not None:
+            backend, found = "urls", _given(urls)
+        else:
+            executed = query
+            if included:
+                executed += " (" + " OR ".join(f"site:{d}" for d in included) + ")"
+            executed += "".join(f" -site:{d}" for d in excluded[: _SITE_TERMS - len(included)])
+            try:
+                found, backend = await search_backend.search(
+                    executed,
+                    cfg,
+                    _FILTERED_HITS if included or excluded or after else capped * _OVERFETCH,
+                )
+            except (search_backend.SearchUnavailableError, engine.BrowserUnavailableError):
+                raise
+            except Exception as exc:
+                raise safety.CallerFacingError(safety.safe_detail(exc)) from exc
         unique: dict[str, SearchHit] = {}
         for hit in found:
             if _host(hit["url"]) is not None:
-                unique.setdefault(hit["url"], hit)
+                unique.setdefault(links.identity(hit["url"]) if urls else hit["url"], hit)
         hits = list(unique.values())
         for hit in hits:
             if domain := _within(hit["url"], included):
@@ -841,7 +889,10 @@ async def research(
             for hit in in_domains
             if not (after and (dated := _date(hit["published"])) and dated < after)
         ]
-        if included:
+        if urls is not None:
+            per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
+            chosen, same_domain = _per_site(kept, per_domain)
+        elif included:
             per_domain = _per_domain(cfg.min_delay_ms, cfg.max_concurrent_pages)
             chosen, same_domain = _round_robin(kept, included, capped, per_domain)
         else:

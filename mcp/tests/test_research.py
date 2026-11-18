@@ -1924,3 +1924,70 @@ async def test_a_client_asking_for_progress_hears_each_page_as_it_is_read(fake_w
     assert counts[0] == 0 and counts[-1] == 3 and counts == sorted(counts)
     assert {total for _, total, _ in heard} == {3}
     assert heard[-1][2] == "read 3 of 3 pages"
+
+
+async def test_given_urls_are_read_and_ranked_without_a_search(fake_web: FakeWeb) -> None:
+    pages = {
+        "https://a.com/x": "# Cats\n\nCats nap all afternoon.",
+        "https://b.org/y": "# Tapetum\n\nTapetum reflects incoming light at night.",
+    }
+    fake_web([], {url: _doc(url, text) for url, text in pages.items()})
+
+    result = await research("tapetum light", urls=list(pages))
+
+    assert searched == []
+    assert sorted(fetched) == sorted(pages)
+    assert result["backend"] == "urls"
+    assert result["receipt"]["executed_query"] is None
+    assert result["passages"][0]["source_url"] == "https://b.org/y"
+
+
+async def test_given_urls_obey_the_domain_filters_and_say_so(fake_web: FakeWeb) -> None:
+    urls = ["https://a.com/x", "https://b.org/y"]
+    fake_web([], {url: _doc(url, _KITTEN) for url in urls})
+
+    result = await research("kitten", urls=urls, exclude_domains=["b.org"])
+
+    assert fetched == ["https://a.com/x"]
+    assert result["receipt"]["hits_excluded"] == 1
+
+
+async def test_given_urls_on_one_site_are_capped_like_any_other_read(
+    fake_web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROUNDHOG_MIN_DELAY_MS", "5000")
+    monkeypatch.setenv("GROUNDHOG_MAX_CONCURRENT_PAGES", "10")
+    urls = [f"https://isric.org/{i}" for i in range(10)]
+    fake_web([], {url: _doc(url, _KITTEN) for url in urls})
+
+    result = await research("kitten", urls=urls)
+
+    assert len(result["sources"]) == 7
+    assert result["receipt"]["hits_same_domain"] == 3
+    assert result["receipt"]["hits_unread"] == 0
+
+
+async def test_the_same_page_given_twice_is_read_once(fake_web: FakeWeb) -> None:
+    fake_web([], {"https://a.com/x": _doc("https://a.com/x", _KITTEN)})
+
+    await research("kitten", urls=["https://a.com/x", "https://a.com/x#top"])
+
+    assert fetched == ["https://a.com/x"]
+
+
+@pytest.mark.parametrize(
+    "urls", [[], ["ftp://a.com/x"], ["not a url"], [f"https://a{i}.com/" for i in range(11)]]
+)
+async def test_unusable_urls_are_refused(fake_web: FakeWeb, urls: list[str]) -> None:
+    fake_web([], {})
+    with pytest.raises(safety.InvalidArgument):
+        await research("kitten", urls=urls)
+    assert fetched == []
+
+
+async def test_urls_and_follow_together_are_refused(fake_web: FakeWeb) -> None:
+    fake_web([], {})
+    with pytest.raises(safety.InvalidArgument, match="not both"):
+        await research(
+            "kitten", urls=["https://a.com/x"], follow=[{"token": "t", "why": "check it"}]
+        )

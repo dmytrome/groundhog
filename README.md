@@ -176,7 +176,7 @@ URL would change under cleaning, isn't `http(s)`, carries credentials or exceeds
 characters is dropped. A backend that can't answer raises an error instead of returning an
 empty web.
 
-### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None)`
+### `research(query, max_sources=5, max_tokens=None, include_domains=None, exclude_domains=None, published_after=None, aim=None, follow=None, urls=None)`
 
 Searches, reads the top sources and ranks passages from all of them in one pass. A client
 that asks for progress hears each page as it is read.
@@ -225,6 +225,10 @@ calls. A follow runs no search, and `followed` says for each entry whether it wa
 `not_content`, `failed`, `filtered`, a `duplicate`, over the `same_domain_limit` (as many
 pages per site as can start before the deadline), an `invalid_token` or `expired`. Tokens are
 signed by the server and expire after 30 minutes or on restart.
+
+To rank passages across pages you already have, pass them as `urls` (up to 10) instead of
+searching. The domain filters and the per-site limit apply as they do to search results, the
+receipt counts what they left out, and `backend` is `urls`. `urls` and `follow` don't mix.
 
 The JSON text block of a response never exceeds 40,000 characters; the MCP result carries the
 same object again as `structuredContent`. When it would, cards go first, then threat
