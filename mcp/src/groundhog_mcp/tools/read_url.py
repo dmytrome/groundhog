@@ -15,6 +15,7 @@ class ReadResult(TypedDict):
     status: classify.RetrievalStatus
     http_status: int | None
     truncated: bool
+    next_offset: int | None
     threats: list[sanitize.Threat]
     matches: list[retrieval.Match]
     set_aside: int
@@ -56,6 +57,18 @@ async def read_url(
             )
         ),
     ] = None,
+    offset: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Start the content this many characters into the page's full markdown: pass "
+                "`next_offset` from a truncated read to continue it, or a match's `offset`. "
+                "Ignored when `query` is set. The page is fetched again, so compare "
+                "`provenance.content_hash` to see whether it changed in between."
+            ),
+        ),
+    ] = 0,
     include_hidden: Annotated[
         bool,
         Field(
@@ -97,11 +110,17 @@ async def read_url(
         if selected_matches or selected_truncated:
             body, matches, truncated = selected, selected_matches, selected_truncated
             set_aside = selected_set_aside
+    next_offset: int | None = None
     if matches:
         body += extract.TRUNCATION_MARKER if truncated else ""
     else:
-        body, over_budget = extract.truncate(body, limit)
-        truncated = truncated or over_budget
+        start = 0 if query and query.strip() else min(offset, len(body))
+        kept = extract.cut(body[start:], limit)
+        if start + len(kept) < len(body):
+            truncated, next_offset = True, start + len(kept)
+            body = kept + extract.TRUNCATION_MARKER
+        else:
+            body = kept
 
     return {
         "markdown": body,
@@ -112,6 +131,7 @@ async def read_url(
         "status": doc.status,
         "http_status": doc.http_status,
         "truncated": truncated,
+        "next_offset": next_offset,
         "threats": doc.threats,
         "matches": matches,
         "set_aside": set_aside,

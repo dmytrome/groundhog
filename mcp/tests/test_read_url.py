@@ -181,3 +181,49 @@ async def test_a_matching_code_block_too_big_to_return_is_left_out_whole(
     result = await read_url("https://ex.com/p", format="text", query="needle", max_tokens=10)
 
     assert (result["markdown"], result["matches"], result["truncated"]) == ("", [], True)
+
+
+_PARAGRAPHS = [f"Paragraph {n} says something worth reading about dogs." for n in range(40)]
+
+
+async def test_reading_on_from_next_offset_covers_the_page_without_gaps_or_repeats(
+    fake_provider, make_page
+):
+    fake_provider(make_page(text="\n\n".join(_PARAGRAPHS)))
+    whole = (await read_url("https://ex.com/p", format="text"))["markdown"]
+    pieces, offset = [], 0
+    for _ in range(50):
+        result = await read_url("https://ex.com/p", format="text", max_tokens=40, offset=offset)
+        pieces.append(result["markdown"].removesuffix(extract.TRUNCATION_MARKER))
+        if result["next_offset"] is None:
+            assert result["truncated"] is False
+            break
+        assert result["truncated"] is True
+        offset = result["next_offset"]
+    assert len(pieces) > 2
+    assert "".join(pieces) == whole
+
+
+async def test_an_offset_past_the_end_returns_nothing(fake_provider, make_page):
+    fake_provider(make_page(text="short page"))
+    result = await read_url("https://ex.com/p", format="text", offset=10_000)
+    assert (result["markdown"], result["truncated"], result["next_offset"]) == ("", False, None)
+
+
+async def test_a_whole_page_read_has_no_next_offset(fake_provider, make_page):
+    fake_provider(make_page())
+    result = await read_url("https://ex.com/p")
+    assert result["next_offset"] is None
+
+
+async def test_offset_is_ignored_when_a_query_picks_the_passages(fake_provider, make_page):
+    fake_provider(make_page())
+    with_offset = await read_url("https://ex.com/p", query="loyal domesticated dogs", offset=5)
+    without = await read_url("https://ex.com/p", query="loyal domesticated dogs")
+    assert with_offset["markdown"] == without["markdown"]
+
+
+async def test_mcp_boundary_rejects_a_negative_offset():
+    mcp = server.build_server()
+    with pytest.raises(Exception, match=r"(?i)greater than or equal|validation"):
+        await mcp.call_tool("read_url", {"url": "http://127.0.0.1:1/", "offset": -1})

@@ -111,7 +111,7 @@ read with your Ego Lite sessions, so a page can still change state on sites you 
 
 ## Tools
 
-### `read_url(url, format="markdown", max_tokens=None, query=None, include_hidden=False)`
+### `read_url(url, format="markdown", max_tokens=None, query=None, offset=0, include_hidden=False)`
 
 | Key          | Meaning |
 | ------------ | ------- |
@@ -123,6 +123,7 @@ read with your Ego Lite sessions, so a page can still change state on sites you 
 | `status`     | `ok`, or `challenge` / `blocked` / `rate_limited` / `not_found` / `server_error` / `unsupported_content` when what came back isn't the page you asked for. `blocked` covers 401, 403 and other 4xx error pages. `too_large` means the page had over 5 MiB of HTML or 2 MiB of text, or was a PDF over 10 MiB, 100 pages or 20 seconds of parsing, and nothing of it is returned. An encrypted or malformed PDF is `unsupported_content`. `empty` means the rendered page showed no text a reader would see (text in closed shadow roots, iframes and `alt` attributes doesn't count), whatever `markdown` holds. With `include_hidden`, text hidden by styling counts as shown; invisible characters never do. `unknown` means no usable status was observed. Judged on the document the text came from, after client-side redirects |
 | `http_status`| The top-level HTTP status, or `null` |
 | `truncated`  | Whether the token budget cut the content |
+| `next_offset`| Where a cut-off read stopped in the page's full markdown: pass it back as `offset` to read on. `null` when nothing was cut or `query` picked the content. `offset` is ignored with `query`, and each call fetches the page again, so a changed `content_hash` means the page moved under you |
 | `threats`    | What was stripped; empty when nothing was found |
 | `matches`    | With `query`: ranked passages with `id`, `heading`, `offset`, `end`, `score` and `clamped` (cut short to fit `max_tokens`). `offset` and `end` index the page's full markdown, and that span is the text returned; a piece of a long code block comes back with its fence lines added around it. Code is never cut mid-piece: a matching code block or piece larger than `max_tokens` is left out, and when nothing fits `markdown` is empty with `truncated` set, so raise `max_tokens` |
 | `set_aside`  | With `query`: scoring passages the relevance floor dropped |

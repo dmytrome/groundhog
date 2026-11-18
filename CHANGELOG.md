@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `read_url` takes an `offset` and returns `next_offset`, so a page cut off by the token
+  budget can be read on from where it stopped.
+
 ### Fixed
 
 - `read_url` returns a markdown file or `llms.txt` as written, with its headings and links
