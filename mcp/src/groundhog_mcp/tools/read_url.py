@@ -6,6 +6,26 @@ from .. import classify, config, document, engine, extract, provenance, retrieva
 from ..config import load_config
 
 
+def _skip_space(text: str, at: int) -> int:
+    while at < len(text) and text[at].isspace():
+        at += 1
+    return at
+
+
+def _refenced(body: str, start: int, end: int, kept: str) -> str:
+    if not kept:
+        return kept
+    lines = body.split("\n")
+    inside = retrieval.fenced_lines(lines)
+    first, last = body.count("\n", 0, start), body.count("\n", 0, end - 1)
+    opened, closing = inside.get(first), inside.get(last)
+    if opened is not None and opened != first:
+        kept = lines[opened] + "\n" + kept
+    if closing is not None and max(i for i, o in inside.items() if o == closing) > last:
+        kept = kept.rstrip("\n") + "\n" + retrieval.fence_run(lines[closing])
+    return kept
+
+
 class ReadResult(TypedDict):
     markdown: str
     title: str
@@ -113,11 +133,17 @@ async def read_url(
     next_offset: int | None = None
     if matches:
         body += extract.TRUNCATION_MARKER if truncated else ""
+    elif query and query.strip():
+        body, over_budget = extract.truncate(body, limit)
+        truncated = truncated or over_budget
     else:
-        start = 0 if query and query.strip() else min(offset, len(body))
+        start = _skip_space(body, min(max(offset, 0), len(body)))
         kept = extract.cut(body[start:], limit)
-        if start + len(kept) < len(body):
-            truncated, next_offset = True, start + len(kept)
+        end = start + len(kept)
+        if format == "markdown":
+            kept = _refenced(body, start, end, kept)
+        if _skip_space(body, end) < len(body):
+            truncated, next_offset = True, _skip_space(body, end)
             body = kept + extract.TRUNCATION_MARKER
         else:
             body = kept

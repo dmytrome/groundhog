@@ -88,6 +88,11 @@ class Ranked(NamedTuple):
     set_aside: int
 
 
+def fence_run(line: str) -> str:
+    opening = _FENCE_OPEN_RE.match(line)
+    return opening.group(1) if opening else "```"
+
+
 def opens_fence(text: str) -> bool:
     return bool(_FENCE_OPEN_RE.match(text.split("\n", 1)[0]))
 
