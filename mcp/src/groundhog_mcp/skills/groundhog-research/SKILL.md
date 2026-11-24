@@ -24,8 +24,8 @@ default, so read fewer, better pages rather than many.
    answer would be written.
 2. Narrow the search before it runs: `include_domains` for the authority you trust (a
    standards body, the vendor's docs), `exclude_domains` for sites you know are noise,
-   and `published_after` (YYYY-MM-DD) when the answer must be recent. Pages with no date
-   are kept and counted in the receipt's `unknown_dates`.
+   and `published_after` (YYYY-MM-DD) when the answer must be recent. With it set, pages
+   with no date are kept and counted in the receipt's `unknown_dates`.
 3. Use `aim` to record what the evidence must show (the authority, artifact and version
    you need). It is echoed in the receipt so you can check yourself against it later; it
    does not change the search or the ranking.
