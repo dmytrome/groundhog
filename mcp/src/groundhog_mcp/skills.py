@@ -1,9 +1,10 @@
 import hashlib
+import logging
 import re
 from collections.abc import Iterator, Sequence
 from importlib import resources
 from importlib.resources.abc import Traversable
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from mcp.server.context import ServerRequestContext
 from mcp.server.extension import Extension, MethodBinding, ResourceBinding
@@ -13,6 +14,9 @@ from mcp_types import INVALID_PARAMS, PaginatedRequestParams, RequestParams
 
 EXTENSION_ID = "io.modelcontextprotocol/skills"
 _TTL_MS = 300_000
+_MAX_NAME = 64
+_MAX_DESCRIPTION = 1024
+_log = logging.getLogger(__name__)
 _SKILL_FILE = "SKILL.md"
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _KEY = re.compile(r"[a-z][a-z0-9-]*")
@@ -36,7 +40,7 @@ class GetSkillParams(RequestParams):
 
 
 def frontmatter(text: str) -> dict[str, str]:
-    lines = text.split("\n")
+    lines = text.removeprefix("\ufeff").replace("\r\n", "\n").split("\n")
     if lines[0] != "---" or "---" not in lines[1:]:
         raise ValueError("SKILL.md must open with frontmatter between --- lines")
     fields: dict[str, str] = {}
@@ -49,11 +53,15 @@ def frontmatter(text: str) -> dict[str, str]:
         fields[key] = value.rstrip()
     if not fields.get("name") or not fields.get("description"):
         raise ValueError("frontmatter needs name and description")
+    if len(fields["name"]) > _MAX_NAME or len(fields["description"]) > _MAX_DESCRIPTION:
+        raise ValueError("frontmatter name or description is too long")
     return fields
 
 
 def _files(root: Traversable, prefix: str = "") -> Iterator[tuple[str, Traversable]]:
     for entry in sorted(root.iterdir(), key=lambda e: e.name):
+        if entry.name.startswith((".", "__")):
+            continue
         if entry.is_dir():
             yield from _files(entry, f"{prefix}{entry.name}/")
         else:
@@ -68,8 +76,12 @@ class Skills(Extension):
         self._resources: list[TextResource] = []
         base = root or resources.files(__package__) / "skills"
         for skill_dir in sorted(base.iterdir(), key=lambda e: e.name):
-            if skill_dir.is_dir():
+            if not skill_dir.is_dir() or skill_dir.name.startswith((".", "__")):
+                continue
+            try:
                 self._load(skill_dir)
+            except (ValueError, UnicodeDecodeError) as exc:
+                _log.warning("skipping skill %s: %s", skill_dir.name, exc)
 
     def _load(self, skill_dir: Traversable) -> None:
         files = dict(_files(skill_dir))
@@ -79,13 +91,14 @@ class Skills(Extension):
         if meta["name"] != skill_dir.name or not _NAME.fullmatch(meta["name"]):
             raise ValueError(f"skill directory {skill_dir.name!r} must match its name")
         manifest: list[SkillResource] = []
+        served: list[TextResource] = []
         for path, file in files.items():
             raw = file.read_bytes()
             uri = f"skill://{skill_dir.name}/{path}"
             digest = "sha256:" + hashlib.sha256(raw).hexdigest()
             manifest.append({"uri": uri, "digest": digest, "size": len(raw)})
             is_skill = path == _SKILL_FILE
-            self._resources.append(
+            served.append(
                 TextResource(
                     uri=uri,
                     name=meta["name"] if is_skill else path,
@@ -95,6 +108,7 @@ class Skills(Extension):
                 )
             )
         uri = f"skill://{skill_dir.name}/{_SKILL_FILE}"
+        self._resources.extend(served)
         self._skills[uri] = {"uri": uri, "frontmatter": meta, "resources": manifest}
 
     def resources(self) -> Sequence[ResourceBinding]:
@@ -107,7 +121,7 @@ class Skills(Extension):
         )
 
     async def _list(
-        self, _ctx: ServerRequestContext[Any, Any], _params: PaginatedRequestParams
+        self, _ctx: ServerRequestContext[object, object], _params: PaginatedRequestParams
     ) -> dict[str, object]:
         return {
             "resultType": "complete",
@@ -117,7 +131,7 @@ class Skills(Extension):
         }
 
     async def _get(
-        self, _ctx: ServerRequestContext[Any, Any], params: GetSkillParams
+        self, _ctx: ServerRequestContext[object, object], params: GetSkillParams
     ) -> dict[str, object]:
         skill = self._skills.get(params.uri)
         if skill is None:
