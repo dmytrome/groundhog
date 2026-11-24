@@ -76,6 +76,11 @@ value, so a remote browser is never touched:
 `research` returns extracts, not summaries. Nothing is generated and **no model or API key is
 involved** — your agent does the synthesis.
 
+The server also serves a skill, `groundhog-research`, over the MCP
+[Skills extension](https://modelcontextprotocol.io/extensions/skills/overview): the research
+workflow, from picking a tool to what to cite. Clients that support skills (protocol revision
+2026-07-28) load it when a task needs it; other clients get the same tools without it.
+
 ## Why it's different
 
 - **Hidden text is stripped before the model reads it.** Groundhog renders a real DOM, so it

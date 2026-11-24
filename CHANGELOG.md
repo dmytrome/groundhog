@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-24
+
+### Added
+
+- The server ships a skill, `groundhog-research`, over the MCP Skills extension: the
+  research workflow, from picking a tool to what to cite. Clients that support skills load
+  it when a task needs it, on protocol revision 2026-07-28.
+
+### Changed
+
+- The server instructions point at the skill, and the advice on which candidates to follow
+  moved into it. The safety and status rules stay in the instructions.
+
 ## [0.23.5] - 2026-11-18
 
 ### Added
@@ -802,6 +815,7 @@ Initial release.
 - FastMCP server over stdio; an actionable error and opt-in `GROUNDHOG_AUTO_START_BROWSER`
   (with `GROUNDHOG_COMPOSE_FILE`) when the browser isn't running.
 
+[0.24.0]: https://github.com/dmytrome/groundhog/releases/tag/v0.24.0
 [0.23.5]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.5
 [0.23.4]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.4
 [0.23.3]: https://github.com/dmytrome/groundhog/releases/tag/v0.23.3

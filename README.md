@@ -244,6 +244,19 @@ room.
 Returns `browser_reachable`, `cdp_url` (scheme, host and port only) and a `hint` when the
 browser can't be reached.
 
+## Skill
+
+The server also ships a skill, `groundhog-research`, over the MCP
+[Skills extension](https://modelcontextprotocol.io/extensions/skills/overview). It teaches an
+agent the research workflow: which tool to pick, how to run `research` and follow its
+candidates, when to stop, and what to cite. A client that supports skills, such as Claude
+Code 2.1.331 or later, loads it only when a task needs it, and it updates with the server, so
+there is nothing separate to install. The skill is served at
+`skill://groundhog-research/SKILL.md` on connections that use protocol revision 2026-07-28.
+Older clients keep the same tools without it. The server instructions still carry the safety
+and status rules and how to follow candidates; the advice on which candidates to pick is in
+the skill.
+
 ## Configuration
 
 **MCP server:**
