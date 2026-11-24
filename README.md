@@ -252,8 +252,10 @@ agent the research workflow: which tool to pick, how to run `research` and follo
 candidates, when to stop, and what to cite. A client that supports skills, such as Claude
 Code 2.1.331 or later, loads it only when a task needs it, and it updates with the server, so
 there is nothing separate to install. The skill is served at
-`skill://groundhog-research/SKILL.md` on connections that use protocol revision 2026-07-28;
-older clients keep the same tools and server instructions without it.
+`skill://groundhog-research/SKILL.md` on connections that use protocol revision 2026-07-28.
+Older clients keep the same tools without it. The server instructions still carry the safety
+and status rules and how to follow candidates; the advice on which candidates to pick is in
+the skill.
 
 ## Configuration
 
